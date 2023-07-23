@@ -22,7 +22,7 @@ wget https://karpathy.ai/llama2c/model.bin -P out
 (if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code:
 
 ```bash
-gcc -o run run.c -lm
+gcc -O3 -o run run.c -lm
 ./run out/model.bin
 ```
 
