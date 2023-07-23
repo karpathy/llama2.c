@@ -27,8 +27,5 @@ for line in proc.stdout:
     last = dec
 t1 = time.time()
 
-print('\n---\n')
-print(enc.decode(tokens))
-
-print(f"achieved tok/s: {len(tokens) / (t1 - t0)}")
+print(f"\nachieved tok/s: {len(tokens) / (t1 - t0)}")
 proc.wait()
