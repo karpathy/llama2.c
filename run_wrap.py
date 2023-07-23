@@ -26,6 +26,8 @@ for line in proc.stdout:
     tokens.append(token)
     last = dec
 t1 = time.time()
+# seeking help: how can we do streaming inference in sentencepiece properly?
+# or even delete sentencepiece entirely?
 
 print(f"\nachieved tok/s: {len(tokens) / (t1 - t0)}")
 proc.wait()
