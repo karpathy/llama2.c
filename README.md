@@ -103,7 +103,6 @@ Currently you will need two files to run the test: the [model.bin](https://drive
 - why is MFU so low (~10%) on my A100 40GB for training?
 - weird errors with torch.compile and wandb when using DDP
 - make more better tests to decrease yolo
-- requirements.txt
 
 ## License
 MIT
