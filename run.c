@@ -383,8 +383,45 @@ int argmax(float* v, int n) {
 
 // ----------------------------------------------------------------------------
 
+int *token_id_to_offset = NULL;
+char *tokens_blob = NULL;
+
+void load_tokenizer() {
+    FILE *file = fopen("tokenizer.bin", "rb");
+    if (file == NULL) {
+        printf("Cannot open tokenizer file\n");
+        exit(EXIT_FAILURE);
+    }
+
+    int offsets_len;
+    fread(&offsets_len, sizeof(int), 1, file);
+
+    token_id_to_offset = (int*) malloc(offsets_len * sizeof(int));
+    if (token_id_to_offset == NULL) {
+        perror("Cannot allocate memory for offsets\n");
+        exit(EXIT_FAILURE);
+    }
+
+    fread(token_id_to_offset, sizeof(int), offsets_len, file);
+
+    long pos = ftell(file);
+    fseek(file, 0, SEEK_END);
+    long tokens_blob_size = ftell(file) - pos;
+    fseek(file, pos, SEEK_SET);
+
+    tokens_blob = (char*) malloc(tokens_blob_size);
+    if (tokens_blob == NULL) {
+        perror("Cannot allocate memory for tokens blob\n");
+        exit(EXIT_FAILURE);
+    }
+
+    fread(tokens_blob, 1, tokens_blob_size, file);
+    fclose(file);
+}
+
 int main(int argc, char *argv[]) {
     setbuf(stdout, NULL); // disable stdout buffering
+    load_tokenizer();
 
     // poor man's C argparse
     char *checkpoint = NULL;
@@ -449,7 +486,9 @@ int main(int argc, char *argv[]) {
             // we now want to sample from this distribution to get the next token
             next = sample(state.logits, config.vocab_size);
         }
-        printf("%d\n", next);
+        int offset = token_id_to_offset[next];
+        int next_offset = token_id_to_offset[next + 1];
+        fwrite(tokens_blob + offset, 1, next_offset - offset, stdout);
 
         // advance forward
         token = next;
