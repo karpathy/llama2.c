@@ -98,7 +98,7 @@ args = parser.parse_args()
 
 # Load the variables defined in the extra config files
 for extra_config_file in args.config_files:
-    extra_config = filter_dict(importlib.import_module(extra_config_file.removesuffix('.py')).__dict__)
+    extra_config = filter_dict(importlib.import_module(extra_config_file.removesuffix('.py').replace('/', '.')).__dict__)
     make_header(f'Loaded from extra config file {extra_config_file}:')
     pprint(extra_config)
     globals().update(extra_config)
