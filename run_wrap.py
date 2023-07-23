@@ -17,15 +17,16 @@ enc = Tokenizer()
 
 t0 = time.time()
 tokens = []
+last = ''
 for line in proc.stdout:
     token = int(line.decode('utf-8').strip())
-    dec = enc.decode([token])
-    print(dec, end=" ", flush=True)
+    dec = enc.decode(tokens + [token])
+    chunk = dec[len(last):]
+    print(chunk, end='',flush=True)
     tokens.append(token)
+    last = dec
 t1 = time.time()
 
-print('\n---\n')
-print("Sorry I'm not sure why sentencepiece can't stream tokens properly, I'll solve it later. Here is the whole thing properly:")
 print('\n---\n')
 print(enc.decode(tokens))
 
