@@ -9,7 +9,7 @@ import subprocess
 import time
 
 # specify your command
-command = ["./run", "model.bin"]
+command = ["./run", "out/model.bin"]
 
 # Start the process
 proc = subprocess.Popen(command, stdout=subprocess.PIPE)
@@ -25,7 +25,7 @@ for line in proc.stdout:
 t1 = time.time()
 
 print('\n---\n')
-print("Sorry I'm not sure why sentencepiece can't stream tokens properly, I'll solve it later. Here is the whole thing:")
+print("Sorry I'm not sure why sentencepiece can't stream tokens properly, I'll solve it later. Here is the whole thing properly:")
 print('\n---\n')
 print(enc.decode(tokens))
 

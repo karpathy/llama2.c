@@ -11,11 +11,35 @@ Please note that this is just a weekend project: I took nanoGPT, tuned it to imp
 
 Hat tip to [llama.cpp](https://github.com/ggerganov/llama.cpp) for inspiring this project. I wanted something super minimal so I chose to hard-code the llama-2 architecture, stick to fp32, and just roll one inference file of pure C with no dependencies.
 
+## feel the magic
+
+Let's just run a baby Llama 2 model in C. You need a model checkpoint. Download this 15M parameter model I trained on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset (~58MB download) and place it into the default checkpoint directory `out`:
+
+```bash
+wget https://karpathy.ai/llama2c/model.bin -P out
+```
+
+(if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code, though it will only emit the raw token ids:
+
+```bash
+gcc -o run run.c -lm
+./run
+```
+
+So to also translate them into text, we currently run it through a simple wrapper (for now):
+
+```bash
+pip install sentencepiece
+python run_wrap.py
+```
+
+You'll see text stream, but with weird spaces in it (sorry). And after that the whole sample will be properly printed. (Call for help: help me fix sentencepiece streaming decoding and even better delete this wrapper.) On my M1 MacBook Air this runs at ~18 tokens/s, not bad for super naive fp32 single-threaded C code.
+
 ## howto
 
 It should be possible to load the weights released by Meta but I haven't tried because the inference speed, even of the 7B model, would probably be not great with this baby single-threaded C program. So in this repo we focus on more narrow applications, and train the same architecture but from scratch, in this case on the TinyStories dataset for fun.
 
-First let's download and pretokenize the TinyStories dataset:
+First let's download and pretokenize some source dataset, e.g. I like [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) so this is the only example currently available in this repo. But it should be very easy to add datasets, see the code.
 
 ```bash
 python tinystories.py download
@@ -52,9 +76,7 @@ But note that this only emits the SentencePiece tokens. To decode the tokens int
 python run_wrap.py
 ```
 
-I hope to delete this script soon though. Anyway, watch the tokens stream by, fun!
-
-We can also run the PyTorch inference script for comparison:
+Watch the tokens stream by, fun! Help me fix the weird spaces. We can also run the PyTorch inference script for comparison:
 
 ```bash
 python sample.py
@@ -66,15 +88,18 @@ Which gives the same results. More detailed testing will be done in `test_all.py
 $ pytest
 ```
 
+Currently you will need two files to run the test: the [model.bin](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link) file and the [model.ckpt](https://drive.google.com/file/d/1SM0rMxzy7babB-v4MfTg1GFqOCgWar5w/view?usp=share_link) file from PyTorch training I ran earlier. I have to think through running the tests without having to download 200MB of data.
+
 ## unsorted todos
 
 - why SentencePiece can't iteratively decode properly?
-- would love to delete run_wrap.py and just directly use C code to string, help welcome
-- todo multiquery support? doesn't seem as useful for smaller models that run on CPU
+- would love to delete run_wrap.py and just directly use C code to string
+- todo multiquery support? doesn't seem as useful for smaller models that run on CPU (?)
 - todo support inferencing beyond max_seq_len steps, have to think through the kv cache
-- why is MFU so low (~20%) on my A100 40GB for training?
+- why is MFU so low (~10%) on my A100 40GB for training?
 - weird errors with torch.compile and wandb when using DDP
 - make more better tests to decrease yolo
+- requirements.txt
 
 ## License
 MIT
