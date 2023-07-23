@@ -42,8 +42,9 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
-    return freqs_cis
+    cos_freqs = torch.cos(freqs)
+    sin_freqs = torch.sin(freqs)
+    return cos_freqs, sin_freqs
 
 
 def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
@@ -57,14 +58,25 @@ def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
 def apply_rotary_emb(
     xq: torch.Tensor,
     xk: torch.Tensor,
-    freqs_cis: torch.Tensor,
+    cos_freqs: torch.Tensor,
+    sin_freqs: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
-    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
-    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
-    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
-    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+    xq_r, xq_i = xq.float().reshape(*xq.shape[:-1], -1, 2).unbind(-1)
+    xk_r, xk_i = xk.float().reshape(*xk.shape[:-1], -1, 2).unbind(-1)
+    
+    cos_freqs = reshape_for_broadcast(cos_freqs, xq_r)
+    sin_freqs = reshape_for_broadcast(sin_freqs, xq_r)
+    
+    xq_out_r = xq_r * cos_freqs - xq_i * sin_freqs
+    xq_out_i = xq_r * sin_freqs + xq_i * cos_freqs
+    xk_out_r = xk_r * cos_freqs - xk_i * sin_freqs
+    xk_out_i = xk_r * sin_freqs + xk_i * cos_freqs
+    
+    xq_out = torch.stack([xq_out_r, xq_out_i], dim=-1).flatten(3)
+    xk_out = torch.stack([xk_out_r, xk_out_i], dim=-1).flatten(3)
+    
     return xq_out.type_as(xq), xk_out.type_as(xk)
+
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
@@ -102,7 +114,8 @@ class Attention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        freqs_cis: torch.Tensor,
+        cos_freqs: torch.Tensor,
+        sin_freqs: torch.Tensor,
     ):
         bsz, seqlen, _ = x.shape
 
@@ -113,7 +126,7 @@ class Attention(nn.Module):
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
 
         # RoPE relative positional embeddings
-        xq, xk = apply_rotary_emb(xq, xk, freqs_cis)
+        xq, xk = apply_rotary_emb(xq, xk, cos_freqs, sin_freqs)
 
         # grouped multiquery attention: expand out keys and values
         xk = repeat_kv(xk, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
@@ -171,8 +184,8 @@ class TransformerBlock(nn.Module):
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
 
-    def forward(self, x, freqs_cis):
-        h = x + self.attention.forward(self.attention_norm(x), freqs_cis)
+    def forward(self, x, cos_freqs, sin_freqs):
+        h = x + self.attention.forward(self.attention_norm(x), cos_freqs, sin_freqs)
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         return out
 
@@ -195,7 +208,7 @@ class Transformer(nn.Module):
         self.tok_embeddings.weight = self.output.weight # https://paperswithcode.com/method/weight-tying
 
         # some useful precompute for the RoPE relative positional embeddings. TODO why * 2 here? confuse
-        self.freqs_cis = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len * 2)
+        self.cos_freqs, self.sin_freqs = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len * 2)
         
         # init all weights
         self.apply(self._init_weights)
@@ -211,15 +224,16 @@ class Transformer(nn.Module):
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
     def forward(self, tokens, targets=None):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[:seqlen]
+        self.cos_freqs = self.cos_freqs.to(h.device)
+        self.sin_freqs = self.sin_freqs.to(h.device)
+        cos_freqs = self.cos_freqs[:seqlen]
+        sin_freqs = self.sin_freqs[:seqlen]
 
         for layer in self.layers:
-            h = layer(h, freqs_cis)
+            h = layer(h, cos_freqs, sin_freqs)
         h = self.norm(h)
 
         if targets is not None:
@@ -232,6 +246,7 @@ class Transformer(nn.Module):
             loss = None
 
         return logits, loss
+
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
         # start with all of the candidate parameters
