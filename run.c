@@ -383,80 +383,100 @@ int argmax(float* v, int n) {
 
 // ----------------------------------------------------------------------------
 
-int main(int argc, char *argv[]) {
+// poor man's C argparse
+char *checkpoint = NULL;
+float temperature = 0.9f;
+
+// read in the config header
+Config config;
+
+TransformerWeights weights;
+
+// create and init the application RunState
+RunState state;
+
+// the current position we are in
+int next;
+int token = 1; // 1 = BOS token in Llama-2 sentencepiece
+int pos = 0;
+
+char * vocab[32000];
+
+void main_loop(void * dummy) {
+    // forward the transformer to get logits for the next token
+    transformer(token, pos, &config, &state, &weights);
+
+    // sample the next token
+    if(temperature == 0.0f) {
+        // greedy argmax sampling
+        next = argmax(state.logits, config.vocab_size);
+    } else {
+        // apply the temperature to the logits
+        for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
+        // apply softmax to the logits to get the probabilities for next token
+        softmax(state.logits, config.vocab_size);
+        // we now want to sample from this distribution to get the next token
+        next = sample(state.logits, config.vocab_size);
+    }
+    //printf("%d\n", next);
+    printf("%s\n", vocab[next]);
+    fflush(stdout);
+
+    // advance forward
+    token = next;
+    pos++;
+}
+
+#ifdef __EMSCRIPTEN__
+#include "emscripten.h"
+#endif
+
+int main() {
     setbuf(stdout, NULL); // disable stdout buffering
 
-    // poor man's C argparse
-    char *checkpoint = NULL;
-    float temperature = 0.9f;
-    // 'checkpoint' is necessary arg
-    if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [seed]\n", argv[0]);
-        return 1;
-    }
-    checkpoint = argv[1];
-    // temperature is optional
-    if (argc >= 3) {
-        temperature = atof(argv[2]);
-    }
-    // seed is optional
-    if (argc >= 4) {
-        unsigned int seed = atoi(argv[3]);
-        srand(seed);
-    } else {
-        time_t current_time; 
-        time(&current_time);
-        srand((unsigned int)current_time);
+
+    time_t current_time;
+    time(&current_time);
+    srand((unsigned int)current_time);
+
+    // model
+    {
+        checkpoint = "model.bin";
+        FILE *file = fopen(checkpoint, "rb");
+        if (!file) {
+            printf("Unable to open file!");
+        }
+        fread(&config, sizeof(Config), 1, file);
+
+        // create and init the Transformer
+        malloc_weights(&weights, &config);
+        checkpoint_init_weights(&weights, &config, file);
+        fclose(file);
     }
 
-    // read in the config header
-    Config config;
-    FILE *file = fopen(checkpoint, "rb");
-    if (!file) {
-        printf("Unable to open file!");
-        return 1;
+    // vocab
+    {
+        FILE *file = fopen("vocab.bin", "r");
+        if (!file) {
+            printf("Unable to open file!");
+        }
+
+        int len;
+        for (int i = 0; i < 32000; i++) {
+            fread(&len, sizeof(int), 1, file);
+            vocab[i] = (char *)malloc(len + 1);
+            fread(vocab[i], len, 1, file);
+            vocab[i][len] = '\0';
+        }
     }
-    fread(&config, sizeof(Config), 1, file);
 
-    // create and init the Transformer
-    TransformerWeights weights;
-    malloc_weights(&weights, &config);
-    checkpoint_init_weights(&weights, &config, file);
-    fclose(file);
-
-    // create and init the application RunState
-    RunState state;
     malloc_run_state(&state, &config);
 
-    // the current position we are in
-    int next;
-    int token = 1; // 1 = BOS token in Llama-2 sentencepiece
-    int pos = 0;
-    while (pos < config.seq_len) {
-
-        // forward the transformer to get logits for the next token
-        transformer(token, pos, &config, &state, &weights);
-
-        // sample the next token
-        if(temperature == 0.0f) {
-            // greedy argmax sampling
-            next = argmax(state.logits, config.vocab_size);
-        } else {
-            // apply the temperature to the logits
-            for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
-            // apply softmax to the logits to get the probabilities for next token
-            softmax(state.logits, config.vocab_size);
-            // we now want to sample from this distribution to get the next token
-            next = sample(state.logits, config.vocab_size);
-        }
-        printf("%d\n", next);
-
-        // advance forward
-        token = next;
-        pos++;
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop_arg(main_loop, NULL, 0, 1);
+#else
+    while (1) {
+        main_loop(NULL);
     }
-
-    free_run_state(&state, &config);
-    free_weights(&weights, &config);
-    return 0;
+#endif
 }

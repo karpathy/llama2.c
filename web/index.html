@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>llama2.c</title>
+
+    <style>
+        textarea {
+            width: 300px;
+            height: 400px;
+            font-family: monospace;
+            font-size: 12px;
+            background: #fff;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <h3><a href="https://github.com/karpathy/llama2.c">llama2.c</a> compiled with Emscripten to run in a web page</h3>
+
+    <p id="msg">loading, please wait ...</p>
+    <p id="progress"></p>
+
+    <textarea id="output"></textarea>
+
+    <script>
+        "use strict";
+
+        function onStdout(text) {
+            text = Array.prototype.slice.call(arguments).join(' ');
+            document.getElementById('output').innerHTML += text;
+        }
+
+        function onRuntimeInitialized() {
+            document.getElementById('msg').innerHTML = "generating ...";
+        }
+
+        function onProgress(text) {
+            document.getElementById('progress').innerHTML = text;
+        }
+
+        var Module = { };
+
+        Module['onRuntimeInitialized'] = onRuntimeInitialized;
+        Module['setStatus']            = onProgress;
+        Module['print']                = onStdout;
+    </script>
+    <script src="llama2.js"></script>
+</body>
+</html>
