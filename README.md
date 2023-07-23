@@ -5,11 +5,9 @@ Have you ever wanted to inference a baby [Llama 2](https://ai.meta.com/llama/) m
 
 <img src="assets/llama_cute.jpg" width="300" height="300">
 
-The code in this repo first lets you train the Llama 2 architecture from scratch in PyTorch, then save the weights to a raw binary file, then load that into one ~simple 500-line C file that inferences the model, simply in fp32 for now.
+With this code you can train the Llama 2 LLM architecture from scratch in PyTorch, then save the weights to a raw binary file, then load that into one ~simple 500-line C file ([run.c](run.c)) that inferences the model, simply in fp32 for now. On my cloud Linux devbox a dim 288 6-layer 6-head model (~15M params) inferences at ~18 tok/s in fp32, and about the same on my M1 MacBook Air. I was somewhat pleasantly surprised that one can run reasonably sized models (few ten million params) at interactive rates with an approach this simple.
 
-Of course, this is not super fast, but it's not too bad either. E.g. on my cloud Linux devbox a dim 288 6-layer 6-head model (~15M params) inferences at ~18 tok/s in fp32, and about the same on my M1 MacBook Air.
-
-Please note that this is just a weekend project where I took nanoGPT, gutted it to implement the Llama-2 architecture (instead of GPT-2), and then wrote the C inference engine for it in `run.c`. So this is not really meant to be a production-grade library right now.
+Please note that this is just a weekend project: I took nanoGPT, tuned it to implement the Llama-2 architecture instead of GPT-2, and the meat of it was writing the C inference engine in [run.c](run.c). As such, this is not really meant to be a production-grade library right now.
 
 Hat tip to [llama.cpp](https://github.com/ggerganov/llama.cpp) for inspiring this project. I wanted something super minimal so I chose to hard-code the llama-2 architecture, stick to fp32, and just roll one inference file of pure C with no dependencies.
 
