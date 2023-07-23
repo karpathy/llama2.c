@@ -44,8 +44,6 @@ for k,v in list(state_dict.items()):
         state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
 model.load_state_dict(state_dict, strict=False)
 
-model.export() # model.bin
-
 model.eval()
 model.to(device)
 if compile:

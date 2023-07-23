@@ -148,36 +148,6 @@ void free_weights(TransformerWeights* w, Config* p) {
 // ----------------------------------------------------------------------------
 // initialization: random init, or read from checkpoint
 
-// initializes weights to random numbers from -.5 to .5
-void init_rand(float* w, int size) {
-    for (int i = 0; i < size; i++) {
-        w[i] = ((float)rand()/(float)(RAND_MAX)) - 0.5f;
-    }
-}
-
-// constant init
-void init_const(float* w, int size, float val) {
-    for (int i = 0; i < size; i++) {
-        w[i] = val;
-    }
-}
-
-void random_init_weights(TransformerWeights* w, Config* p) {
-    init_rand(w->token_embedding_table, p->vocab_size * p->dim);
-    init_const(w->rms_att_weight, p->n_layers * p->dim, 1.0f);
-    init_const(w->rms_ffn_weight, p->n_layers * p->dim, 1.0f);
-    init_rand(w->wq, p->n_layers * p->dim * p->dim);
-    init_rand(w->wk, p->n_layers * p->dim * p->dim);
-    init_rand(w->wv, p->n_layers * p->dim * p->dim);
-    init_rand(w->wo, p->n_layers * p->dim * p->dim);
-    init_rand(w->w1, p->n_layers * p->dim * p->hidden_dim);
-    init_rand(w->w2, p->n_layers * p->hidden_dim * p->dim);
-    init_rand(w->w3, p->n_layers * p->dim * p->hidden_dim);
-    init_const(w->rms_final_weight, p->dim, 1.0f);
-    init_rand(w->freq_cis_real, p->seq_len * p->dim / 2);
-    init_rand(w->freq_cis_imag, p->seq_len * p->dim / 2);
-}
-
 void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f) {
     fread(w->token_embedding_table, sizeof(float), p->vocab_size * p->dim, f);
     fread(w->rms_att_weight, sizeof(float), p->n_layers * p->dim, f);

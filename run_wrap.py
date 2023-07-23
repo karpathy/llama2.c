@@ -9,7 +9,7 @@ import subprocess
 import time
 
 # specify your command
-command = ["./run", "model.bin", "0.0"]
+command = ["./run", "model.bin"]
 
 # Start the process
 proc = subprocess.Popen(command, stdout=subprocess.PIPE)

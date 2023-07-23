@@ -54,13 +54,17 @@ python run_wrap.py
 
 I hope to delete this script soon though. Anyway, watch the tokens stream by, fun!
 
-To verify correctness, we can also run the PyTorch inference script:
+We can also run the PyTorch inference script for comparison:
 
 ```bash
 python sample.py
 ```
 
-Which gives the same results. I'd love to find some time to create actual tests, one day maybe. For now I just manually inspected activations and verified that they match, and that the samples are identical at temperature 0. If someone wishes to help me with tests I welcome PRs.
+Which gives the same results. More detailed testing will be done in `test_all.py`, run as:
+
+```bash
+$ pytest
+```
 
 ## unsorted todos
 
@@ -70,7 +74,7 @@ Which gives the same results. I'd love to find some time to create actual tests,
 - todo support inferencing beyond max_seq_len steps, have to think through the kv cache
 - why is MFU so low (~20%) on my A100 40GB for training?
 - weird errors with torch.compile and wandb when using DDP
-- make tests to decrease yolo
+- make more better tests to decrease yolo
 
 ## License
 MIT
