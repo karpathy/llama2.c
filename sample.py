@@ -8,6 +8,7 @@ import torch
 import tiktoken
 from model import ModelArgs, Transformer
 from tokenizer import Tokenizer
+import configurator
 
 # -----------------------------------------------------------------------------
 out_dir = 'out' # ignored if init_from is not 'resume'
@@ -21,7 +22,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu' # examples: 'cpu', 'cuda
 #dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
 dtype = "float32"
 compile = False # use PyTorch 2.0 to compile the model to be faster
-exec(open('configurator.py').read()) # overrides from command line or config file
+configurator.update_config(globals())
 # -----------------------------------------------------------------------------
 
 torch.manual_seed(seed)

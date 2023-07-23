@@ -1,47 +1,49 @@
-"""
-Poor Man's Configurator. Probably a terrible idea. Example usage:
-$ python train.py config/override_file.py --batch_size=32
-this will first run config/override_file.py, then override batch_size to 32
+import argparse
+import importlib
+from pprint import pprint
 
-The code in this file will be run as follows from e.g. train.py:
->>> exec(open('configurator.py').read())
 
-So it's not a Python module, it's just shuttling this code away from train.py
-The code in this script then overrides the globals()
+def filter_dict(d):
+    return {
+        _k: _v
+        for _k, _v in d.items()
+        if not _k.startswith("_") and isinstance(_v, (int, float, bool, str))
+    }
 
-I know people are not going to love this, I just really dislike configuration
-complexity and having to prepend config. to every single variable. If someone
-comes up with a better simple Python solution I am all ears.
-"""
 
-import sys
-from ast import literal_eval
+def make_header(text, n=35):
+    n = max(n, len(text))
+    print()
+    print('-' * n)
+    print(text)
+    print('-' * n)
 
-for arg in sys.argv[1:]:
-    if '=' not in arg:
-        # assume it's the name of a config file
-        assert not arg.startswith('--')
-        config_file = arg
-        print(f"Overriding config with {config_file}:")
-        with open(config_file) as f:
-            print(f.read())
-        exec(open(config_file).read())
-    else:
-        # assume it's a --key=value argument
-        assert arg.startswith('--')
-        key, val = arg.split('=')
-        key = key[2:]
-        if key in globals():
-            try:
-                # attempt to eval it it (e.g. if bool, number, or etc)
-                attempt = literal_eval(val)
-            except (SyntaxError, ValueError):
-                # if that goes wrong, just use the string
-                attempt = val
-            # ensure the types match ok
-            assert type(attempt) == type(globals()[key])
-            # cross fingers
-            print(f"Overriding: {key} = {attempt}")
-            globals()[key] = attempt
-        else:
-            raise ValueError(f"Unknown config key: {key}")
+
+def update_config(g, verbose=True):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config_files', nargs='*', default=[], type=str)
+    config_keys = filter_dict(g)
+    for k, default in config_keys.items():
+        _type = type(default)
+        parser.add_argument(f'--{k}', metavar="", type=_type, help=f"{_type.__name__} (default: {default})")
+    args = parser.parse_args()
+
+    # Load the variables defined in the extra config files
+    for extra_config_file in args.config_files:
+        extra_config = filter_dict(importlib.import_module(extra_config_file.removesuffix('.py').replace('/', '.')).__dict__)
+        if verbose:
+            make_header(f'Loaded from extra config file {extra_config_file}:')
+            pprint(extra_config)
+        g.update(extra_config)
+
+    # Update variables that have been set via CLI
+    cli_params = {k: v for k, v in args.__dict__.items() if v is not None}
+    if verbose:
+        make_header('Loaded from CLI params:')
+        pprint(cli_params)
+    g.update(cli_params)
+    config = {k: g[k] for k in config_keys}  # will be useful for logging
+    if verbose:
+        make_header('Full config:')
+        pprint(config)
+    return config
