@@ -52,10 +52,10 @@ Then train our model:
 python train.py
 ```
 
-See the train.py script for more exotic launches and hyperparameter overrides. I didn't tune the hyperparameters, I expect simple hyperparameter exploration should give better models. Totally understand if you want to skip model training, for simple demo just download my pretrained model:
+See the train.py script for more exotic launches and hyperparameter overrides. I didn't tune the hyperparameters, I expect simple hyperparameter exploration should give better models. Totally understand if you want to skip model training, for simple demo just download my pretrained model and save it into the directory `out`:
 
 ```bash
-wget TODOhoweasiesthmm
+wget https://karpathy.ai/llama2c/model.bin -P out
 ```
 
 Once we have the model.bin file, we can inference in C. Compile the C code first:
