@@ -1,9 +1,9 @@
 
 ## llama2.c
 
-![llama2c](assets/llama_cute.jpg)
-
 Have you ever wanted to inference a baby [Llama 2](https://ai.meta.com/llama/) model in pure C? No? Well, now you can!
+
+![llama2c](assets/llama_cute.jpg)
 
 Code in this repo first lets you train the Llama 2 architecture from scratch in PyTorch, then save the weights to a raw binary file, then load that into one ~simple 500-line C file that inferences the model, simply in fp32 for now.
 
