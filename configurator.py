@@ -31,6 +31,9 @@ def update_config(g, verbose=True):
     # Load the variables defined in the extra config files
     for extra_config_file in args.config_files:
         extra_config = filter_dict(importlib.import_module(extra_config_file.removesuffix('.py').replace('/', '.')).__dict__)
+        # Check if the config key already exists
+        for k in extra_config.keys():
+            assert k in config_keys, f"Unknown config key {k} in file {extra_config_file}."
         if verbose:
             make_header(f'Loaded from extra config file {extra_config_file}:')
             pprint(extra_config)
