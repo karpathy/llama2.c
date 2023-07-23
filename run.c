@@ -383,7 +383,7 @@ int argmax(float* v, int n) {
 
 // ----------------------------------------------------------------------------
 
-int *token_id_to_offset = NULL;
+int *token_offsets = NULL;
 char *tokens_blob = NULL;
 
 void load_tokenizer() {
@@ -396,13 +396,8 @@ void load_tokenizer() {
     int offsets_len;
     fread(&offsets_len, sizeof(int), 1, file);
 
-    token_id_to_offset = (int*) malloc(offsets_len * sizeof(int));
-    if (token_id_to_offset == NULL) {
-        perror("Cannot allocate memory for offsets\n");
-        exit(EXIT_FAILURE);
-    }
-
-    fread(token_id_to_offset, sizeof(int), offsets_len, file);
+    token_offsets = (int*) malloc(offsets_len * sizeof(int));
+    fread(token_offsets, sizeof(int), offsets_len, file);
 
     long pos = ftell(file);
     fseek(file, 0, SEEK_END);
@@ -410,11 +405,6 @@ void load_tokenizer() {
     fseek(file, pos, SEEK_SET);
 
     tokens_blob = (char*) malloc(tokens_blob_size);
-    if (tokens_blob == NULL) {
-        perror("Cannot allocate memory for tokens blob\n");
-        exit(EXIT_FAILURE);
-    }
-
     fread(tokens_blob, 1, tokens_blob_size, file);
     fclose(file);
 }
@@ -486,8 +476,8 @@ int main(int argc, char *argv[]) {
             // we now want to sample from this distribution to get the next token
             next = sample(state.logits, config.vocab_size);
         }
-        int offset = token_id_to_offset[next];
-        int next_offset = token_id_to_offset[next + 1];
+        int offset = token_offsets[next];
+        int next_offset = token_offsets[next + 1];
         fwrite(tokens_blob + offset, 1, next_offset - offset, stdout);
 
         // advance forward
@@ -495,6 +485,8 @@ int main(int argc, char *argv[]) {
         pos++;
     }
 
+    free(token_offsets);
+    free(tokens_blob);
     free_run_state(&state, &config);
     free_weights(&weights, &config);
     return 0;
