@@ -80,7 +80,7 @@ But note that this only emits the SentencePiece tokens. To decode the tokens int
 python run_wrap.py
 ```
 
-Watch the tokens stream by, fun! We can also run the PyTorch inference script for comparison:
+Watch the tokens stream by, fun! We can also run the PyTorch inference script for comparison (to run, add [model.ckpt](https://drive.google.com/file/d/1SM0rMxzy7babB-v4MfTg1GFqOCgWar5w/view?usp=share_link) to /out if you haven't already):
 
 ```bash
 python sample.py
@@ -92,7 +92,7 @@ Which gives the same results. More detailed testing will be done in `test_all.py
 $ pytest
 ```
 
-Currently you will need two files to run the test: the [model.bin](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link) file and the [model.ckpt](https://drive.google.com/file/d/1SM0rMxzy7babB-v4MfTg1GFqOCgWar5w/view?usp=share_link) file from PyTorch training I ran earlier. I have to think through running the tests without having to download 200MB of data.
+Currently you will need two files to test or sample: the [model.bin](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link) file and the [model.ckpt](https://drive.google.com/file/d/1SM0rMxzy7babB-v4MfTg1GFqOCgWar5w/view?usp=share_link) file from PyTorch training I ran earlier. I have to think through running the tests without having to download 200MB of data.
 
 ## unsorted todos
 
