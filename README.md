@@ -65,7 +65,7 @@ wget https://karpathy.ai/llama2c/model.bin -P out
 Once we have the model.bin file, we can inference in C. Compile the C code first:
 
 ```bash
-gcc -O3 -o run run.c -lm
+gcc -O3 -funsafe-math-optimizations -o run run.c -lm
 ```
 
 You can now run it simply as
