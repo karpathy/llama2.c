@@ -15,13 +15,15 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=0 --master_addr=123.456.123
 $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123.456 --master_port=1234 train.py
 (If your cluster does not have Infiniband interconnect prepend NCCL_IB_DISABLE=1)
 """
-
+import argparse
+import importlib
 import math
 import os
 import time
 from contextlib import nullcontext
 from datetime import datetime
 from functools import partial
+from pprint import pprint
 
 import torch
 from model import Transformer, ModelArgs
@@ -67,14 +69,48 @@ warmup_iters = 1000  # how many steps to warm up for
 device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = "bfloat16"  # float32|bfloat16|float16
 compile = True  # use PyTorch 2.0 to compile the model to be faster
+
+
 # -----------------------------------------------------------------------------
-config_keys = [
-    k
-    for k, v in globals().items()
-    if not k.startswith("_") and isinstance(v, (int, float, bool, str))
-]
-exec(open("configurator.py").read())  # overrides from command line or config file
+def filter_dict(d):
+    return {
+        _k: _v
+        for _k, _v in d.items()
+        if not _k.startswith("_") and isinstance(_v, (int, float, bool, str))
+    }
+
+
+def make_header(text, n=35):
+    n = max(n, len(text))
+    print()
+    print('-' * n)
+    print(text)
+    print('-' * n)
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--config_files', nargs='*', default=[], type=str)
+config_keys = filter_dict(globals())
+for k, default in config_keys.items():
+    _type = type(default)
+    parser.add_argument(f'--{k}', metavar="", type=_type, help=f"{_type.__name__} (default: {default})")
+args = parser.parse_args()
+
+# Load the variables defined in the extra config files
+for extra_config_file in args.config_files:
+    extra_config = filter_dict(importlib.import_module(extra_config_file.removesuffix('.py')).__dict__)
+    make_header(f'Loaded from extra config file {extra_config_file}:')
+    pprint(extra_config)
+    globals().update(extra_config)
+
+# Update variables that have been set via CLI
+cli_params = {k: v for k, v in args.__dict__.items() if v is not None}
+make_header('Loaded from CLI params:')
+pprint(cli_params)
+globals().update(cli_params)
 config = {k: globals()[k] for k in config_keys}  # will be useful for logging
+make_header('Full config:')
+pprint(config)
 # -----------------------------------------------------------------------------
 
 # fixing some hyperparams to sensible defaults
