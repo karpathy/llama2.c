@@ -10,6 +10,18 @@ Then run with:
 $ ./run
 */
 
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#if TARGET_OS_MAC
+#include <Accelerate/Accelerate.h>
+#define ACCELERATE_AVAILABLE 1
+#else
+#define ACCELERATE_AVAILABLE 0
+#endif
+#else
+#define ACCELERATE_AVAILABLE 0
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -221,15 +233,22 @@ void softmax(float* x, int size) {
     }
 }
 
-void matmul(float* xout, float* x, float* w, int n, int d) {
+void matmul(float *xout, float *x, float *w, int n, int d)
+{
     // W (d,n) @ x (n,) -> xout (d,)
-    for (int i = 0; i < d; i++) {
+#if ACCELERATE_AVAILABLE
+    vDSP_mmul(w, 1, x, 1, xout, 1, d, 1, n);
+#else
+    for (int i = 0; i < d; i++)
+    {
         float val = 0.0f;
-        for (int j = 0; j < n; j++) {
+        for (int j = 0; j < n; j++)
+        {
             val += w[i * n + j] * x[j];
         }
         xout[i] = val;
     }
+#endif
 }
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
