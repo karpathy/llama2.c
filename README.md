@@ -19,14 +19,14 @@ Let's just run a baby Llama 2 model in C. You need a model checkpoint. Download 
 wget https://karpathy.ai/llama2c/model.bin -P out
 ```
 
-(if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code, though it will only emit the raw token ids:
+(if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code:
 
 ```bash
 gcc -o run run.c -lm
-./run
+./run out/model.bin
 ```
 
-So to also translate them into text, we currently run it through a simple wrapper (for now):
+You'll notice that this just streams the raw tokens. Unless you can read those directly, you'll want to translate them into text. For now sadly we have to run this C code through a simple wrapper that does the translation (see the file, it's just 30 lines):
 
 ```bash
 pip install sentencepiece
@@ -67,7 +67,7 @@ gcc -o run run.c -lm
 You can now run it simply as
 
 ```bash
-./run
+./run out/model.bin
 ```
 
 But note that this only emits the SentencePiece tokens. To decode the tokens into text too, run this script through a simple wrapper:
