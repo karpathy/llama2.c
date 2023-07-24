@@ -318,7 +318,7 @@ impl RunState {
         }
     }
 
-    fn aggregate_attention(&mut self, l: usize, pos:usize, C: &Config) {
+    fn aggregate_attention(&mut self, l: usize, pos: usize, C: &Config) {
         let head_size = C.dim / C.n_heads;
         let mut xb_heads = self.xb.chunks_exact_mut(head_size);
         for h in 0..C.n_heads {
@@ -339,26 +339,29 @@ impl RunState {
                     *dst += val * attn_w;
                 }
             }
-
         }
     }
 
-
-    fn ffn(&mut self, l: usize,  w:&TransformerWeights, C: &Config) {
-        let rms_ffn_w = _uncheked_slice(&w.rms_ffn_weight, l*C.dim, C.dim);
+    fn ffn(&mut self, l: usize, w: &TransformerWeights, C: &Config) {
+        let rms_ffn_w = _uncheked_slice(&w.rms_ffn_weight, l * C.dim, C.dim);
         // normalize after adding residual
         rmsnorm(&mut self.xb, &self.x, rms_ffn_w);
-        let w1 = _uncheked_slice(&w.w1, C.dim*C.hidden_dim*l, C.hidden_dim*C.dim);
-        let w2 = _uncheked_slice(&w.w2, C.dim*C.hidden_dim*l, C.hidden_dim*C.dim);
-        let w3 = _uncheked_slice(&w.w3, C.dim*C.hidden_dim*l, C.hidden_dim*C.dim);
+        let w1 = _uncheked_slice(&w.w1, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
+        let w2 = _uncheked_slice(&w.w2, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
+        let w3 = _uncheked_slice(&w.w3, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
         matmul(&mut self.hb, &self.xb, w1, C.dim);
         matmul(&mut self.hb2, &self.xb, w3, C.dim);
 
-        // silu on first hidden 
-        self.hb.iter_mut().for_each(|v| *v = 1 as Ty /(1 as Ty+(-*v).exp()));
+        // silu on first hidden
+        self.hb
+            .iter_mut()
+            .for_each(|v| *v = 1 as Ty / (1 as Ty + (-*v).exp()));
 
-        // mix branches 
-        self.hb.iter_mut().zip(self.hb2.iter()).for_each(|(h1, &h2)| *h1 = (*h1)*h2);
+        // mix branches
+        self.hb
+            .iter_mut()
+            .zip(self.hb2.iter())
+            .for_each(|(h1, &h2)| *h1 = (*h1) * h2);
 
         matmul(&mut self.xb, &self.hb, w2, C.hidden_dim);
     }
@@ -372,7 +375,6 @@ impl RunState {
             .take(1)
             .for_each(|src| self.x.as_mut_slice().copy_from_slice(src));
 
-
         for l in 0..C.n_layers {
             let rms_attn_w = _uncheked_slice(&w.rms_att_weight, l * C.dim, C.dim);
 
@@ -384,19 +386,32 @@ impl RunState {
             inplace_softmax(&mut self.att[..=pos]);
             self.aggregate_attention(l, pos, C);
 
-            let wo= _uncheked_slice(&w.wo, l*C.dim*C.dim, C.dim*C.dim);
+            let wo = _uncheked_slice(&w.wo, l * C.dim * C.dim, C.dim * C.dim);
             matmul(&mut self.xb2, &self.xb, wo, C.dim);
             // post attention residual
-            self.x.iter_mut().zip(self.xb2.iter()).for_each(|(dst, src)| *dst += *src);
+            self.x
+                .iter_mut()
+                .zip(self.xb2.iter())
+                .for_each(|(dst, src)| *dst += *src);
 
             self.ffn(l, w, C);
             // post ffn residual
-            self.x.iter_mut().zip(self.xb.iter()).for_each(|(dst, src)| *dst += src);
-
-            
+            self.x
+                .iter_mut()
+                .zip(self.xb.iter())
+                .for_each(|(dst, src)| *dst += src);
         }
 
-        &self.logits
+        // last rmsnorm
+        let ss = self.x.iter().fold(0f32, |init, &v| init + v * v) / (self.x.len() as Ty);
+        let ss = (1 as Ty) / (ss + 1e-5).sqrt();
+        self.x
+            .iter_mut()
+            .zip(w.rms_final_weight.iter())
+            .for_each(|(xx, ww)| (*xx) *= ww * ss);
+
+        matmul(&mut self.logits, &self.x, &w.token_embedding_table, C.vocab_size);
+
     }
 }
 
