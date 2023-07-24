@@ -43,6 +43,7 @@ STATIC_YOINK("zipos");
 #include <time.h>
 #include <math.h>
 #include <string.h>
+#include <sys/time.h>
 
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
@@ -242,6 +243,7 @@ void softmax(float* x, int size) {
 
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
+    #pragma omp parallel for
     for (int i = 0; i < d; i++) {
         float val = 0.0f;
         for (int j = 0; j < n; j++) {
@@ -402,6 +404,12 @@ int argmax(float* v, int n) {
 
 // ----------------------------------------------------------------------------
 
+long time_in_ms() {
+  struct timeval time;
+  gettimeofday(&time, NULL);
+  return time.tv_sec * 1000 + time.tv_usec / 1000;
+}
+
 int main(int argc, char *argv[]) {
 
     // poor man's C argparse
@@ -478,7 +486,8 @@ int main(int argc, char *argv[]) {
     malloc_run_state(&state, &config);
     
     // the current position we are in
-    clock_t start = clock();
+    long start = time_in_ms();
+
     int next;
     int token = 1; // 1 = BOS token in Llama-2 sentencepiece
     int pos = 0;
@@ -509,9 +518,8 @@ int main(int argc, char *argv[]) {
     printf("\n");
 
     // report our achieved tok/s
-    clock_t end = clock();
-    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-    printf("achieved tok/s: %f\n", config.seq_len / elapsed);
+    long end = time_in_ms();
+    printf("achieved tok/s: %f\n", config.seq_len / (double)(end-start)*1000);
 
     // memory cleanup
     free_run_state(&state);
