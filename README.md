@@ -26,14 +26,7 @@ gcc -O3 -o run run.c -lm
 ./run out/model.bin
 ```
 
-You'll notice that this just streams the raw tokens. (See [performance](#performance) for compile flags that can significantly speed this up). Unless you can read those directly, you'll want to translate them into text. For now sadly we have to run this C code through a simple wrapper that does the translation (see the file, it's just 30 lines):
-
-```bash
-pip install sentencepiece
-python run_wrap.py
-```
-
-You'll see text stream. On my M1 MacBook Air this runs at ~100 tokens/s, not bad for super naive fp32 single-threaded C code. Sample output:
+You'll see the text stream a sample. On my M1 MacBook Air this runs at ~100 tokens/s, not bad for super naive fp32 single-threaded C code. See [performance](#performance) for compile flags that can significantly speed this up. Sample output:
 
 *Once upon a time, there was a boy named Timmy. Timmy loved to play sports with his friends. He was very good at throwing and catching balls. One day, Timmy's mom gave him a new shirt to wear to a party. Timmy thought it was impressive and asked his mom to explain what a shirt could be for. "A shirt is like a special suit for a basketball game," his mom said. Timmy was happy to hear that and put on his new shirt. He felt like a soldier going to the army and shouting. From that day on, Timmy wore his new shirt every time he played sports with his friends at the party. Once upon a time, there was a little girl named Lily. She loved to play outside with her friends. One day, Lily and her friend Emma were playing with a ball. Emma threw the ball too hard and it hit Lily's face. Lily felt embarrassed and didn't want to play anymore.
 Emma asked Lily what was wrong, and Lily told her about her memory. Emma told Lily that she was embarrassed because she had thrown the ball too hard. Lily felt bad
@@ -72,12 +65,6 @@ You can now run it simply as
 
 ```bash
 ./run out/model.bin
-```
-
-But note that this only emits the SentencePiece tokens. To decode the tokens into text too, run this script through a simple wrapper:
-
-```bash
-python run_wrap.py
 ```
 
 Watch the tokens stream by, fun! We can also run the PyTorch inference script for comparison (to run, add [model.ckpt](https://drive.google.com/file/d/1SM0rMxzy7babB-v4MfTg1GFqOCgWar5w/view?usp=share_link) to /out if you haven't already):
@@ -124,8 +111,7 @@ Also, I saw someone report higher throughput replacing `gcc` with `clang`.
 
 ## unsorted todos
 
-- why SentencePiece can't iteratively decode properly?
-- would love to delete run_wrap.py and just directly use C code to string
+- why is there a leading space in C sampling code when we `./run`?
 - todo multiquery support? doesn't seem as useful for smaller models that run on CPU (?)
 - todo support inferencing beyond max_seq_len steps, have to think through the kv cache
 - why is MFU so low (~10%) on my A100 40GB for training?

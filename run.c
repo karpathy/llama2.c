@@ -378,7 +378,6 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
-    setbuf(stdout, NULL); // disable stdout buffering
 
     // poor man's C argparse
     char *checkpoint = NULL;
@@ -412,6 +411,24 @@ int main(int argc, char *argv[]) {
     }
     fread(&config, sizeof(Config), 1, file);
 
+    // init the Tokenizer
+    char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
+    {
+        FILE *file = fopen("tokenizer.bin", "r");
+        if (!file) {
+            printf("Unable to open the tokenizer file tokenizer.bin! Run "
+            "python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n");
+            return 1;
+        }
+        int len;
+        for (int i = 0; i < config.vocab_size; i++) {
+            fread(&len, sizeof(int), 1, file);
+            vocab[i] = (char *)malloc(len + 1);
+            fread(vocab[i], len, 1, file);
+            vocab[i][len] = '\0'; // add the string terminating token
+        }
+    }
+
     // create and init the Transformer
     TransformerWeights weights;
     malloc_weights(&weights, &config);
@@ -421,8 +438,9 @@ int main(int argc, char *argv[]) {
     // create and init the application RunState
     RunState state;
     malloc_run_state(&state, &config);
-
+    
     // the current position we are in
+    clock_t start = clock();
     int next;
     int token = 1; // 1 = BOS token in Llama-2 sentencepiece
     int pos = 0;
@@ -443,14 +461,24 @@ int main(int argc, char *argv[]) {
             // we now want to sample from this distribution to get the next token
             next = sample(state.logits, config.vocab_size);
         }
-        printf("%d\n", next);
+        printf("%s", vocab[next]);
+        fflush(stdout);
 
         // advance forward
         token = next;
         pos++;
     }
+    printf("\n");
+    
+    // report our achieved tok/s
+    clock_t end = clock();
+    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
+    printf("achieved tok/s: %f\n", config.seq_len / elapsed);
 
+    // memory cleanup
     free_run_state(&state);
     free_weights(&weights);
+    for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
+    free(vocab);
     return 0;
 }
