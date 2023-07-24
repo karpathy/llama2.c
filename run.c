@@ -172,7 +172,7 @@ static inline unsigned int xoro_rotl(const unsigned int x, int k) {
 	return (x << k) | (x >> (32 - k));
 }
 
-static unsigned int _rng_state[4];
+static unsigned int _rng_state[4] = {9874, 6993, 3478, 4392};
 
 // xoroshiro128+ PRNG https://prng.di.unimi.it/
 unsigned int xoro_rand(void) {
