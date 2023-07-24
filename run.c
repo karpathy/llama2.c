@@ -184,7 +184,7 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     }
     ss /= size;
     ss += 1e-5f;
-    ss = 1.0f / sqrt(ss);
+    ss = 1.0f / sqrtf(ss);
     // normalize and scale
     for (int j = 0; j < size; j++) {
         o[j] = weight[j] * (ss * x[j]);
@@ -202,7 +202,7 @@ void softmax(float* x, int size) {
     // exp and sum
     float sum = 0.0f;
     for (int i = 0; i < size; i++) {
-        x[i] = exp(x[i] - max_val);
+        x[i] = expf(x[i] - max_val);
         sum += x[i];
     }
     // normalize
