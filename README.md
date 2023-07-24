@@ -43,6 +43,18 @@ On my MacBook Air compiled with $ gcc -Ofast -o run run.c -lm this ran at ~150 t
 
 *Once upon a time, there was a little girl named Lily. She loved playing with her toys on top of her bed. One day, she decided to have a tea party with her stuffed animals. She poured some tea into a tiny teapot and put it on top of the teapot. Suddenly, her little brother Max came into the room and wanted to join the tea party too. Lily didn't want to share her tea and she told Max to go away. Max started to cry and Lily felt bad. She decided to yield her tea party to Max and they both shared the teapot. But then, something unexpected happened. The teapot started to shake and wiggle. Lily and Max were scared and didn't know what to do. Suddenly, the teapot started to fly towards the ceiling and landed on the top of the bed. Lily and Max were amazed and they hugged each other. They realized that sharing was much more fun than being selfish. From that day on, they always shared their tea parties and toys.*
 
+## models
+
+It looks like I will have multiple models that I will train on TinyStories, I will catalogue them here.
+
+| model | dim | n_layers | n_heads | max context length | parameters | download
+| --- | --- | --- | --- | --- | --- | --- |
+| OG | 288 | 6 | 6 | 256 | 15M | [model.bin](https://karpathy.ai/llama2c/model.bin) |
+| 44M| 512 | 8 | 8 | 1024 | 44M | [model44m.bin](https://karpathy.ai/llama2c/model44m.bin) |
+| 120M| 768 | 12 | 12 | 1024 | 120M | training... |
+
+You'll notice that the 120M model is roughly equivalent to GPT-1 in size. Alternatively, this is also the smallest model in the GPT-2 series (`GPT-2 small`), except the max context length is only 1024 instead of 2048. The only notable changes from GPT-1/2 architecture is that Llama uses RoPE relatively positional embeddings instead of absolute/learned positional embeddings, a bit more fancy SwiGLU non-linearity in the MLP, RMSNorm instead of LayerNorm, bias=False on all Linear layers, and is optionally multiquery (but this is not yet supported in llama2.c).
+
 ## howto
 
 It should be possible to load the weights released by Meta but I haven't tried because the inference speed, even of the 7B model, would probably be not great with this baby single-threaded C program. So in this repo we focus on more narrow applications, and train the same architecture but from scratch, in this case on the TinyStories dataset for fun.
