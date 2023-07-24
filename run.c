@@ -15,6 +15,10 @@ $ ./run
 #include <string.h>
 #include <sys/time.h>
 
+#ifdef USE_OPENBLAS
+#include <cblas.h>
+#endif
+
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
@@ -211,6 +215,12 @@ void softmax(float* x, int size) {
     }
 }
 
+#ifdef USE_OPENBLAS
+void matmul(float* xout, float* x, float* w, int n, int d)
+{
+    cblas_sgemv(CblasRowMajor, CblasNoTrans, d, n, 1.0f, w, n, x, 1, 0.0f, xout, 1);
+}
+#else
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     #pragma omp parallel for
@@ -222,6 +232,7 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
         xout[i] = val;
     }
 }
+#endif
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
     
