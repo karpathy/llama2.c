@@ -39,7 +39,7 @@ wget https://karpathy.ai/llama2c/model44m.bin -P out44m
 ./run out44m/model44m.bin
 ```
 
-On my MacBook Air compiled with $ gcc -O3 -funsafe-math-optimizations -Ofast -ffast-math -o run run.c -lm this ran at ~150 tok/s. Still way too fast! I have to train an even bigger checkpoint... This model samples more coherent and diverse stories:
+On my MacBook Air compiled with $ gcc -Ofast -o run run.c -lm this ran at ~150 tok/s. Still way too fast! I have to train an even bigger checkpoint... This model samples more coherent and diverse stories:
 
 *Once upon a time, there was a little girl named Lily. She loved playing with her toys on top of her bed. One day, she decided to have a tea party with her stuffed animals. She poured some tea into a tiny teapot and put it on top of the teapot. Suddenly, her little brother Max came into the room and wanted to join the tea party too. Lily didn't want to share her tea and she told Max to go away. Max started to cry and Lily felt bad. She decided to yield her tea party to Max and they both shared the teapot. But then, something unexpected happened. The teapot started to shake and wiggle. Lily and Max were scared and didn't know what to do. Suddenly, the teapot started to fly towards the ceiling and landed on the top of the bed. Lily and Max were amazed and they hugged each other. They realized that sharing was much more fun than being selfish. From that day on, they always shared their tea parties and toys.*
 
@@ -115,7 +115,7 @@ gcc -O3 -o run run.c -lm
 Putting a few of these together, the fastest throughput I saw so far on my MacBook Air (M1) is with:
 
 ```bash
-gcc -O3 -funsafe-math-optimizations -Ofast -ffast-math -o run run.c -lm
+gcc -Ofast -o run run.c -lm
 ```
 
 Also, I saw someone report higher throughput replacing `gcc` with `clang`.
