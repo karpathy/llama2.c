@@ -377,7 +377,9 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
-  return (1000 * clock()) / CLOCKS_PER_SEC;
+  struct timespec time;
+  timespec_get(&time, TIME_UTC);
+  return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
 
 int main(int argc, char *argv[]) {
