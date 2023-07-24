@@ -90,7 +90,7 @@ void malloc_run_state(RunState* s, Config* p) {
     }
 }
 
-void free_run_state(RunState* s, Config* p) {
+void free_run_state(RunState* s) {
     free(s->x);
     free(s->xb);
     free(s->xb2);
@@ -129,7 +129,7 @@ void malloc_weights(TransformerWeights* w, Config* p) {
     }
 }
 
-void free_weights(TransformerWeights* w, Config* p) {
+void free_weights(TransformerWeights* w) {
     free(w->token_embedding_table);
     free(w->rms_att_weight);
     free(w->rms_ffn_weight);
@@ -456,7 +456,7 @@ int main(int argc, char *argv[]) {
         pos++;
     }
 
-    free_run_state(&state, &config);
-    free_weights(&weights, &config);
+    free_run_state(&state);
+    free_weights(&weights);
     return 0;
 }
