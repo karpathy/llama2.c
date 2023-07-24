@@ -166,6 +166,42 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f) {
 }
 
 // ----------------------------------------------------------------------------
+// pseudo-random number generation
+
+static inline unsigned int xoro_rotl(const unsigned int x, int k) {
+	return (x << k) | (x >> (32 - k));
+}
+
+static unsigned int _rng_state[4];
+
+// xoroshiro128+ PRNG https://prng.di.unimi.it/
+unsigned int xoro_rand(void) {
+	const unsigned int result = _rng_state[0] + _rng_state[3];
+	const unsigned int t = _rng_state[1] << 9;
+
+	_rng_state[2] ^= _rng_state[0];
+	_rng_state[3] ^= _rng_state[1];
+	_rng_state[1] ^= _rng_state[2];
+	_rng_state[0] ^= _rng_state[3];
+	_rng_state[2] ^= t;
+	_rng_state[3] = xoro_rotl(_rng_state[3], 11);
+
+	return result;
+}
+
+// xoroshiro128+ PRNG https://prng.di.unimi.it/
+float xoro_rand_float(void) {
+    return (float)(xoro_rand() & 0x7FFFFF) / (float)0x7FFFFF;
+}
+
+void xoro_seed(int seed) {
+    _rng_state[0] = (unsigned int)seed;
+    _rng_state[1] = ~(unsigned int)seed;
+    _rng_state[2] = (unsigned int)(seed << 16);
+    _rng_state[3] = (unsigned int)(seed >> 16);
+}
+
+// ----------------------------------------------------------------------------
 // neural net blocks
 
 void copy(float *a, float *b, int size) {
@@ -351,7 +387,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
 int sample(float* probabilities, int n) {
     // sample index from probabilities, they must sum to 1
-    float r = (float)rand() / (float)RAND_MAX;
+    float r = xoro_rand_float();
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probabilities[i];
@@ -396,11 +432,11 @@ int main(int argc, char *argv[]) {
     // seed is optional
     if (argc >= 4) {
         unsigned int seed = atoi(argv[3]);
-        srand(seed);
+        xoro_seed(seed);
     } else {
         time_t current_time; 
         time(&current_time);
-        srand((unsigned int)current_time);
+        xoro_seed((unsigned int)current_time);
     }
 
     // read in the config header
