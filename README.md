@@ -120,6 +120,8 @@ Putting a few of these together, the fastest throughput I saw so far on my MacBo
 gcc -O3 -funsafe-math-optimizations -Ofast -ffast-math -o run run.c -lm
 ```
 
+Also, I saw someone report higher throughput replacing `gcc` with `clang`.
+
 ## unsorted todos
 
 - why SentencePiece can't iteratively decode properly?
