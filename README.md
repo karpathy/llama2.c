@@ -120,6 +120,20 @@ gcc -Ofast -o run run.c -lm
 
 Also, I saw someone report higher throughput replacing `gcc` with `clang`.
 
+**OpenMP** Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul. You can compile e.g. like so:
+
+```bash
+clang -Ofast -fopenmp -march=native run.c  -lm  -o run
+```
+
+(I believe you can swap clang/gcc, and may try to leave out -march=native). Then when you run inference, make sure to use OpenMP flags to set the number of threads, e.g.:
+
+```bash
+OMP_NUM_THREADS=4 ./run out/model.bin
+```
+
+Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimitely familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
+
 ## unsorted todos
 
 - why is there a leading space in C sampling code when we `./run`?
