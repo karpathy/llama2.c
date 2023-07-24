@@ -19,7 +19,7 @@ Let's just run a baby Llama 2 model in C. You need a model checkpoint. Download 
 wget https://karpathy.ai/llama2c/model.bin -P out
 ```
 
-(if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code:
+(if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code (check [howto](#howto) for faster optimization flags):
 
 ```bash
 gcc -O3 -o run run.c -lm
@@ -66,6 +66,12 @@ Once we have the model.bin file, we can inference in C. Compile the C code first
 
 ```bash
 gcc -O3 -o run run.c -lm
+```
+
+Alternatively, if you want to increase the inference performance and are confident in using unsafe math optimizations, which are probably fine for this application, you can compile the code with the `-funsafe-math-optimizations` flag as shown below:
+
+```bash
+gcc -O3 -funsafe-math-optimizations -o run run.c -lm
 ```
 
 You can now run it simply as
