@@ -196,10 +196,6 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
 }
 
 void softmax(float* x, int size) {
-    if(size == 1) {
-        x[0] = 1.0f;
-        return;
-    }
     // find max value (for numerical stability)
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
@@ -207,14 +203,13 @@ void softmax(float* x, int size) {
             max_val = x[i];
         }
     }
-
-    // normalize
+    // exp and sum
     float sum = 0.0f;
     for (int i = 0; i < size; i++) {
         x[i] = exp(x[i] - max_val);
         sum += x[i];
     }
-
+    // normalize
     for (int i = 0; i < size; i++) {
         x[i] /= sum;
     }
