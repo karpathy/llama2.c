@@ -169,24 +169,24 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f) {
 // pseudo-random number generation
 
 static inline unsigned int xoro_rotl(const unsigned int x, int k) {
-	return (x << k) | (x >> (32 - k));
+    return (x << k) | (x >> (32 - k));
 }
 
 static unsigned int _rng_state[4] = {9874, 6993, 3478, 4392};
 
 // xoroshiro128+ PRNG https://prng.di.unimi.it/
 unsigned int xoro_rand(void) {
-	const unsigned int result = _rng_state[0] + _rng_state[3];
-	const unsigned int t = _rng_state[1] << 9;
+    const unsigned int result = _rng_state[0] + _rng_state[3];
+    const unsigned int t = _rng_state[1] << 9;
 
-	_rng_state[2] ^= _rng_state[0];
-	_rng_state[3] ^= _rng_state[1];
-	_rng_state[1] ^= _rng_state[2];
-	_rng_state[0] ^= _rng_state[3];
-	_rng_state[2] ^= t;
-	_rng_state[3] = xoro_rotl(_rng_state[3], 11);
+    _rng_state[2] ^= _rng_state[0];
+    _rng_state[3] ^= _rng_state[1];
+    _rng_state[1] ^= _rng_state[2];
+    _rng_state[0] ^= _rng_state[3];
+    _rng_state[2] ^= t;
+    _rng_state[3] = xoro_rotl(_rng_state[3], 11);
 
-	return result;
+    return result;
 }
 
 // xoroshiro128+ PRNG https://prng.di.unimi.it/
