@@ -462,9 +462,9 @@ int main(int argc, char *argv[]) {
     {
         #ifdef COSMO_ZIP // if this is defined 
         // we read the embedded tokenizer.bin from within the executable
-        FILE *file = fopen("/zip/tokenizer.bin", "r");
+        FILE *file = fopen("/zip/tokenizer.bin", "rb");
         #else
-        FILE *file = fopen("tokenizer.bin", "r");
+        FILE *file = fopen("tokenizer.bin", "rb");
         #endif
         if (!file) {
             printf("Unable to open the tokenizer file tokenizer.bin! Run "
