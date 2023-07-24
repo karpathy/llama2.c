@@ -9,7 +9,8 @@ import subprocess
 import time
 
 # specify your command
-command = ["./run", "out/model.bin"]
+# command = ["./run", "out/model.bin"]
+command = ["./target/release/llama2-rs", "out/model.bin"]
 
 # Start the process
 proc = subprocess.Popen(command, stdout=subprocess.PIPE)
@@ -17,12 +18,12 @@ enc = Tokenizer()
 
 t0 = time.time()
 tokens = []
-last = ''
+last = ""
 for line in proc.stdout:
-    token = int(line.decode('utf-8').strip())
+    token = int(line.decode("utf-8").strip())
     dec = enc.decode(tokens + [token])
-    chunk = dec[len(last):]
-    print(chunk, end='',flush=True)
+    chunk = dec[len(last) :]
+    print(chunk, end="", flush=True)
     tokens.append(token)
     last = dec
 t1 = time.time()
