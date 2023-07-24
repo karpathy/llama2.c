@@ -178,8 +178,9 @@ fn rmsnorm(out: &mut [Ty], x: &[Ty], w: &[Ty]) {
 }
 
 /// For now this is a matvec
-fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], row_size: usize) {
-    for (row, out_elem) in w.chunks_exact(row_size).zip(out.iter_mut()) {
+/// Wx: [n, d]x[d,] -> [n,]
+fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], in_dim: usize) {
+    for (row, out_elem) in w.chunks_exact(in_dim).zip(out.iter_mut()) {
         let val = row
             .iter()
             .zip(x.iter())
@@ -317,6 +318,51 @@ impl RunState {
         }
     }
 
+    fn aggregate_attention(&mut self, l: usize, pos:usize, C: &Config) {
+        let head_size = C.dim / C.n_heads;
+        let mut xb_heads = self.xb.chunks_exact_mut(head_size);
+        for h in 0..C.n_heads {
+            let seq_cached_vals =
+                _uncheked_slice(&self.value_cache, l * C.dim * C.seq_len, C.seq_len * C.dim)
+                    .chunks_exact(head_size)
+                    .skip(h)
+                    .step_by(C.n_heads);
+            // cahced vals have head_size values in it. we need to go over all t vals and update xb
+            // dst is head_size part of xb, we gonna add t (actually pos values) values into it
+            let dst = xb_heads.next().unwrap();
+            // this is different from Karphaty's impl. first go over all head size values, than skip time stamp
+            // Why Karphaty's inner loop does C.dim jumps?
+            // this goes over time stamps
+            for (vals, attn_w) in seq_cached_vals.zip(self.att.iter()).take(pos + 1) {
+                // aggregate timestamp to xb
+                for (val, dst) in vals.iter().zip(dst.iter_mut()) {
+                    *dst += val * attn_w;
+                }
+            }
+
+        }
+    }
+
+
+    fn ffn(&mut self, l: usize,  w:&TransformerWeights, C: &Config) {
+        let rms_ffn_w = _uncheked_slice(&w.rms_ffn_weight, l*C.dim, C.dim);
+        // normalize after adding residual
+        rmsnorm(&mut self.xb, &self.x, rms_ffn_w);
+        let w1 = _uncheked_slice(&w.w1, C.dim*C.hidden_dim*l, C.hidden_dim*C.dim);
+        let w2 = _uncheked_slice(&w.w2, C.dim*C.hidden_dim*l, C.hidden_dim*C.dim);
+        let w3 = _uncheked_slice(&w.w3, C.dim*C.hidden_dim*l, C.hidden_dim*C.dim);
+        matmul(&mut self.hb, &self.xb, w1, C.dim);
+        matmul(&mut self.hb2, &self.xb, w3, C.dim);
+
+        // silu on first hidden 
+        self.hb.iter_mut().for_each(|v| *v = 1 as Ty /(1 as Ty+(-*v).exp()));
+
+        // mix branches 
+        self.hb.iter_mut().zip(self.hb2.iter()).for_each(|(h1, &h2)| *h1 = (*h1)*h2);
+
+        matmul(&mut self.xb, &self.hb, w2, C.hidden_dim);
+    }
+
     fn step(&mut self, token: usize, pos: usize, w: &TransformerWeights, C: &Config) -> &[Ty] {
         // copy content row
         // TODO: mayne direct indexing w/o bound checks is faster? benchmark
@@ -325,6 +371,7 @@ impl RunState {
             .skip(token)
             .take(1)
             .for_each(|src| self.x.as_mut_slice().copy_from_slice(src));
+
 
         for l in 0..C.n_layers {
             let rms_attn_w = _uncheked_slice(&w.rms_att_weight, l * C.dim, C.dim);
@@ -335,9 +382,18 @@ impl RunState {
             self.cache_kv(pos, l, C);
             self.attention(pos, l, C);
             inplace_softmax(&mut self.att[..=pos]);
-            // STOPPED HERE: aggregate values with attention
+            self.aggregate_attention(l, pos, C);
 
+            let wo= _uncheked_slice(&w.wo, l*C.dim*C.dim, C.dim*C.dim);
+            matmul(&mut self.xb2, &self.xb, wo, C.dim);
+            // post attention residual
+            self.x.iter_mut().zip(self.xb2.iter()).for_each(|(dst, src)| *dst += *src);
 
+            self.ffn(l, w, C);
+            // post ffn residual
+            self.x.iter_mut().zip(self.xb.iter()).for_each(|(dst, src)| *dst += src);
+
+            
         }
 
         &self.logits
