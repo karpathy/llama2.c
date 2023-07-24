@@ -14,6 +14,7 @@ $ ./run
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
+#include <string.h>
 
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
@@ -168,12 +169,6 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f) {
 // ----------------------------------------------------------------------------
 // neural net blocks
 
-void copy(float *a, float *b, int size) {
-    for (int i = 0; i < size; i++) {
-        a[i] = b[i];
-    }
-}
-
 void accum(float *a, float *b, int size) {
     for (int i = 0; i < size; i++) {
         a[i] += b[i];
@@ -195,14 +190,23 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     }
 }
 
-void softmax(float* x, int size) {
-    // find max value (for numerical stability)
-    float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
+int argmax(float* v, int n) {
+    // return argmax of v in elements 0..n
+    int max_i = 0;
+    float max_p = v[0];
+    for (int i = 1; i < n; i++) {
+        if (v[i] > max_p) {
+            max_i = i;
+            max_p = v[i];
         }
     }
+    return max_i;
+}
+
+void softmax(float* x, int size) {
+    // find max value (for numerical stability)
+    const float max_val = x[argmax(x, size)];
+
     // exp and sum
     float sum = 0.0f;
     for (int i = 0; i < size; i++) {
@@ -236,7 +240,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
     // copy the token embedding into x
     float* content_row = &(w->token_embedding_table[token * dim]);
-    copy(x, content_row, dim);
+    memcpy(x, content_row, dim*sizeof(*x));
 
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
     float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
@@ -277,8 +281,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         int loff = l * p->seq_len * dim; // kv cache layer offset for convenience
         float* key_cache_row = s->key_cache + loff + pos * dim;
         float* value_cache_row = s->value_cache + loff + pos * dim;
-        copy(key_cache_row, s->k, dim);
-        copy(value_cache_row, s->v, dim);
+        memcpy(key_cache_row, s->k, dim*sizeof(*key_cache_row));
+        memcpy(value_cache_row, s->v, dim*sizeof(*value_cache_row));
         
         // multihead attention. iterate over all heads
         for (int h = 0; h < p->n_heads; h++) {
@@ -362,19 +366,6 @@ int sample(float* probabilities, int n) {
     return n - 1; // in case of rounding errors
 }
 
-int argmax(float* v, int n) {
-    // return argmax of v in elements 0..n
-    int max_i = 0;
-    float max_p = v[0];
-    for (int i = 1; i < n; i++) {
-        if (v[i] > max_p) {
-            max_i = i;
-            max_p = v[i];
-        }
-    }
-    return max_i;
-}
-
 // ----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
@@ -423,11 +414,9 @@ int main(int argc, char *argv[]) {
     malloc_run_state(&state, &config);
 
     // the current position we are in
+    // token = 1: BOS token in Llama-2 sentencepiece
     int next;
-    int token = 1; // 1 = BOS token in Llama-2 sentencepiece
-    int pos = 0;
-    while (pos < config.seq_len) {
-
+    for (int pos = 0, token = 1; pos < config.seq_len; ++pos, token = next) {
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
 
@@ -444,10 +433,6 @@ int main(int argc, char *argv[]) {
             next = sample(state.logits, config.vocab_size);
         }
         printf("%d\n", next);
-
-        // advance forward
-        token = next;
-        pos++;
     }
 
     free_run_state(&state);
