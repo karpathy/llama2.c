@@ -209,5 +209,10 @@ $ ./run.com model.bin
 - weird errors with torch.compile and wandb when using DDP
 - make more better tests to decrease yolo
 
+## ack
+
+I trained the llama2.c storyteller models on a 4X A100 40GB box graciously provided by the excellent [Lambda labs](https://lambdalabs.com/service/gpu-cloud), thank you.
+
 ## License
+
 MIT
