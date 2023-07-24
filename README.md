@@ -32,6 +32,15 @@ You'll see the text stream a sample. On my M1 MacBook Air this runs at ~100 toke
 Emma asked Lily what was wrong, and Lily told her about her memory. Emma told Lily that she was embarrassed because she had thrown the ball too hard. Lily felt bad
 achieved tok/s: 98.746993347843922*
 
+**Update**: I've now also uploaded a bigger checkpoint. This one is dim 512, 8 layers, 8 heads and context length 1024, a ~44M param Transformer. It trained for 200K iterations batch size 32 on 4XA100 40GB GPUs in ~8 hours. You can use this bigger and more powerful checkpoint like so:
+
+```bash
+wget https://karpathy.ai/llama2c/model44m.bin -P out44m
+./run out44m/model44m.bin
+```
+
+On my MacBook Air compiled with $ gcc -O3 -funsafe-math-optimizations -Ofast -ffast-math -o run run.c -lm this ran at ~150 tok/s. Still way too fast! I have to train an even bigger checkpoint...
+
 ## howto
 
 It should be possible to load the weights released by Meta but I haven't tried because the inference speed, even of the 7B model, would probably be not great with this baby single-threaded C program. So in this repo we focus on more narrow applications, and train the same architecture but from scratch, in this case on the TinyStories dataset for fun.
