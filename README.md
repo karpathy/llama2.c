@@ -19,14 +19,14 @@ Let's just run a baby Llama 2 model in C. You need a model checkpoint. Download 
 wget https://karpathy.ai/llama2c/model.bin -P out
 ```
 
-(if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code (check [howto](#howto) for faster optimization flags):
+(if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code:
 
 ```bash
 gcc -O3 -o run run.c -lm
 ./run out/model.bin
 ```
 
-You'll notice that this just streams the raw tokens. Unless you can read those directly, you'll want to translate them into text. For now sadly we have to run this C code through a simple wrapper that does the translation (see the file, it's just 30 lines):
+You'll notice that this just streams the raw tokens. (See [performance](#performance) for compile flags that can significantly speed this up). Unless you can read those directly, you'll want to translate them into text. For now sadly we have to run this C code through a simple wrapper that does the translation (see the file, it's just 30 lines):
 
 ```bash
 pip install sentencepiece
@@ -68,12 +68,6 @@ Once we have the model.bin file, we can inference in C. Compile the C code first
 gcc -O3 -o run run.c -lm
 ```
 
-Alternatively, if you want to increase the inference performance and are confident in using unsafe math optimizations, which are probably fine for this application, you can compile the code with the `-funsafe-math-optimizations` flag as shown below:
-
-```bash
-gcc -O3 -funsafe-math-optimizations -o run run.c -lm
-```
-
 You can now run it simply as
 
 ```bash
@@ -99,6 +93,32 @@ $ pytest
 ```
 
 Currently you will need two files to test or sample: the [model.bin](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link) file and the [model.ckpt](https://drive.google.com/file/d/1SM0rMxzy7babB-v4MfTg1GFqOCgWar5w/view?usp=share_link) file from PyTorch training I ran earlier. I have to think through running the tests without having to download 200MB of data.
+
+## performance
+
+*(NOTE: this guide is not great because I personally spend a lot of my time in Python land and don't have an amazing understanding of a lot of these features and flags. If someone does and is willing to help document and briefly describe some of these and their tradeoffs, I'd welcome a PR)*
+
+There are many ways to potentially speed up this code depending on your system. Here we document a few together with a high-level guide on what they do. Here's again the default way to compile, but using -O3:
+
+```bash
+gcc -O3 -o run run.c -lm
+```
+
+-O3 includes optimizations that are expensive in terms of compile time and memory usage. Including vectorization, loop unrolling, and predicting branches. Here's a few more to try.
+
+`-Ofast` TODO
+
+`-ffast-math` breaks IEEE compliance, e.g. allowing reordering of operations, disables a bunch of checks for e.g. NaNs (assuming they don't happen), enables reciprocal approximations, disables signed zero, etc.
+
+`-funsafe-math-optimizations` TODO
+
+`-march=native` TODO
+
+Putting a few of these together, the fastest throughput I saw so far on my MacBook Air (M1) is with:
+
+```bash
+gcc -O3 -funsafe-math-optimizations -Ofast -ffast-math -o run run.c -lm
+```
 
 ## unsorted todos
 
