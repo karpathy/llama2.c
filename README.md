@@ -120,6 +120,72 @@ gcc -Ofast -o run run.c -lm
 
 Also, I saw someone report higher throughput replacing `gcc` with `clang`.
 
+## binary portability (even more magic)
+
+Have you ever wanted to inference a baby Llama 2 model with a single executable on any OS or *as OS? No? Well, now you can!
+
+By making use of the Cosmopolitan libc toolchain to build llama2.c we get the following features:
+
++ Executable that runs on
+  + GNU/Systemd
+  + FreeBSD
+  + OpenBSD
+  + NetBSD
+  + XNU's Not UNIX
+  + Bare Metal (-D COSMO_METAL) (*Not fully functional yet)
+  + Windows
+
++ Runs on 
+  + ARM64 via Blink x86-64 emulation (-D COSMO_BLINK) (Slow)
+  + x86_64
+
++ Standalone
+  + Embedded model in executable (-D COSMO_ZIP)
+
+Instructions
+
+Get and build the comopolitan libc toolchain:
+
+Follow instructions at https://github.com/jart/cosmopolitan
+
+Or do:
+
+```
+sudo mkdir -p /opt
+sudo chmod 1777 /opt
+git clone https://github.com/jart/cosmopolitan /opt/cosmo
+cd /opt/cosmo
+make -j8 toolchain
+mkdir -p /opt/cosmos/bin
+export PATH="/opt/cosmos/bin:$PATH"
+echo 'PATH="/opt/cosmos/bin:$PATH"' >>~/.profile
+sudo ln -sf /opt/cosmo/tool/scripts/cosmocc /opt/cosmos/bin/cosmocc
+sudo ln -sf /opt/cosmo/tool/scripts/cosmoc++ /opt/cosmos/bin/cosmoc++
+```
+
+Example build to generate a Actually Portable Executable (APE):
+
+```
+$ cosmocc -O3 -Ofast -funsafe-math-optimizations -ffast-math -D COSMO_BLINK \
+-D COSMO_METAL -D COSMO_ZIP -o run.com run.c -lm
+
+Add model.bin and tokenizer.bin to executable:
+$ zip run.com out/model.bin
+$ zip run.com tokenizer.bin
+```
+
+Run or copy to any supported system and run:
+
+```
+If model is embedded:
+
+$ ./run.com
+
+Else
+
+$ ./run.com model.bin
+```
+
 ## unsorted todos
 
 - why is there a leading space in C sampling code when we `./run`?
