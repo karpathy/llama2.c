@@ -195,10 +195,11 @@ float xoro_rand_float(void) {
 }
 
 void xoro_seed(int seed) {
+    seed = seed <= 0 ? -seed + 1 : seed;
     _rng_state[0] = (unsigned int)seed;
     _rng_state[1] = ~(unsigned int)seed;
-    _rng_state[2] = (unsigned int)(seed << 16);
-    _rng_state[3] = (unsigned int)(seed >> 16);
+    _rng_state[2] = xoro_rotl((unsigned int)seed, 16);
+    _rng_state[3] = ~xoro_rotl((unsigned int)seed, 16);
 }
 
 // ----------------------------------------------------------------------------
