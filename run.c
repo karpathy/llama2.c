@@ -12,6 +12,7 @@ $ ./run
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
+#include <string.h>
 
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
@@ -168,12 +169,6 @@ int checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f) {
 // ----------------------------------------------------------------------------
 // neural net blocks
 
-void copy(float *a, float *b, int size) {
-    for (int i = 0; i < size; i++) {
-        a[i] = b[i];
-    }
-}
-
 void accum(float *a, float *b, int size) {
     for (int i = 0; i < size; i++) {
         a[i] += b[i];
@@ -236,7 +231,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
     // copy the token embedding into x
     float* content_row = &(w->token_embedding_table[token * dim]);
-    copy(x, content_row, dim);
+    memcpy(x, content_row, dim*sizeof(*x));
 
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
     float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
@@ -277,8 +272,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         int loff = l * p->seq_len * dim; // kv cache layer offset for convenience
         float* key_cache_row = s->key_cache + loff + pos * dim;
         float* value_cache_row = s->value_cache + loff + pos * dim;
-        copy(key_cache_row, s->k, dim);
-        copy(value_cache_row, s->v, dim);
+        memcpy(key_cache_row, s->k, dim*sizeof(*key_cache_row));
+        memcpy(value_cache_row, s->v, dim*sizeof(*value_cache_row));
         
         // multihead attention. iterate over all heads
         for (int h = 0; h < p->n_heads; h++) {
