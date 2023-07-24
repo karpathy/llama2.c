@@ -334,7 +334,10 @@ impl RunState {
             self.rope(pos, w, C.n_heads, C.dim);
             self.cache_kv(pos, l, C);
             self.attention(pos, l, C);
-            inplace_softmax(&mut self.att);
+            inplace_softmax(&mut self.att[..=pos]);
+            // STOPPED HERE: aggregate values with attention
+
+
         }
 
         &self.logits
