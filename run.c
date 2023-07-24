@@ -13,7 +13,6 @@ $ ./run
 #include <time.h>
 #include <math.h>
 #include <string.h>
-#include <sys/time.h>
 
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
@@ -378,9 +377,7 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
-  struct timeval time;
-  gettimeofday(&time, NULL);
-  return time.tv_sec * 1000 + time.tv_usec / 1000;
+  return (1000 * clock()) / CLOCKS_PER_SEC;
 }
 
 int main(int argc, char *argv[]) {
