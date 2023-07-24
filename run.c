@@ -415,9 +415,9 @@ int main(int argc, char *argv[]) {
     if (argc < 2) {
         printf("Usage: %s <checkpoint_file> [temperature] [seed]\n", argv[0]);
         return 1;
-    }
-    #endif
+    }    
     checkpoint = argv[1];
+    #endif
     // temperature is optional
     if (argc >= 3) {
         temperature = atof(argv[2]);
