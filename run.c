@@ -13,7 +13,9 @@ $ ./run
 #include <time.h>
 #include <math.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/time.h>
+#endif
 
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
@@ -378,9 +380,13 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
+#ifndef _WIN32
   struct timeval time;
   gettimeofday(&time, NULL);
   return time.tv_sec * 1000 + time.tv_usec / 1000;
+#else
+  return GetTickCount();
+#endif
 }
 
 int main(int argc, char *argv[]) {
