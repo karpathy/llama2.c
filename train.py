@@ -105,9 +105,8 @@ tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * ma
 if master_process:
     print(f"tokens per iteration will be: {tokens_per_iter:,}")
     print(f"breaks down as: {gradient_accumulation_steps} grad accum steps * {ddp_world_size} processes * {batch_size} batch size * {max_seq_len} max seq len")
-
-if master_process:
     os.makedirs(out_dir, exist_ok=True)
+    
 torch.manual_seed(1337 + seed_offset)
 torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
