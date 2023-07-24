@@ -6,7 +6,37 @@ $ gcc -O3 -o run run.c -lm
 
 Then run with:
 $ ./run
+
+Example compile for a portable executable with embedded model: 
+$ cosmocc -O3 -Ofast -funsafe-math-optimizations -ffast-math -D COSMO_BLINK \
+-D COSMO_METAL -D COSMO_ZIP -o run.com run.c -lm
+
+Add checkpoint and tokenizer model to executable:
+$ zip run.com out/model.bin
+$ zip run.com tokenizer.bin
+
+Then copy to any system (Linux,Win,Mac),(x86_64,ARM64) and run with:
+$ ./run.com
 */
+
+// ----------------------------------------------------------------------------
+// Actually Portable Executable Format Preprocessor Directives
+
+#ifdef COSMO_BLINK // Support ARM 64 Bit via Blink VM Emulation
+STATIC_YOINK("blink_linux_aarch64");  // for raspberry pi
+STATIC_YOINK("blink_xnu_aarch64");    // is apple silicon
+#endif
+
+#ifdef COSMO_METAL // Support VGA Console when running bare metal
+STATIC_YOINK("vga_console");
+#endif
+
+#ifdef COSMO_ZIP // Support embedded models via Zip Archive support
+STATIC_YOINK("zipos");
+#endif
+
+// ----------------------------------------------------------------------------
+// Standard Headers
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -378,10 +408,15 @@ int main(int argc, char *argv[]) {
     char *checkpoint = NULL;
     float temperature = 0.9f;
     // 'checkpoint' is necessary arg
+    #ifdef COSMO_ZIP // if this is defined
+    // we read the embedded checkpoint from within the executable
+    checkpoint = "/zip/out/model.bin" ;
+    #else
     if (argc < 2) {
         printf("Usage: %s <checkpoint_file> [temperature] [seed]\n", argv[0]);
         return 1;
     }
+    #endif
     checkpoint = argv[1];
     // temperature is optional
     if (argc >= 3) {
@@ -417,7 +452,12 @@ int main(int argc, char *argv[]) {
     // read in the tokenizer.bin file
     char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
     {
+        #ifdef COSMO_ZIP // if this is defined 
+        // we read the embedded tokenizer.bin from within the executable
+        FILE *file = fopen("/zip/tokenizer.bin", "r");
+        #else
         FILE *file = fopen("tokenizer.bin", "r");
+        #endif
         if (!file) {
             printf("Unable to open the tokenizer file tokenizer.bin! Run "
             "python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n");
