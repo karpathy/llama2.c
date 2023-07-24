@@ -225,7 +225,7 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
     
-    // a few convenice variables
+    // a few convenience variables
     float *x = s->x;
     int dim = p->dim;
     int hidden_dim =  p->hidden_dim;
