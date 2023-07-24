@@ -417,7 +417,7 @@ int main(int argc, char *argv[]) {
     // read in the tokenizer.bin file
     char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
     {
-        FILE *file = fopen("tokenizer.bin", "r");
+        FILE *file = fopen("tokenizer.bin", "rb");
         if (!file) {
             printf("Unable to open the tokenizer file tokenizer.bin! Run "
             "python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n");
