@@ -191,7 +191,7 @@ unsigned int xoro_rand(void) {
 
 // xoroshiro128+ PRNG https://prng.di.unimi.it/
 float xoro_rand_float(void) {
-    return (float)(xoro_rand() & 0x7FFFFF) / (float)0x7FFFFF;
+    return (float)(xoro_rand() >> 9) / (float)0x7FFFFF;
 }
 
 void xoro_seed(int seed) {
