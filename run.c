@@ -370,6 +370,13 @@ int argmax(float* v, int n) {
     return max_i;
 }
 
+// get current time for benchmarking
+static double get_time() {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
+}
+
 // ----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
@@ -437,8 +444,8 @@ int main(int argc, char *argv[]) {
     RunState state;
     malloc_run_state(&state, &config);
     
+    double start = get_time();
     // the current position we are in
-    clock_t start = clock();
     int next;
     int token = 1; // 1 = BOS token in Llama-2 sentencepiece
     int pos = 0;
@@ -469,9 +476,9 @@ int main(int argc, char *argv[]) {
     printf("\n");
 
     // report our achieved tok/s
-    clock_t end = clock();
-    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-    printf("achieved tok/s: %f\n", config.seq_len / elapsed);
+    double end = get_time();
+    double elapsed = (double)(end - start);
+    printf("achieved tok/s: %f\n", pos / elapsed);
 
     // memory cleanup
     free_run_state(&state);
