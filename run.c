@@ -144,24 +144,26 @@ void free_weights(TransformerWeights* w) {
 }
 
 // ----------------------------------------------------------------------------
-// initialization: random init, or read from checkpoint
+// initialization: read from checkpoint
 
-void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f) {
-    fread(w->token_embedding_table, sizeof(float), p->vocab_size * p->dim, f);
-    fread(w->rms_att_weight, sizeof(float), p->n_layers * p->dim, f);
-    fread(w->wq, sizeof(float), p->n_layers * p->dim * p->dim, f);
-    fread(w->wk, sizeof(float), p->n_layers * p->dim * p->dim, f);
-    fread(w->wv, sizeof(float), p->n_layers * p->dim * p->dim, f);
-    fread(w->wo, sizeof(float), p->n_layers * p->dim * p->dim, f);
-    fread(w->rms_ffn_weight, sizeof(float), p->n_layers * p->dim, f);
-    fread(w->w1, sizeof(float), p->n_layers * p->dim * p->hidden_dim, f);
-    fread(w->w2, sizeof(float), p->n_layers * p->hidden_dim * p->dim, f);
-    fread(w->w3, sizeof(float), p->n_layers * p->dim * p->hidden_dim, f);
-    fread(w->rms_final_weight, sizeof(float), p->dim, f);
+int checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f) {
+    if (fread(w->token_embedding_table, sizeof(float), p->vocab_size * p->dim, f) != p->vocab_size * p->dim) return 1;
+    if (fread(w->rms_att_weight, sizeof(float), p->n_layers * p->dim, f) != p->n_layers * p->dim) return 1;
+    if (fread(w->wq, sizeof(float), p->n_layers * p->dim * p->dim, f) != p->n_layers * p->dim * p->dim) return 1;
+    if (fread(w->wk, sizeof(float), p->n_layers * p->dim * p->dim, f) != p->n_layers * p->dim * p->dim) return 1;
+    if (fread(w->wv, sizeof(float), p->n_layers * p->dim * p->dim, f) != p->n_layers * p->dim * p->dim) return 1;
+    if (fread(w->wo, sizeof(float), p->n_layers * p->dim * p->dim, f) != p->n_layers * p->dim * p->dim) return 1;
+    if (fread(w->rms_ffn_weight, sizeof(float), p->n_layers * p->dim, f) != p->n_layers * p->dim) return 1;
+    if (fread(w->w1, sizeof(float), p->n_layers * p->dim * p->hidden_dim, f) != p->n_layers * p->dim * p->hidden_dim) return 1;
+    if (fread(w->w2, sizeof(float), p->n_layers * p->hidden_dim * p->dim, f) != p->n_layers * p->hidden_dim * p->dim) return 1;
+    if (fread(w->w3, sizeof(float), p->n_layers * p->dim * p->hidden_dim, f) != p->n_layers * p->dim * p->hidden_dim) return 1;
+    if (fread(w->rms_final_weight, sizeof(float), p->dim, f) != p->dim) return 1;
     int head_size = p->dim / p->n_heads;
-    fread(w->freq_cis_real, sizeof(float), p->seq_len * head_size / 2, f);
-    fread(w->freq_cis_imag, sizeof(float), p->seq_len * head_size / 2, f);
+    if (fread(w->freq_cis_real, sizeof(float), p->seq_len * head_size / 2, f) != p->seq_len * head_size / 2) return 1;
+    if (fread(w->freq_cis_imag, sizeof(float), p->seq_len * head_size / 2, f) != p->seq_len * head_size / 2) return 1;
+    return 0;
 }
+
 
 // ----------------------------------------------------------------------------
 // neural net blocks
@@ -400,24 +402,24 @@ int main(int argc, char *argv[]) {
         srand((unsigned int)current_time);
     }
 
-    // read in the checkpoint .bin file
+    // read in the model.bin file
     Config config;
     TransformerWeights weights;
     {
         FILE *file = fopen(checkpoint, "rb");
         if (!file) {
-            printf("Unable to open file!");
+            printf("Unable to open the checkpoint file %s!\n", checkpoint);
             return 1;
         }
         // read in the config header
-        fread(&config, sizeof(Config), 1, file);
+        if(fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
         // read in the Transformer weights
         malloc_weights(&weights, &config);
-        checkpoint_init_weights(&weights, &config, file);
+        if(checkpoint_init_weights(&weights, &config, file)) { return 1; }
         fclose(file);
     }
 
-    // read in the tokenizer vocab
+    // read in the tokenizer.bin file
     char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
     {
         FILE *file = fopen("tokenizer.bin", "r");
@@ -428,9 +430,9 @@ int main(int argc, char *argv[]) {
         }
         int len;
         for (int i = 0; i < config.vocab_size; i++) {
-            fread(&len, sizeof(int), 1, file);
+            if(fread(&len, sizeof(int), 1, file) != 1) { return 1; }
             vocab[i] = (char *)malloc(len + 1);
-            fread(vocab[i], len, 1, file);
+            if(fread(vocab[i], len, 1, file) != 1) { return 1; }
             vocab[i][len] = '\0'; // add the string terminating token
         }
         fclose(file);
