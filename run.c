@@ -207,15 +207,14 @@ void softmax(float* x, int size) {
             max_val = x[i];
         }
     }
-    // e^x
-    for (int i = 0; i < size; i++) {
-        x[i] = exp(x[i] - max_val);
-    }
+
     // normalize
     float sum = 0.0f;
     for (int i = 0; i < size; i++) {
+        x[i] = exp(x[i] - max_val);
         sum += x[i];
     }
+
     for (int i = 0; i < size; i++) {
         x[i] /= sum;
     }
