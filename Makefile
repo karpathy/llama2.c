@@ -4,6 +4,11 @@
 run: run.c
 	gcc -O3 -o run run.c -lm
 
+# useful for a debug build, can then e.g. analyze with valgrind, example:
+# $ valgrind --leak-check=full ./run out/model.bin 1.0 3
+rundebug: run.c
+	gcc -g -o run run.c -lm
+
 # https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html
 # https://simonbyrne.github.io/notes/fastmath/
 # -Ofast enables all -O3 optimizations. 
