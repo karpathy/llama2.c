@@ -54,7 +54,7 @@ cp /path/to/llama2.c/export_meta_llama_bin.py .
 torchrun --nproc_per_node 1 export_meta_llama_bin.py
 ```
 
-The export will take ~20 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. Go back to the root directory of llama2.c and run!
+The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. Go back to the root directory of llama2.c and run!
 
 ```bash
 ./run path/to/llama2_7b.bin
@@ -62,9 +62,9 @@ The export will take ~20 minutes or so and generate a 26GB file (the weights of 
 
 This ran at about 4 tokens/s compiled with OpenMP on 96 threads on my CPU Linux box in the cloud. Example output:
 
-*<s>The purpose of this document is to highlight the state-of-the-art of CoO generation technologies, both recent developments and those in commercial use. The focus is on the technologies with the highest merit to become the dominating processes of the future and therefore to be technologies of interest to S&amp;T ... R&amp;D. As such, CoO generation technologies developed in Russia, Japan and Europe are described in some depth. The document starts with an introduction to cobalt oxides as complex products and a short view on cobalt as an essential material. The document continues with the discussion of the available CoO generation processes with respect to energy and capital consumption as well as to environmental damage.*
+*The purpose of this document is to highlight the state-of-the-art of CoO generation technologies, both recent developments and those in commercial use. The focus is on the technologies with the highest merit to become the dominating processes of the future and therefore to be technologies of interest to S&amp;T ... R&amp;D. As such, CoO generation technologies developed in Russia, Japan and Europe are described in some depth. The document starts with an introduction to cobalt oxides as complex products and a short view on cobalt as an essential material. The document continues with the discussion of the available CoO generation processes with respect to energy and capital consumption as well as to environmental damage.*
 
-base models... ¯\_(ツ)_/¯. 
+base models... ¯\\_(ツ)_/¯. Since we can inference the base model, it should be possible to also inference the chat model quite easily, and have a conversation with it. And if we can find a way to run 7B more efficiently, we can start adding LoRA to our training script, and going wild with finetunes all within the repo!
 
 ## models
 
