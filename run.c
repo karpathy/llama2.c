@@ -409,7 +409,8 @@ int main(int argc, char *argv[]) {
         // memory map the Transformer weights into the data pointer
         fd = open(checkpoint, O_RDONLY); // open in read only mode
         if (fd == -1) { printf("open failed!\n"); return 1; }
-        data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        printf("Loading weights...\n");
+        data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
         if (data == MAP_FAILED) { printf("mmap failed!\n"); return 1; }
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
