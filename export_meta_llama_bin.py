@@ -7,10 +7,88 @@ https://github.com/facebookresearch/llama
 And then run it similar to their other examples, via torchrun sadly:
 torchrun --nproc_per_node 1 export_meta_llama_bin.py
 """
+import os
+import sys
+import llama
+import time
+import json
+from pathlib import Path
 
-from llama import Llama
 import struct
 import numpy as np
+import torch
+from typing import Optional
+from fairscale.nn.model_parallel.initialize import (
+    get_model_parallel_rank,
+    initialize_model_parallel,
+    model_parallel_is_initialized,
+)
+
+
+# build code ported from https://github.com/krychu/llama/ by joey00072
+# Thanks krychu
+
+
+def build(
+    ckpt_dir: str,
+    tokenizer_path: str,
+    max_seq_len: int,
+    max_batch_size: int,
+    model_parallel_size: Optional[int] = None,
+) -> "llama.Llama":
+
+    if not torch.distributed.is_initialized():
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device == "cuda":
+            torch.distributed.init_process_group("nccl")
+        else:
+            torch.distributed.init_process_group("gloo")
+    if not model_parallel_is_initialized():
+        if model_parallel_size is None:
+            model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
+        initialize_model_parallel(model_parallel_size)
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    if device == "cuda":
+        torch.cuda.set_device(local_rank)
+
+    # seed must be the same in all processes
+    torch.manual_seed(1)
+
+    if local_rank > 0:
+        sys.stdout = open(os.devnull, "w")
+
+    start_time = time.time()
+    checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
+    assert len(checkpoints) > 0, f"no checkpoint files found in {ckpt_dir}"
+    assert model_parallel_size == len(
+        checkpoints
+    ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {model_parallel_size}"
+    ckpt_path = checkpoints[get_model_parallel_rank()]
+    checkpoint = torch.load(ckpt_path, map_location="cpu")
+    with open(Path(ckpt_dir) / "params.json", "r") as f:
+        params = json.loads(f.read())
+
+    model_args: llama.ModelArgs = llama.ModelArgs(
+        max_seq_len=max_seq_len,
+        max_batch_size=max_batch_size,
+        **params,
+    )
+    tokenizer = llama.Tokenizer(model_path=tokenizer_path)
+    model_args.vocab_size = tokenizer.n_words
+    if device == "cuda":
+        torch.set_default_tensor_type(torch.cuda.HalfTensor)
+    elif device == "mps":
+        torch.set_default_tensor_type(torch.HalfTensor)
+    else:
+        torch.set_default_tensor_type(torch.BFloat16Tensor)
+        # torch.set_default_tensor_type(torch.FloatTensor)
+    model = llama.Transformer(model_args)
+    model.to(device)
+    model.load_state_dict(checkpoint, strict=False)
+    print(f"Loaded in {time.time() - start_time:.2f} seconds")
+
+    return llama.Llama(model, tokenizer)
 
 
 def export(model, filepath="model.bin"):
@@ -79,7 +157,7 @@ def export(model, filepath="model.bin"):
 
 if __name__ == "__main__":
     # Initialize Llama as normal
-    generator = Llama.build(
+    generator = build(
         ckpt_dir="llama-2-7b",
         tokenizer_path="tokenizer.model",
         max_seq_len=4096,
