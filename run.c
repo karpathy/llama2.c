@@ -13,7 +13,6 @@ $ ./run
 #include <time.h>
 #include <math.h>
 #include <string.h>
-#include <sys/time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -352,9 +351,9 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
-  struct timeval time;
-  gettimeofday(&time, NULL);
-  return time.tv_sec * 1000 + time.tv_usec / 1000;
+  struct timespec time;
+  timespec_get(&time, TIME_UTC);
+  return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
 
 int main(int argc, char *argv[]) {
