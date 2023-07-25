@@ -4,6 +4,8 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
+use rand::Rng;
+
 const CONF_VALS: usize = 7;
 const CONF_SIZE: usize = std::mem::size_of::<[i32; CONF_VALS]>();
 
@@ -132,9 +134,9 @@ impl TransformerWeights {
             wk: f(C.n_layers * C.dim * C.dim),
             wv: f(C.n_layers * C.dim * C.dim),
             wo: f(C.n_layers * C.dim * C.dim),
-            w1: f(C.dim * C.hidden_dim),
-            w2: f(C.dim * C.hidden_dim),
-            w3: f(C.dim * C.hidden_dim),
+            w1: f(C.n_layers * C.dim * C.hidden_dim),
+            w2: f(C.n_layers * C.dim * C.hidden_dim),
+            w3: f(C.n_layers * C.dim * C.hidden_dim),
             rms_final_weight: f(C.dim),
             freq_cis_real: f(C.seq_len * (head_size / 2)),
             freq_cis_imag: f(C.seq_len * (head_size / 2)),
@@ -215,6 +217,20 @@ fn inplace_softmax(x: &mut [Ty]) {
     x.iter_mut().for_each(|v| *v /= denom);
 }
 
+fn cdf_sample(probs: &[Ty]) -> usize {
+    let mut rng = rand::thread_rng();
+
+    let r = rng.gen::<Ty>();
+    let mut cdf = 0 as Ty;
+    for (idx, p) in probs.iter().enumerate() {
+        cdf += *p;
+        if r < cdf {
+            return idx;
+        }
+    }
+    probs.len() - 1
+}
+
 impl RunState {
     fn init(C: &Config) -> Self {
         let f = |size: usize| vec![0 as Ty; size];
@@ -248,6 +264,7 @@ impl RunState {
         let offset = layer * C.dim * C.seq_len + pos * C.dim;
         let kc = _uncheked_mut_slice(&mut self.key_cache, offset, C.dim).as_mut();
         let vc = _uncheked_mut_slice(&mut self.value_cache, offset, C.dim).as_mut();
+        // TODO: make theese unsafe and remove len checks
         kc.copy_from_slice(&self.k);
         vc.copy_from_slice(&self.v);
     }
@@ -300,10 +317,12 @@ impl RunState {
         let mut q_heads = self.q.chunks_exact(head_size);
         for h in 0..C.n_heads {
             let q = q_heads.next().unwrap();
+
             let mut head_k_all_pos = seq_cached_keys
                 .chunks_exact(head_size)
                 .skip(h)
                 .step_by(C.n_heads);
+
             for t in 0..=pos {
                 let k = head_k_all_pos.next().unwrap();
                 let score = k
@@ -356,7 +375,6 @@ impl RunState {
         self.hb
             .iter_mut()
             .for_each(|v| *v = 1 as Ty / (1 as Ty + (-*v).exp()));
-
         // mix branches
         self.hb
             .iter_mut()
@@ -366,7 +384,7 @@ impl RunState {
         matmul(&mut self.xb, &self.hb, w2, C.hidden_dim);
     }
 
-    fn step(&mut self, token: usize, pos: usize, w: &TransformerWeights, C: &Config) -> &[Ty] {
+    fn step(&mut self, token: usize, pos: usize, w: &TransformerWeights, C: &Config) {
         // copy content row
         // TODO: mayne direct indexing w/o bound checks is faster? benchmark
         w.token_embedding_table
@@ -377,13 +395,11 @@ impl RunState {
 
         for l in 0..C.n_layers {
             let rms_attn_w = _uncheked_slice(&w.rms_att_weight, l * C.dim, C.dim);
-
             rmsnorm(&mut self.xb, &self.x, rms_attn_w);
             self.qkv_for_layer(l, w, C.dim);
             self.rope(pos, w, C.n_heads, C.dim);
             self.cache_kv(pos, l, C);
             self.attention(pos, l, C);
-            inplace_softmax(&mut self.att[..=pos]);
             self.aggregate_attention(l, pos, C);
 
             let wo = _uncheked_slice(&w.wo, l * C.dim * C.dim, C.dim * C.dim);
@@ -410,19 +426,48 @@ impl RunState {
             .zip(w.rms_final_weight.iter())
             .for_each(|(xx, ww)| (*xx) *= ww * ss);
 
-        matmul(&mut self.logits, &self.x, &w.token_embedding_table, C.vocab_size);
-
+        matmul(&mut self.logits, &self.x, &w.token_embedding_table, C.dim);
     }
 }
 
 fn main() {
+    use std::time::Instant;
     let model_path = "../out/model.bin";
     let tokenizer_path = "../tokenizer.bin";
-    let temperature = 0 as Ty;
+    let temperature = 0.9 as Ty;
 
     let config = Config::from_file(model_path);
     let vocab = Vocab::from_file(config.vocab_size, tokenizer_path);
     let weights = TransformerWeights::read_from_file(&config, model_path);
     let mut state = RunState::init(&config);
-    state.step(1, 0, &weights, &config);
+    let mut probs = vec![0 as Ty; config.vocab_size];
+
+    let st = Instant::now();
+    let mut pos = 0;
+    let mut token = 1;
+    while pos < config.seq_len {
+        state.step(token, pos, &weights, &config);
+        let next = if temperature == 0 as Ty {
+            state
+                .logits
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                .map(|(index, _)| index)
+                .unwrap()
+        } else {
+            state
+                .logits
+                .iter().zip(probs.iter_mut())
+                .for_each(|(logit, p)| *p = logit / temperature);
+            inplace_softmax(&mut probs);
+            cdf_sample(&probs)
+        };
+        print!("{}", vocab.get_token(next));
+        pos += 1;
+        token = next;
+    }
+    println!("");
+    let ts = pos as f32 / st.elapsed().as_secs_f32();
+    println!("{:.3} Tokens/Sec", ts);
 }
