@@ -210,7 +210,7 @@ fn inplace_softmax(x: &mut [Ty]) {
     let max_val = x.iter().fold(Ty::NAN, |acc, &v| v.max(acc));
     let mut denom = 0 as Ty;
     for v in x.iter_mut() {
-        *v = *v - max_val;
+        *v = (*v - max_val).exp();
         denom += *v;
     }
 
@@ -335,9 +335,7 @@ impl RunState {
                     *self.att.get_unchecked_mut(t) = score;
                 }
             }
-            dbg!(&self.att[..=pos]);
-            assert!(pos < 1);
-            // inplace_softmax(&mut self.att[..=pos]);
+            inplace_softmax(&mut self.att[..=pos]);
 
             let seq_cached_vals =
                 _uncheked_slice(&self.value_cache, layer * C.dim * C.seq_len, C.seq_len * C.dim)
@@ -347,15 +345,19 @@ impl RunState {
             // cahced vals have head_size values in it. we need to go over all t vals and update xb
             // dst is head_size part of xb, we gonna add t (actually pos values) values into it
             let dst = xb_heads.next().unwrap();
+            dbg!(&dst[..6]);
             // this is different from Karphaty's impl. first go over all head size values, than skip time stamp
             // Why Karphaty's inner loop does C.dim jumps?
             // this goes over time stamps
             for (vals, attn_w) in seq_cached_vals.zip(self.att.iter()).take(pos + 1) {
+                
                 // aggregate timestamp to xb
                 for (val, dst) in vals.iter().zip(dst.iter_mut()) {
                     *dst += val * attn_w;
                 }
             }
+            dbg!(&dst[..6]);
+            assert!(false);
         }
         
     }
