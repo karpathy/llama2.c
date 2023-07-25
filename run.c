@@ -225,42 +225,19 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
 void qkv_matmuls(float* q, float* k, float* v, float* xb, float* wq, float* wk, float* wv, int l, int dim) {
     #pragma omp parallel for
     for (int i = 0; i < dim; i += 4) {
-        float q_val[4] = {0.0f};
-        float k_val[4] = {0.0f};
-        float v_val[4] = {0.0f};
-
         for (int j = 0; j < dim; j += 4) {
-            // Load weights
             float* wq_ptr = wq + (l * dim + i) * dim + j;
             float* wk_ptr = wk + (l * dim + i) * dim + j;
             float* wv_ptr = wv + (l * dim + i) * dim + j;
-
-            // Load input
             float* xb_ptr = xb + j;
 
-            // Perform matmul
+            // Perform matmul with loop unrolling
             for (int k_idx = 0; k_idx < 4; k_idx++) {
-                q_val[k_idx] += wq_ptr[k_idx] * xb_ptr[k_idx];
-                k_val[k_idx] += wk_ptr[k_idx] * xb_ptr[k_idx];
-                v_val[k_idx] += wv_ptr[k_idx] * xb_ptr[k_idx];
+                q[i + k_idx] += wq_ptr[k_idx] * xb_ptr[k_idx];
+                k[i + k_idx] += wk_ptr[k_idx] * xb_ptr[k_idx];
+                v[i + k_idx] += wv_ptr[k_idx] * xb_ptr[k_idx];
             }
         }
-
-        // Store results
-        q[i] = q_val[0];
-        q[i + 1] = q_val[1];
-        q[i + 2] = q_val[2];
-        q[i + 3] = q_val[3];
-
-        k[i] = k_val[0];
-        k[i + 1] = k_val[1];
-        k[i + 2] = k_val[2];
-        k[i + 3] = k_val[3];
-
-        v[i] = v_val[0];
-        v[i + 1] = v_val[1];
-        v[i + 2] = v_val[2];
-        v[i + 3] = v_val[3];
     }
 }
 
