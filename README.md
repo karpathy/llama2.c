@@ -159,7 +159,7 @@ You can try swapping clang/gcc, and may try to leave out -march=native. However,
 OMP_NUM_THREADS=4 ./run out/model.bin
 ```
 
-Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimitely familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
+Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimately familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
 
 ## unsorted todos
 
