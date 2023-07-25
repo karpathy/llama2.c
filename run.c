@@ -8,6 +8,8 @@ Then run with:
 $ ./run
 */
 
+#define BOS_TOKEN 1 // BOS token in Llama-2 sentencepiece
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -443,7 +445,7 @@ int main(int argc, char *argv[]) {
     // the current position we are in
     long start = time_in_ms();
     int next;
-    int token = 1; // 1 = BOS token in Llama-2 sentencepiece
+    int token = BOS_TOKEN;
     int pos = 0;
     printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
     while (pos < steps) {
@@ -463,6 +465,10 @@ int main(int argc, char *argv[]) {
             // we now want to sample from this distribution to get the next token
             next = sample(state.logits, config.vocab_size);
         }
+
+        if (next == BOS_TOKEN)
+            break;
+
         printf("%s", vocab[next]);
         fflush(stdout);
 
