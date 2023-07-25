@@ -420,6 +420,13 @@ int main(int argc, char *argv[]) {
         prompt = argv[4];
     }
 
+    char *antiprompt_cur = NULL;
+    char *antiprompt = NULL;
+    if (argc >= 6) {
+        antiprompt = argv[5];
+        antiprompt_cur = antiprompt;
+    }
+
     // seed rng with time. if you want deterministic behavior use temperature 0.0
     srand((unsigned int)time(NULL)); 
     
@@ -510,6 +517,25 @@ int main(int argc, char *argv[]) {
 
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
+
+        // check antiprompt
+        if (antiprompt) {
+            char *vocab_cur = vocab[next];
+            while (0 != *vocab_cur) {
+                if (0 == *antiprompt_cur) {
+                    antiprompt_cur = antiprompt;
+                    steps = pos;
+                    break;
+                }
+                if (*antiprompt_cur == *vocab_cur) {
+                    antiprompt_cur++;
+                }
+                else {
+                    antiprompt_cur = antiprompt;
+                }
+                vocab_cur++;
+            }
+        }
     }
 
     // report achieved tok/s
