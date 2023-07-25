@@ -4,8 +4,10 @@ This script exports the Llama 2 weights in llama2c.bin format.
 Place it into the root directory of:
 https://github.com/facebookresearch/llama
 
-And then run it similar to their other examples, via torchrun sadly:
-torchrun --nproc_per_node 1 export_meta_llama_bin.py
+Copy (confirm replacement) generation.py and model.py scripts from llama folder.
+
+And then run:
+python export_meta_llama_bin.py
 """
 
 from llama import Llama
