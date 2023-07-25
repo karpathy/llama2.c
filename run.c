@@ -350,7 +350,7 @@ int transformer_str(char *input, int pos, int steps, Config* p, RunState* s, Tra
         pos++;
         transformer(next, pos, p, s, w);
 
-        printf("[%s]", vocab[next]);
+        printf("%s", vocab[next]);
         fflush(stdout);
 
         input += next_length;
