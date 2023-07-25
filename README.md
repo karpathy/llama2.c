@@ -39,24 +39,28 @@ This still runs at interactive rates and samples more coherent and diverse stori
 
 *Once upon a time, there was a little girl named Lily. She loved playing with her toys on top of her bed. One day, she decided to have a tea party with her stuffed animals. She poured some tea into a tiny teapot and put it on top of the teapot. Suddenly, her little brother Max came into the room and wanted to join the tea party too. Lily didn't want to share her tea and she told Max to go away. Max started to cry and Lily felt bad. She decided to yield her tea party to Max and they both shared the teapot. But then, something unexpected happened. The teapot started to shake and wiggle. Lily and Max were scared and didn't know what to do. Suddenly, the teapot started to fly towards the ceiling and landed on the top of the bed. Lily and Max were amazed and they hugged each other. They realized that sharing was much more fun than being selfish. From that day on, they always shared their tea parties and toys.*
 
+**Update 2**: The 110M param model is also available now, see [models](#models).
+
+
 ## Meta's Llama 2 models
 
-As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. First you'll have to export these weights in the llama2.c format. Git clone the main repo from Meta, and cp the `export_meta_llama_bin.py` file (in the root directory of this project) over, and run it:
+As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). First you'll have to export these weights in the llama2.c format. Git clone the main repo from Meta, follow their instructions to request and download the 7B model, then cp the `export_meta_llama_bin.py` file (in the root directory of this project) over, and run it:
 
 ```bash
 git clone https://github.com/facebookresearch/llama.git
 cd llama
+./download.sh # download the 7B checkpoint
 cp /path/to/llama2.c/export_meta_llama_bin.py .
 torchrun --nproc_per_node 1 export_meta_llama_bin.py
 ```
 
-The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. Go back to the root directory of llama2.c and run!
+Sadly right now this export script requires GPU, NCCL, etc. (hope to fix, or accepting PRs). The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. Go back to the root directory of llama2.c and run:
 
 ```bash
 ./run path/to/llama2_7b.bin
 ```
 
-This ran at about 4 tokens/s compiled with OpenMP on 96 threads on my CPU Linux box in the cloud. Example output:
+This ran at about 4 tokens/s compiled with OpenMP on 96 threads on my CPU Linux box in the cloud. (On my MacBook Air M1, currently it's closer to 30 seconds per token if you just build with `make runfast`.) Example output:
 
 *The purpose of this document is to highlight the state-of-the-art of CoO generation technologies, both recent developments and those in commercial use. The focus is on the technologies with the highest merit to become the dominating processes of the future and therefore to be technologies of interest to S&amp;T ... R&amp;D. As such, CoO generation technologies developed in Russia, Japan and Europe are described in some depth. The document starts with an introduction to cobalt oxides as complex products and a short view on cobalt as an essential material. The document continues with the discussion of the available CoO generation processes with respect to energy and capital consumption as well as to environmental damage.*
 
@@ -66,19 +70,17 @@ base models... ¯\\_(ツ)_/¯. Since we can inference the base model, it should 
 
 For the sake of examples of smaller, from-scratch models, I trained multiple models on TinyStories and catalogue them here:
 
-| model | dim | n_layers | n_heads | max context length | parameters | download
-| --- | --- | --- | --- | --- | --- | --- |
-| OG | 288 | 6 | 6 | 256 | 15M | [model.bin](https://karpathy.ai/llama2c/model.bin) |
-| 44M| 512 | 8 | 8 | 1024 | 44M | [model44m.bin](https://karpathy.ai/llama2c/model44m.bin) |
-| 120M| 768 | 12 | 12 | 1024 | 120M | training... |
+| model | dim | n_layers | n_heads | max context length | parameters | val loss | download
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| OG | 288 | 6 | 6 | 256 | 15M | | [model.bin](https://karpathy.ai/llama2c/model.bin) |
+| 44M| 512 | 8 | 8 | 1024 | 44M | | [model44m.bin](https://karpathy.ai/llama2c/model44m.bin) |
+| 110M| 768 | 12 | 12 | 1024 | 110M | 0.7601 | [model110m.bin](https://karpathy.ai/llama2c/model110m.bin) |
 
-You'll notice that the 120M model is roughly equivalent to GPT-1 in size. Alternatively, this is also the smallest model in the GPT-2 series (`GPT-2 small`), except the max context length is only 1024 instead of 2048. The only notable changes from GPT-1/2 architecture is that Llama uses RoPE relatively positional embeddings instead of absolute/learned positional embeddings, a bit more fancy SwiGLU non-linearity in the MLP, RMSNorm instead of LayerNorm, bias=False on all Linear layers, and is optionally multiquery (but this is not yet supported in llama2.c).
+You'll notice that the 110M model is equivalent to GPT-1 in size. Alternatively, this is also the smallest model in the GPT-2 series (`GPT-2 small`), except the max context length is only 1024 instead of 2048. The only notable changes from GPT-1/2 architecture is that Llama uses RoPE relatively positional embeddings instead of absolute/learned positional embeddings, a bit more fancy SwiGLU non-linearity in the MLP, RMSNorm instead of LayerNorm, bias=False on all Linear layers, and is optionally multiquery (but this is not yet supported in llama2.c).
 
-## howto
+## training
 
-It should be possible to load the weights released by Meta but I haven't tried because the inference speed, even of the 7B model, would probably be not great with this baby single-threaded C program. So in this repo we focus on more narrow applications, and train the same architecture but from scratch, in this case on the TinyStories dataset for fun.
-
-First let's download and pretokenize some source dataset, e.g. I like [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) so this is the only example currently available in this repo. But it should be very easy to add datasets, see the code.
+Let's see how we can train a baby Llama 2 from scratch using the code in this repo. First let's download and pretokenize some source dataset, e.g. I like [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) so this is the only example currently available in this repo. But it should be very easy to add datasets, see the code.
 
 ```bash
 python tinystories.py download
@@ -159,7 +161,7 @@ You can try swapping clang/gcc, and may try to leave out -march=native. However,
 OMP_NUM_THREADS=4 ./run out/model.bin
 ```
 
-Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimitely familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
+Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimately familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
 
 ## unsorted todos
 
