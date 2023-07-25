@@ -322,6 +322,41 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     matmul(s->logits, x, w->token_embedding_table, p->dim, p->vocab_size);
 }
 
+int transformer_str(char *input, int pos, Config* p, RunState* s, TransformerWeights* w, char **vocab) {
+    while (input[0] != 0) {
+        int next = -1;
+        int next_length = 0;
+        for (int i = 0; i < p->vocab_size; i++) {
+            char *v = vocab[i];
+            int j = 0;
+            int hit = 1;
+            while (v[j] != 0) {
+                 if (v[j] != input[j]) {
+                    int hit = 0;
+                    break;
+                }
+                ++j;
+            }
+            if (hit && j > next_length) {
+                next_length = j;
+                next = i;
+            }
+        }
+
+        if (0 > next) return pos;
+
+        pos++;
+        transformer(next, pos, p, s, w);
+
+        printf("%s", vocab[next]);
+        fflush(stdout);
+
+        input += next_length;
+    }
+
+    return pos;
+}
+
 int sample(float* probabilities, int n) {
     // sample index from probabilities, they must sum to 1
     float r = (float)rand() / (float)RAND_MAX;
@@ -376,6 +411,11 @@ int main(int argc, char *argv[]) {
     }
     if (argc >= 4) {
         steps = atoi(argv[3]);
+    }
+
+    char *prompt = NULL;
+    if (argc >= 5) {
+        prompt = argv[4];
     }
 
     // seed rng with time. if you want deterministic behavior use temperature 0.0
@@ -438,11 +478,16 @@ int main(int argc, char *argv[]) {
     int token = 1; // 1 = BOS token in Llama-2 sentencepiece
     int pos = 0;
     printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
+
+    transformer(token, pos, &config, &state, &weights);
+
+    if (prompt)
+    {
+        pos = transformer_str(prompt, pos, &config, &state, &weights, vocab);
+        steps += pos;
+    }
+
     while (pos < steps) {
-
-        // forward the transformer to get logits for the next token
-        transformer(token, pos, &config, &state, &weights);
-
         // sample the next token
         if(temperature == 0.0f) {
             // greedy argmax sampling
@@ -461,6 +506,9 @@ int main(int argc, char *argv[]) {
         // advance forward
         token = next;
         pos++;
+
+        // forward the transformer to get logits for the next token
+        transformer(token, pos, &config, &state, &weights);
     }
 
     // report achieved tok/s
