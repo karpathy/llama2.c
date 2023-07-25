@@ -33,7 +33,7 @@ for arg in sys.argv[1:]:
         key = key[2:]
         if key in globals():
             try:
-                # attempt to eval it it (e.g. if bool, number, or etc)
+                # attempt to eval it (e.g. if bool, number, or etc)
                 attempt = literal_eval(val)
             except (SyntaxError, ValueError):
                 # if that goes wrong, just use the string
