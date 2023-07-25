@@ -36,13 +36,14 @@ def build(
     max_batch_size: int,
     model_parallel_size: Optional[int] = None,
 ) -> "llama.Llama":
+    device = torch.device("cpu")
 
     if not torch.distributed.is_initialized():
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if device == "cuda":
             torch.distributed.init_process_group("nccl")
         else:
             torch.distributed.init_process_group("gloo")
+
     if not model_parallel_is_initialized():
         if model_parallel_size is None:
             model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -64,6 +65,7 @@ def build(
     assert model_parallel_size == len(
         checkpoints
     ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {model_parallel_size}"
+
     ckpt_path = checkpoints[get_model_parallel_rank()]
     checkpoint = torch.load(ckpt_path, map_location="cpu")
     with open(Path(ckpt_dir) / "params.json", "r") as f:
@@ -76,13 +78,10 @@ def build(
     )
     tokenizer = llama.Tokenizer(model_path=tokenizer_path)
     model_args.vocab_size = tokenizer.n_words
-    if device == "cuda":
-        torch.set_default_tensor_type(torch.cuda.HalfTensor)
-    elif device == "mps":
-        torch.set_default_tensor_type(torch.HalfTensor)
-    else:
-        torch.set_default_tensor_type(torch.BFloat16Tensor)
-        # torch.set_default_tensor_type(torch.FloatTensor)
+
+    torch.set_default_tensor_type(torch.BFloat16Tensor)
+    # torch.set_default_tensor_type(torch.FloatTensor) # IDK if we should use this
+
     model = llama.Transformer(model_args)
     model.to(device)
     model.load_state_dict(checkpoint, strict=False)
