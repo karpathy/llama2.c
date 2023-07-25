@@ -5,7 +5,7 @@
 
 With the code in this repo you can train the Llama 2 LLM architecture from scratch in PyTorch, then export the weights to a binary file, and load that into one ~simple 500-line C file ([run.c](run.c)) that inferences the model. Alternatively, you can load, finetune, and inference Meta's Llama 2 (but this is still being actively fleshed out). Hence, this repo is a "fullstack" train + inference solution for Llama 2 LLM, with a focus on minimalism and simplicity. You might think that you need many billion parameter LLMs to do anything useful, but in fact very small LLMs can have surprisingly strong performance if you make the domain narrow enough. I recommend looking at the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) paper for inspiration.
 
-Please note that this started recently as just a fun weekend project: I took nanoGPT, tuned it to implement the Llama-2 architecture instead of GPT-2, and the meat of it was writing the C inference engine in [run.c](run.c). So the project is young and moving quickly. Hat tip to the awesome [llama.cpp](https://github.com/ggerganov/llama.cpp) for inspiring this project. I wanted something super minimal so I chose to hard-code the Llama 2 architecture, stick to fp32, and just roll one inference file of pure C with no dependencies.
+Please note that this started recently as just a fun weekend project: I took my earlier [nanoGPT](https://github.com/karpathy/nanoGPT), tuned it to implement the Llama-2 architecture instead of GPT-2, and the meat of it was writing the C inference engine in [run.c](run.c). So the project is young and moving quickly. Hat tip to the awesome [llama.cpp](https://github.com/ggerganov/llama.cpp) for inspiring this project. I wanted something super minimal so I chose to hard-code the Llama 2 architecture, stick to fp32, and just roll one inference file of pure C with no dependencies.
 
 ## feel the magic
 
@@ -164,6 +164,9 @@ Depending on your system resources you may want to tweak these hyperparameters. 
 ## unsorted todos
 
 - why is there a leading space in C sampling code when we `./run`?
+- support Llama 2 Chat models, and tune run.c to Chat UI/UX
+- possibly include emscripten / web backend (as seen in @gg PR)
+- currently the project only runs in fp32, want to explore more reduced precision inference.
 - todo multiquery support? doesn't seem as useful for smaller models that run on CPU (?)
 - todo support inferencing beyond max_seq_len steps, have to think through the kv cache
 - why is MFU so low (~10%) on my A100 40GB for training?
