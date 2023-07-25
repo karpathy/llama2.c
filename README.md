@@ -1,4 +1,3 @@
-
 ## llama2.c
 
 <img src="assets/llama_cute.jpg" width="300" height="300">
@@ -44,20 +43,16 @@ This still runs at interactive rates and samples more coherent and diverse stori
 
 ## Meta's Llama 2 models
 
-As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). First you'll have to export these weights in the llama2.c format. Git clone the main repo from Meta, follow their instructions to request and download the 7B model, then cp the `export_meta_llama_bin.py` file (in the root directory of this project) over, and run it:
+As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). So Step 1, get the Llama 2 checkpoints by following the [Meta instructions](https://github.com/facebookresearch/llama). Once we have those checkpoints, we have to convert them into the llama2.c format. For this we use the `export_meta_llama_bin.py` file, e.g. for 7B model:
 
 ```bash
-git clone https://github.com/facebookresearch/llama.git
-cd llama
-./download.sh # download the 7B checkpoint
-cp /path/to/llama2.c/export_meta_llama_bin.py .
-torchrun --nproc_per_node 1 export_meta_llama_bin.py
+python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin
 ```
 
-Sadly right now this export script requires GPU, NCCL, etc. (hope to fix, or accepting PRs). The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. Go back to the root directory of llama2.c and run:
+The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reaons (accepting PRs for fix). We can run the model as normal:
 
 ```bash
-./run path/to/llama2_7b.bin
+./run llama2_7b.bin
 ```
 
 This ran at about 4 tokens/s compiled with OpenMP on 96 threads on my CPU Linux box in the cloud. (On my MacBook Air M1, currently it's closer to 30 seconds per token if you just build with `make runfast`.) Example output:
