@@ -322,8 +322,10 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     matmul(s->logits, x, w->token_embedding_table, p->dim, p->vocab_size);
 }
 
-int transformer_str(char *input, int pos, Config* p, RunState* s, TransformerWeights* w, char **vocab) {
+int transformer_str(char *input, int pos, int steps, Config* p, RunState* s, TransformerWeights* w, char **vocab) {
     while (input[0] != 0) {
+        if (pos >= steps) return pos;
+
         int next = -1;
         int next_length = 0;
         for (int i = 0; i < p->vocab_size; i++) {
@@ -483,8 +485,7 @@ int main(int argc, char *argv[]) {
 
     if (prompt)
     {
-        pos = transformer_str(prompt, pos, &config, &state, &weights, vocab);
-        steps += pos;
+        pos = transformer_str(prompt, pos, steps, &config, &state, &weights, vocab);
     }
 
     while (pos < steps) {
