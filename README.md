@@ -1,15 +1,11 @@
 
 ## llama2.c
 
-Have you ever wanted to inference a baby [Llama 2](https://ai.meta.com/llama/) model in pure C? No? Well, now you can!
-
 <img src="assets/llama_cute.jpg" width="300" height="300">
 
-With the code in this repo you can train the Llama 2 LLM architecture from scratch in PyTorch, then export the weights to a binary file, and load that into one ~simple 500-line C file ([run.c](run.c)) that inferences the model. Hence, this repo is a "fullstack" solution to custom, small LLMs. You might think that you need many billion parameter LLMs to do anything useful, but in fact very small LLMs can have surprisingly strong performance if you make the domain narrow enough. I recommend looking at the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) paper for inspiration.
+With the code in this repo you can train the Llama 2 LLM architecture from scratch in PyTorch, then export the weights to a binary file, and load that into one ~simple 500-line C file ([run.c](run.c)) that inferences the model. Alternatively, you can load, finetune, and inference Meta's Llama 2 (but this is still being actively fleshed out). Hence, this repo is a "fullstack" train + inference solution for Llama 2 LLM, with a focus on minimalism and simplicity. You might think that you need many billion parameter LLMs to do anything useful, but in fact very small LLMs can have surprisingly strong performance if you make the domain narrow enough. I recommend looking at the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) paper for inspiration.
 
-Please note that this started as just a fun weekend project: I took nanoGPT, tuned it to implement the Llama-2 architecture instead of GPT-2, and the meat of it was writing the C inference engine in [run.c](run.c). As such, this is not really meant to be a production-grade library right now.
-
-Hat tip to the awesome [llama.cpp](https://github.com/ggerganov/llama.cpp) for inspiring this project. I wanted something super minimal so I chose to hard-code the llama-2 architecture, stick to fp32, and just roll one inference file of pure C with no dependencies.
+Please note that this started recently as just a fun weekend project: I took nanoGPT, tuned it to implement the Llama-2 architecture instead of GPT-2, and the meat of it was writing the C inference engine in [run.c](run.c). So the project is young and moving quickly. Hat tip to the awesome [llama.cpp](https://github.com/ggerganov/llama.cpp) for inspiring this project. I wanted something super minimal so I chose to hard-code the Llama 2 architecture, stick to fp32, and just roll one inference file of pure C with no dependencies.
 
 ## feel the magic
 
@@ -141,27 +137,23 @@ gcc -O3 -o run run.c -lm
 
 `-Ofast` Run additional optimizations which may break compliance with the C/IEEE specifications, in addition to `-O3`. See [the GCC docs](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html) for more information.
 
-`-ffast-math` breaks IEEE compliance, e.g. allowing reordering of operations, disables a bunch of checks for e.g. NaNs (assuming they don't happen), enables reciprocal approximations, disables signed zero, etc. However, there is a good reason to be suspicious of this setting, one good writeup is here: ["Beware of fast-math"](https://simonbyrne.github.io/notes/fastmath/).
-
-`-funsafe-math-optimizations` a more limited form of -ffast-math, that still breaks IEEE compliance but doesn't have all of the numeric/error handling changes from `-ffasth-math`. See [the GCC docs](https://gcc.gnu.org/wiki/FloatingPointMath) for more information.
-
 `-march=native` Compile the program to use the architecture of the machine you're compiling on rather than a more generic CPU. This may enable additional optimizations and hardware-specific tuning such as improved vector instructions/width.
 
-Putting a few of these together, the fastest throughput I saw so far on my MacBook Air (M1) is with:
+The fastest throughput I saw so far on my MacBook Air (M1) is with:
 
 ```bash
 gcc -Ofast -o run run.c -lm
 ```
 
-Also, I saw someone report higher throughput replacing `gcc` with `clang`.
+You can also experiment with replacing `gcc` with `clang`.
 
-**OpenMP** Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul. You can compile e.g. like so:
+**OpenMP** Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention. You can compile e.g. like so:
 
 ```bash
 clang -Ofast -fopenmp -march=native run.c  -lm  -o run
 ```
 
-(I believe you can swap clang/gcc, and may try to leave out -march=native). Then when you run inference, make sure to use OpenMP flags to set the number of threads, e.g.:
+You can try swapping clang/gcc, and may try to leave out -march=native. However, when you run inference make sure to use OpenMP flags to set the number of threads, e.g.:
 
 ```bash
 OMP_NUM_THREADS=4 ./run out/model.bin
@@ -176,6 +168,7 @@ Depending on your system resources you may want to tweak these hyperparameters. 
 - todo support inferencing beyond max_seq_len steps, have to think through the kv cache
 - why is MFU so low (~10%) on my A100 40GB for training?
 - weird errors with torch.compile and wandb when using DDP
+- (LoRA) finetuning of Llama 2 models
 - make more better tests to decrease yolo
 
 ## ack
