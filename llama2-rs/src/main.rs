@@ -129,11 +129,11 @@ impl TransformerWeights {
         Self {
             token_embedding_table: f(C.vocab_size * C.dim),
             rms_att_weight: f(C.n_layers * C.dim),
-            rms_ffn_weight: f(C.n_layers * C.dim),
             wq: f(C.n_layers * C.dim * C.dim),
             wk: f(C.n_layers * C.dim * C.dim),
             wv: f(C.n_layers * C.dim * C.dim),
             wo: f(C.n_layers * C.dim * C.dim),
+            rms_ffn_weight: f(C.n_layers * C.dim),
             w1: f(C.n_layers * C.dim * C.hidden_dim),
             w2: f(C.n_layers * C.dim * C.hidden_dim),
             w3: f(C.n_layers * C.dim * C.hidden_dim),
@@ -315,6 +315,7 @@ impl RunState {
             .unwrap();
 
         let mut q_heads = self.q.chunks_exact(head_size);
+        let mut xb_heads = self.xb.chunks_exact_mut(head_size);
         for h in 0..C.n_heads {
             let q = q_heads.next().unwrap();
 
@@ -334,7 +335,29 @@ impl RunState {
                     *self.att.get_unchecked_mut(t) = score;
                 }
             }
+            dbg!(&self.att[..=pos]);
+            assert!(pos < 1);
+            // inplace_softmax(&mut self.att[..=pos]);
+
+            let seq_cached_vals =
+                _uncheked_slice(&self.value_cache, layer * C.dim * C.seq_len, C.seq_len * C.dim)
+                    .chunks_exact(head_size)
+                    .skip(h)
+                    .step_by(C.n_heads);
+            // cahced vals have head_size values in it. we need to go over all t vals and update xb
+            // dst is head_size part of xb, we gonna add t (actually pos values) values into it
+            let dst = xb_heads.next().unwrap();
+            // this is different from Karphaty's impl. first go over all head size values, than skip time stamp
+            // Why Karphaty's inner loop does C.dim jumps?
+            // this goes over time stamps
+            for (vals, attn_w) in seq_cached_vals.zip(self.att.iter()).take(pos + 1) {
+                // aggregate timestamp to xb
+                for (val, dst) in vals.iter().zip(dst.iter_mut()) {
+                    *dst += val * attn_w;
+                }
+            }
         }
+        
     }
 
     fn aggregate_attention(&mut self, l: usize, pos: usize, C: &Config) {
@@ -393,14 +416,17 @@ impl RunState {
             .take(1)
             .for_each(|src| self.x.as_mut_slice().copy_from_slice(src));
 
+
         for l in 0..C.n_layers {
             let rms_attn_w = _uncheked_slice(&w.rms_att_weight, l * C.dim, C.dim);
             rmsnorm(&mut self.xb, &self.x, rms_attn_w);
+            
             self.qkv_for_layer(l, w, C.dim);
+            
             self.rope(pos, w, C.n_heads, C.dim);
             self.cache_kv(pos, l, C);
             self.attention(pos, l, C);
-            self.aggregate_attention(l, pos, C);
+            // self.aggregate_attention(l, pos, C);
 
             let wo = _uncheked_slice(&w.wo, l * C.dim * C.dim, C.dim * C.dim);
             matmul(&mut self.xb2, &self.xb, wo, C.dim);
