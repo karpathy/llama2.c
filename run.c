@@ -331,8 +331,8 @@ int transformer_str(char *input, int pos, Config* p, RunState* s, TransformerWei
             int j = 0;
             int hit = 1;
             while (v[j] != 0) {
-                 if (v[j] != input[j]) {
-                    int hit = 0;
+                 if (0 == input[j] || v[j] != input[j]) {
+                    hit = 0;
                     break;
                 }
                 ++j;
@@ -348,7 +348,7 @@ int transformer_str(char *input, int pos, Config* p, RunState* s, TransformerWei
         pos++;
         transformer(next, pos, p, s, w);
 
-        printf("%s", vocab[next]);
+        printf("[%s]", vocab[next]);
         fflush(stdout);
 
         input += next_length;
