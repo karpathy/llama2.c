@@ -366,9 +366,11 @@ int main(int argc, char *argv[]) {
     char *checkpoint = NULL;  // e.g. out/model.bin
     float temperature = 0.9f; // e.g. 1.0, or 0.0
     int steps = 256;          // max number of steps to run for, 0: use seq_len
+    char *tokenizer = "tokenizer.bin";   // e.g. tokenizer.bin
+
     // 'checkpoint' is necessary arg
     if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps]\n", argv[0]);
+        printf("Usage: %s <checkpoint_file> [temperature] [steps] [tokenizer_bin_file]\n", argv[0]);
         return 1;
     }
     if (argc >= 2) {
@@ -380,6 +382,9 @@ int main(int argc, char *argv[]) {
     }
     if (argc >= 4) {
         steps = atoi(argv[3]);
+    }
+    if (argc >= 5) {
+        tokenizer = argv[4];
     }
 
     // seed rng with time. if you want deterministic behavior use temperature 0.0
@@ -420,7 +425,7 @@ int main(int argc, char *argv[]) {
     // read in the tokenizer.bin file
     char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
     {
-        FILE *file = fopen("tokenizer.bin", "rb");
+        FILE *file = fopen(tokenizer, "rb");
         if (!file) {
             printf("Unable to open the tokenizer file tokenizer.bin! Run "
             "python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n");
