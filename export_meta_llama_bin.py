@@ -9,83 +9,80 @@ torchrun --nproc_per_node 1 export_meta_llama_bin.py
 """
 
 from llama import Llama
+import struct
+import numpy as np
 
-# -----------------------------------------------------------------------------
-def export(self, filepath='model.bin'):
-    """export the model weights in fp32 into .bin file to be read from C"""
 
-    f = open(filepath, 'wb')
-    import struct
-    import numpy as np
-
+def export(model, filepath="model.bin"):
+    """
+    Export the model weights in fp32 into .bin file to be read from C.
+    Args:
+        model: The Llama model to be exported.
+        filepath: The filepath where the model will be saved.
+    """
+    # Function to serialize tensor data to float32
     def serialize(t):
         d = t.detach().cpu().view(-1).numpy().astype(np.float32)
-        b = struct.pack(f'{len(d)}f', *d)
-        f.write(b)
+        b = struct.pack(f"{len(d)}f", *d)
+        return b
 
-    # first write out the header
-    hidden_dim = self.layers[0].feed_forward.w1.weight.shape[0]
-    p = self.params
-    n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
-    header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads, 
-                                    n_kv_heads, -p.vocab_size, p.max_seq_len)
-    # NOTE ABOVE: -ve vocab_size is indicating that the classifier weights are present
-    # in the checkpoint and should be loaded.
-    f.write(header)
+    # Open the file in write mode
+    with open(filepath, "wb") as f:
+        # first write out the header
+        hidden_dim = model.layers[0].feed_forward.w1.weight.shape[0]
+        p = model.params
+        n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
+        header = struct.pack(
+            "iiiiiii",
+            p.dim,
+            hidden_dim,
+            p.n_layers,
+            p.n_heads,
+            n_kv_heads,
+            -p.vocab_size,
+            p.max_seq_len,
+        )
+        f.write(header)
 
-    # next write out the embedding weights
-    print("writing tok_embeddings...")
-    serialize(self.tok_embeddings.weight)
-    
-    # now all the layers
-    # attention weights
-    for i, layer in enumerate(self.layers):
-        print(f"writing attention_norm layer {i}...")
-        serialize(layer.attention_norm.weight)
-    for i, layer in enumerate(self.layers):
-        print(f"writing attention.wq layer {i}...")
-        serialize(layer.attention.wq.weight)
-    for i, layer in enumerate(self.layers):
-        print(f"writing attention.wk layer {i}...")
-        serialize(layer.attention.wk.weight)
-    for i, layer in enumerate(self.layers):
-        print(f"writing attention.wv layer {i}...")
-        serialize(layer.attention.wv.weight)
-    for i, layer in enumerate(self.layers):
-        print(f"writing attention.wo layer {i}...")
-        serialize(layer.attention.wo.weight)
-    # ffn weights
-    for i, layer in enumerate(self.layers):
-        print(f"writing ffn_norm layer {i}...")
-        serialize(layer.ffn_norm.weight)
-    for i, layer in enumerate(self.layers):
-        print(f"writing feed_forward.w1 layer {i}...")
-        serialize(layer.feed_forward.w1.weight)
-    for i, layer in enumerate(self.layers):
-        print(f"writing feed_forward.w2 layer {i}...")
-        serialize(layer.feed_forward.w2.weight)
-    for i, layer in enumerate(self.layers):
-        print(f"writing feed_forward.w3 layer {i}...")
-        serialize(layer.feed_forward.w3.weight)
-    # final rmsnorm
-    print("writing final rmsnorm, classifier and freq_cis...")
-    serialize(self.norm.weight)
-    # freqs_cis
-    serialize(self.freqs_cis.real[:p.max_seq_len])
-    serialize(self.freqs_cis.imag[:p.max_seq_len])
-    # finally write the output weights
-    serialize(self.output.weight)
+        # Write out the embedding weights
+        print("Writing token embeddings...")
+        f.write(serialize(model.tok_embeddings.weight))
 
-    # write to binary file
-    f.close()
-    print(f"wrote {filepath}")
-# -----------------------------------------------------------------------------
+        # Now all the layers
+        layer_weights = [
+            "attention_norm",
+            "attention.wq",
+            "attention.wk",
+            "attention.wv",
+            "attention.wo",
+            "ffn_norm",
+            "feed_forward.w1",
+            "feed_forward.w2",
+            "feed_forward.w3",
+        ]
+        for weight in layer_weights:
+            for i, layer in enumerate(model.layers):
+                print(f"Writing {weight} layer {i}...")
+                f.write(serialize(getattr(layer, weight).weight))
 
-# init Llama as normal
-generator = Llama.build(
-    ckpt_dir="llama-2-7b",
-    tokenizer_path="tokenizer.model",
-    max_seq_len=4096,
-    max_batch_size=1,
-)
-export(generator.model, "llama2_7b.bin")
+        # final rmsnorm and freqs_cis
+        print("Writing final rmsnorm, classifier and freq_cis...")
+        f.write(serialize(model.norm.weight))
+        f.write(serialize(model.freqs_cis.real[: p.max_seq_len]))
+        f.write(serialize(model.freqs_cis.imag[: p.max_seq_len]))
+
+        # finally write the output weights
+        f.write(serialize(model.output.weight))
+
+        print(f"Wrote {filepath}")
+
+
+if __name__ == "__main__":
+    # Initialize Llama as normal
+    generator = Llama.build(
+        ckpt_dir="llama-2-7b",
+        tokenizer_path="tokenizer.model",
+        max_seq_len=4096,
+        max_batch_size=1,
+    )
+    export(generator.model, "llama2_7b.bin")
