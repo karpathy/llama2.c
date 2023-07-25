@@ -146,6 +146,15 @@ OMP_NUM_THREADS=4 ./run out/model.bin
 
 Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimitely familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
 
+Compiling with CMake is also supported. Take a look into `CMakeLists.txt` to toggle features.
+
+```bash
+mkdir build
+cd build
+cmake ..
+cmake --build .. --config Release --parallel
+```
+
 ## unsorted todos
 
 - why is there a leading space in C sampling code when we `./run`?
