@@ -15,6 +15,10 @@ $ ./run
 #include <string.h>
 #include <sys/time.h>
 
+#ifdef USE_OPENMP
+#include <omp.h>
+#endif
+
 #ifdef USE_OPENBLAS
 #include <cblas.h>
 #endif
@@ -393,6 +397,18 @@ long time_in_ms() {
 
 int main(int argc, char *argv[]) {
 
+#ifdef USE_OPENMP
+    // OpenMP, by default, tends to use the total number of hardware threads (which includes virtual cores) as its
+    // maximum thread count (evident from omp_get_max_threads()). This can degrade the performance of matmul() to 
+    // levels even below non-OpenMP performance when thread count exceeds the number of physical cores.
+    // Unfortunately, there's no direct method to programmatically retrieve the number of physical cores across all platforms.
+    // Based on empirical testing with an i9-12900T (16 physical cores), the performance gain plateaus beyond 4 threads.
+    // To account for this, we estimate the number of physical cores as half of the maximum threads.
+    // Note: Using omp_set_dynamic(1) doesn't resolve this discrepancy.
+    int omp_threads = (omp_get_max_threads()+1) / 2;
+    omp_set_num_threads(omp_threads);
+#endif
+    
     // poor man's C argparse
     char *checkpoint = NULL;
     float temperature = 0.9f;
