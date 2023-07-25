@@ -355,9 +355,14 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
-  struct timespec time;
-  timespec_get(&time, TIME_UTC);
-  return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+    struct timespec time;
+    // Get the current time with nanosecond precision
+    if (clock_gettime(CLOCK_REALTIME, &time) == 0) {
+        return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+    } else {
+        perror("clock_gettime");
+        return -1; // Return -1 to indicate an error
+    }
 }
 
 int main(int argc, char *argv[]) {
