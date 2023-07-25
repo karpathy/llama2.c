@@ -41,7 +41,6 @@ This still runs at interactive rates and samples more coherent and diverse stori
 
 **Update 2**: The 110M param model is also available now, see [models](#models).
 
-```bash
 
 ## Meta's Llama 2 models
 
