@@ -17,6 +17,11 @@ $ ./run
 #include <fcntl.h>
 #include <sys/mman.h>
 
+enum {
+   MODE_TIME = 0,
+   MODE_SAVE
+};
+
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
@@ -427,6 +432,14 @@ int main(int argc, char *argv[]) {
         antiprompt_cur = antiprompt;
     }
 
+    int mode = MODE_TIME;
+    if (argc >= 7) {
+        char *mode_str = argv[6];
+        if (0 == strcmp("save",mode_str)) {
+            mode = MODE_SAVE;
+        }
+    }
+
     // seed rng with time. if you want deterministic behavior use temperature 0.0
     srand((unsigned int)time(NULL)); 
     
@@ -486,7 +499,9 @@ int main(int argc, char *argv[]) {
     int next;
     int token = 1; // 1 = BOS token in Llama-2 sentencepiece
     int pos = 0;
-    printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
+    if (mode != MODE_SAVE) {
+        printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
+    }
 
     transformer(token, pos, &config, &state, &weights);
 
@@ -539,8 +554,10 @@ int main(int argc, char *argv[]) {
     }
 
     // report achieved tok/s
-    long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", config.seq_len / (double)(end-start)*1000);
+    if (mode == MODE_TIME) {
+        long end = time_in_ms();
+        printf("\nachieved tok/s: %f\n", config.seq_len / (double)(end-start)*1000);
+    }
 
     // memory and file handles cleanup
     free_run_state(&state);
