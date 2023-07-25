@@ -473,7 +473,7 @@ int main(int argc, char *argv[]) {
 
     // report achieved tok/s
     long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", config.seq_len / (double)(end-start)*1000);
+    printf("\nachieved tok/s: %f\n", steps / (double)(end-start)*1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
