@@ -181,9 +181,9 @@ fn rmsnorm(out: &mut [Ty], x: &[Ty], w: &[Ty]) {
     out.iter_mut().zip(normed).for_each(|(dst, src)| *dst = src);
 }
 
-fn matmul(out: &mut [f32], x: &[f32], w: &[f32], n: usize) {
+fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], n: usize) {
     out.par_iter_mut().enumerate().for_each(|(i, out_val)| {
-        let mut val = 0.0f32;
+        let mut val = 0 as Ty;
         for j in 0..n {
             val += w[i * n + j] * x[j];
         }
