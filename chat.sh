@@ -1,6 +1,6 @@
 #!/bin/bash
 
-MODEL="out/model.bin"
+MODEL="model110m.bin"
 
 #------
 
@@ -23,7 +23,7 @@ last_message=${prompt##*$LF}
 ai_next="Lily replied to Timmy, \""
 if [ "$last_message" != "$ai_next" ]
 then
-  prompt="${prompt}${LF}Timmy replied to Lily, \"${input}l\"${LF}${ai_next}"
+  prompt="${prompt}${LF}Timmy replied to Lily, \"${input}\"${LF}${ai_next}"
 fi
 
 tmp_file=`mktemp`
