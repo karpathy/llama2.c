@@ -16,11 +16,34 @@ $ ./run
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <stdint.h>  // for uintptr_t
+#ifdef LLAMAC_AVX2
+#include <immintrin.h> // AVX2
+#endif
+
+// Processor memory alignment stride
+#define CACHE_ALIGN_SIZE 32
+
+void aligned_assignment_helper(void* pointer, char* pointer_name, int line_info) {
+    int is_aligned = ((uintptr_t)pointer) % CACHE_ALIGN_SIZE;
+    if (is_aligned != 0) {
+        printf("Bad Pointer Alignement of Variable %s (%p) at line %d\r\n", pointer_name, (void*) pointer, line_info);
+        // File Config header must be aligned to CACHE_ALIGN_SIZE for AVX2 to work
+        printf("Did you forget to upgrade to the latest file format\r\n");
+        exit(1);
+    }
+}
+
+// #define CHECK_ALIGNMENT(pointer) aligned_assignment_helper(pointer, #pointer, __LINE__)
+#define CHECK_ALIGNMENT(pointer)
 
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
+// Config structure needs to be CACHE ALIGNED (Typically 32 Bytes)
+// If you change this, it is important that export_meta_llama_bin.py is updated as well
 typedef struct {
+    int magic_and_version; // header version and struct alignment 0x42 0xMajor 0xMinor 0xPoint
     int dim; // transformer dimension
     int hidden_dim; // for ffn layers
     int n_layers; // number of layers
@@ -71,20 +94,29 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
+void* aligned_calloc(size_t nitems, size_t size) {
+    void* mem = NULL;
+    size_t block_size = nitems * size;
+    if (posix_memalign(&mem, CACHE_ALIGN_SIZE, block_size)) {
+        return NULL;
+    }
+    return mem;
+}
+
 void malloc_run_state(RunState* s, Config* p) {
-    // we calloc instead of malloc to keep valgrind happy
-    s->x = calloc(p->dim, sizeof(float));
-    s->xb = calloc(p->dim, sizeof(float));
-    s->xb2 = calloc(p->dim, sizeof(float));
-    s->hb = calloc(p->hidden_dim, sizeof(float));
-    s->hb2 = calloc(p->hidden_dim, sizeof(float));
-    s->q = calloc(p->dim, sizeof(float));
-    s->k = calloc(p->dim, sizeof(float));
-    s->v = calloc(p->dim, sizeof(float));
-    s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
-    s->logits = calloc(p->vocab_size, sizeof(float));
-    s->key_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
-    s->value_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
+    // we aligned_calloc instead of malloc to keep valgrind happy
+    s->x = aligned_calloc(p->dim, sizeof(float));
+    s->xb = aligned_calloc(p->dim, sizeof(float));
+    s->xb2 = aligned_calloc(p->dim, sizeof(float));
+    s->hb = aligned_calloc(p->hidden_dim, sizeof(float));
+    s->hb2 = aligned_calloc(p->hidden_dim, sizeof(float));
+    s->q = aligned_calloc(p->dim, sizeof(float));
+    s->k = aligned_calloc(p->dim, sizeof(float));
+    s->v = aligned_calloc(p->dim, sizeof(float));
+    s->att = aligned_calloc(p->n_heads * p->seq_len, sizeof(float));
+    s->logits = aligned_calloc(p->vocab_size, sizeof(float));
+    s->key_cache = aligned_calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
+    s->value_cache = aligned_calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q 
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache 
@@ -113,6 +145,8 @@ void free_run_state(RunState* s) {
 // initialization: read from checkpoint
 
 void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int shared_weights) {
+    CHECK_ALIGNMENT(f);
+
     float* ptr = f;
     w->token_embedding_table = ptr;
     ptr += p->vocab_size * p->dim;
@@ -153,6 +187,8 @@ void accum(float *a, float *b, int size) {
     }
 }
 
+#ifndef LLAMAC_AVX2
+// straight C implementation
 void rmsnorm(float* o, float* x, float* weight, int size) {
     // calculate sum of squares
     float ss = 0.0f;
@@ -167,6 +203,55 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
         o[j] = weight[j] * (ss * x[j]);
     }
 }
+#else
+// rmsnorm is a function that normalizes a given vector (x) using Root Mean Square (RMS)
+// normalization and then scales it by a weight vector. The result is stored in the output
+// vector (o). The size of the vectors is given by the input parameter 'size'.
+// RMS normalization is used to prevent the exploding gradient problem in deep learning
+// models, improving the stability of training.
+void rmsnorm(float* o, const float* x, const float* weight, int size) {
+    // Calculate sum of squares
+    int n = size / 8 * 8;  // make size multiple of 8
+    __m256 ss_vec = _mm256_setzero_ps();  // initialize with 0s
+    for (int j = 0; j < n; j += 8) {
+        __m256 x_vec = _mm256_load_ps(&x[j]); // load 8 x values
+        ss_vec = _mm256_fmadd_ps(x_vec, x_vec, ss_vec); // fused multiply-add
+    }
+    // Handle tail part
+    float ss = 0.0f;
+    for (int j = n; j < size; j++) {
+        ss += x[j] * x[j];
+    }
+    // Horizontal add
+    ss_vec = _mm256_hadd_ps(ss_vec, ss_vec);
+    ss_vec = _mm256_hadd_ps(ss_vec, ss_vec);
+    float ss_vals[8];
+    _mm256_store_ps(ss_vals, ss_vec);
+    ss += ss_vals[0] + ss_vals[4];
+
+    ss /= size;
+    ss += 1e-5f;
+    ss = 1.0f / sqrtf(ss);
+
+    // Normalize and scale
+    __m256 ss_vec_norm = _mm256_set1_ps(ss); // broadcast ss to all elements of the vector
+    for (int j = 0; j < n; j += 8) {
+        __m256 x_vec = _mm256_load_ps(&x[j]); // load 8 x values
+        __m256 w_vec = _mm256_load_ps(&weight[j]); // load 8 weight values
+
+        // Perform the weight * (ss * x) operation
+        __m256 o_vec = _mm256_mul_ps(x_vec, ss_vec_norm); // perform ss * x
+        o_vec = _mm256_mul_ps(o_vec, w_vec); // multiply with weight
+
+        // Store the result
+        _mm256_store_ps(&o[j], o_vec);
+    }
+    // Handle tail part
+    for (int j = n; j < size; j++) {
+        o[j] = weight[j] * (ss * x[j]);
+    }
+}
+#endif
 
 void softmax(float* x, int size) {
     // find max value (for numerical stability)
@@ -182,23 +267,163 @@ void softmax(float* x, int size) {
         x[i] = expf(x[i] - max_val);
         sum += x[i];
     }
+
+    float inv_sum = 1.0f / sum;
+
     // normalize
     for (int i = 0; i < size; i++) {
-        x[i] /= sum;
+        x[i] *= inv_sum;
     }
 }
 
+#ifndef LLAMAC_AVX2
+// straight C implementation
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     #pragma omp parallel for
     for (int i = 0; i < d; i++) {
         float val = 0.0f;
+        int i_n = i * n;
         for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
+            val += w[i_n + j] * x[j];
         }
         xout[i] = val;
     }
 }
+#else
+// matmul is a matrix multiplication function that computes the product of a matrix (w) and
+// a vector (x) and stores the result in the output vector (o).
+// The function takes the dimensions (n, d) of the matrix as input.
+// This function is used for transforming input data in the application
+void matmul(float* o, const float* x, const float* w, int n, int d) {
+    CHECK_ALIGNMENT(o);
+    CHECK_ALIGNMENT(x);
+    CHECK_ALIGNMENT(w);
+
+    // W (d,n) @ x (n,) -> o (d,)
+    int nn = n / 8 * 8;  // ensure n is a multiple of 8
+    #pragma omp parallel for
+    for (int i = 0; i < d; i++) {
+        __m256 sum_vec = _mm256_setzero_ps(); // for AVX2, sum of 8 floats
+        int i_n = i * n;
+        for (int j = 0; j < nn; j += 8) {
+            // Load 8 values from w and x
+            __m256 w_vec = _mm256_load_ps(&w[i_n + j]);
+            __m256 x_vec = _mm256_load_ps(&x[j]);
+
+            // Multiply and accumulate
+            __m256 prod_vec = _mm256_mul_ps(w_vec, x_vec);
+            sum_vec = _mm256_add_ps(sum_vec, prod_vec);
+        }
+
+        // Perform horizontal add
+        sum_vec = _mm256_hadd_ps(sum_vec, sum_vec);
+        sum_vec = _mm256_hadd_ps(sum_vec, sum_vec);
+        float vals[8];
+        _mm256_storeu_ps(vals, sum_vec);
+        float val = vals[0] + vals[4];
+
+        // handle remainder if n is not a multiple of 8
+        for (int j = nn; j < n; j++) {
+            val += w[i_n + j] * x[j];
+        }
+        o[i] = val;
+    }
+}
+
+// matmul2 is an optimized matrix multiplication function which computes two matrix-vector
+// products in one function. The input matrices are w1 and w2, and the vector is x.
+// The results are stored in o1 and o2 respectively.
+// This function aims to improve the memory locality and cache utilization by fusing
+// two similar computations, which potentially results in performance improvements.
+void matmul2(float* o1, float* o2, const float* x, const float* w1, const float* w2, int n, int d) {
+    CHECK_ALIGNMENT(o1);
+    CHECK_ALIGNMENT(o2);
+    CHECK_ALIGNMENT(x);
+    CHECK_ALIGNMENT(w1);
+    CHECK_ALIGNMENT(w2);
+
+    // o1 = W1 @ x
+    // o2 = W3 @ x
+    #pragma omp parallel for
+    for (int i = 0; i < d; i++) {
+        __m256 o1_val_vec = _mm256_setzero_ps();
+        __m256 o2_val_vec = _mm256_setzero_ps();
+        int i_n = i * n;
+        for (int j = 0; j < n; j += 8) {
+            __m256 x_vec = _mm256_load_ps(&x[j]);
+
+            o1_val_vec = _mm256_fmadd_ps(_mm256_load_ps(&w1[i_n + j]), x_vec, o1_val_vec);
+            o2_val_vec = _mm256_fmadd_ps(_mm256_load_ps(&w2[i_n + j]), x_vec, o2_val_vec);
+        }
+
+        // Perform horizontal add
+        o1_val_vec = _mm256_hadd_ps(o1_val_vec, o1_val_vec);
+        o1_val_vec = _mm256_hadd_ps(o1_val_vec, o1_val_vec);
+        o2_val_vec = _mm256_hadd_ps(o2_val_vec, o2_val_vec);
+        o2_val_vec = _mm256_hadd_ps(o2_val_vec, o2_val_vec);
+
+        float o1_vals[8], o2_vals[8];
+
+        _mm256_storeu_ps(o1_vals, o1_val_vec);
+        _mm256_storeu_ps(o2_vals, o2_val_vec);
+
+        o1[i] = o1_vals[0] + o1_vals[4];
+        o2[i] = o2_vals[0] + o2_vals[4];
+    }
+}
+
+// matmul3 is an optimized matrix multiplication function which computes three matrix-vector
+// products in one function. The input matrices are w1, w2, and w3, and the vector is x.
+// The results are stored in o1, o2, and o3 respectively.
+// This function aims to improve the memory locality and cache utilization by fusing
+// three similar computations, which potentially results in performance improvements.
+void matmul3(float* o1, float* o2, float* o3, const float* x, const float* w1, const float* w2, const float* w3, int n, int d) {
+    CHECK_ALIGNMENT(o1);
+    CHECK_ALIGNMENT(o2);
+    CHECK_ALIGNMENT(o3);
+    CHECK_ALIGNMENT(x);
+    CHECK_ALIGNMENT(w1);
+    CHECK_ALIGNMENT(w2);
+    CHECK_ALIGNMENT(w3);
+
+    // o1 = W1 @ x
+    // o2 = W2 @ x
+    // o3 = W3 @ x
+    #pragma omp parallel for
+    for (int i = 0; i < d; i++) {
+        __m256 o1_val_vec = _mm256_setzero_ps();
+        __m256 o2_val_vec = _mm256_setzero_ps();
+        __m256 o3_val_vec = _mm256_setzero_ps();
+        int i_n = i * n;
+        for (int j = 0; j < n; j += 8) {
+            __m256 x_vec = _mm256_load_ps(&x[j]);
+
+            o1_val_vec = _mm256_fmadd_ps(_mm256_load_ps(&w1[i_n + j]), x_vec, o1_val_vec);
+            o2_val_vec = _mm256_fmadd_ps(_mm256_load_ps(&w2[i_n + j]), x_vec, o2_val_vec);
+            o3_val_vec = _mm256_fmadd_ps(_mm256_load_ps(&w3[i_n + j]), x_vec, o3_val_vec);
+        }
+
+        // Perform horizontal add
+        o1_val_vec = _mm256_hadd_ps(o1_val_vec, o1_val_vec);
+        o1_val_vec = _mm256_hadd_ps(o1_val_vec, o1_val_vec);
+        o2_val_vec = _mm256_hadd_ps(o2_val_vec, o2_val_vec);
+        o2_val_vec = _mm256_hadd_ps(o2_val_vec, o2_val_vec);
+        o3_val_vec = _mm256_hadd_ps(o3_val_vec, o3_val_vec);
+        o3_val_vec = _mm256_hadd_ps(o3_val_vec, o3_val_vec);
+
+        float o1_vals[8], o2_vals[8], o3_vals[8];
+
+        _mm256_storeu_ps(o1_vals, o1_val_vec);
+        _mm256_storeu_ps(o2_vals, o2_val_vec);
+        _mm256_storeu_ps(o3_vals, o3_val_vec);
+
+        o1[i] = o1_vals[0] + o1_vals[4];
+        o2[i] = o2_vals[0] + o2_vals[4];
+        o3[i] = o3_vals[0] + o3_vals[4];
+    }
+}
+#endif
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
     
@@ -207,6 +432,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     int dim = p->dim;
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
+    float inv_sqrt_head_size = 1.0f / sqrtf(head_size);
 
     // copy the token embedding into x
     float* content_row = &(w->token_embedding_table[token * dim]);
@@ -223,23 +449,32 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         // qkv matmuls for this position
+#ifndef LLAMAC_AVX2
         matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
         matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
         matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
+#else
+        // used fused / loop-jamming version when we have AVX2
+        matmul3(s->q, s->k, s->v, s->xb, w->wq + l*dim*dim, w->wk + l*dim*dim, w->wv + l*dim*dim, dim, dim);
+#endif
 
         // apply RoPE rotation to the q and k vectors for each head
         for (int h = 0; h < p->n_heads; h++) {
+            // common expression hoisting
+            int h_head_size = h * head_size;
+
             // get the q and k vectors for this head
-            float* q = s->q + h * head_size;
-            float* k = s->k + h * head_size;
+            float* q = s->q + h_head_size;
+            float* k = s->k + h_head_size;
             // rotate q and k by the freq_cis_real and freq_cis_imag
             for (int i = 0; i < head_size; i+=2) {
+                int j = i / 2;
                 float q0 = q[i];
                 float q1 = q[i+1];
                 float k0 = k[i];
                 float k1 = k[i+1];
-                float fcr = freq_cis_real_row[i/2];
-                float fci = freq_cis_imag_row[i/2];
+                float fcr = freq_cis_real_row[j];
+                float fci = freq_cis_imag_row[j];
                 q[i]   = q0 * fcr - q1 * fci;
                 q[i+1] = q0 * fci + q1 * fcr;
                 k[i]   = k0 * fcr - k1 * fci;
@@ -257,20 +492,23 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         // multihead attention. iterate over all heads
         #pragma omp parallel for
         for (int h = 0; h < p->n_heads; h++) {
+            // common expression hoisting
+            int h_head_size = h * head_size;
+
             // get the query vector for this head
-            float* q = s->q + h * head_size;
+            float* q = s->q + h_head_size;
             // attention scores for this head
             float* att = s->att + h * p->seq_len;
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * dim + h * head_size;
+                float* k = s->key_cache + loff + t * dim + h_head_size;
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
                     score += q[i] * k[i];
                 }
-                score /= sqrtf(head_size);
+                score *= inv_sqrt_head_size;
                 // save the score to the attention buffer
                 att[t] = score;
             }
@@ -282,9 +520,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
             for (int i = 0; i < head_size; i++) {
                 float val = 0.0f;
                 for (int t = 0; t <= pos; t++) {
-                    val += att[t] * s->value_cache[loff + t * dim + h * head_size + i]; // note bad locality
+                    val += att[t] * s->value_cache[loff + t * dim + h_head_size + i]; // note bad locality
                 }
-                s->xb[h * head_size + i] = val;
+                s->xb[h_head_size + i] = val;
             }
         }
 
@@ -299,9 +537,14 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
+#ifndef LLAMAC_AVX2
         matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
-        
+#else
+        // used fused / loop-jamming version when we have AVX2
+        matmul2(s->hb, s->hb2, s->xb, w->w1 + l*dim*hidden_dim, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+#endif
+
         // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         for (int i = 0; i < hidden_dim; i++) {
             s->hb[i] = s->hb[i] * (1.0f / (1.0f + expf(-s->hb[i])));
@@ -364,7 +607,6 @@ long time_in_ms() {
         return -1; // Return -1 to indicate an error
     }
 }
-
 int main(int argc, char *argv[]) {
 
     // poor man's C argparse
@@ -415,6 +657,9 @@ int main(int argc, char *argv[]) {
         fd = open(checkpoint, O_RDONLY); // open in read only mode
         if (fd == -1) { printf("open failed!\n"); return 1; }
         data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+
+        CHECK_ALIGNMENT(data);
+
         if (data == MAP_FAILED) { printf("mmap failed!\n"); return 1; }
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);

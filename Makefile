@@ -22,12 +22,22 @@ rundebug: run.c
 runfast: run.c
 	gcc -Ofast -o run run.c -lm
 
+# additionally compiles with AVX2 intrinsics enabled
+.PHONY: runavx2
+runavx2: run.c
+	gcc -Ofast -march=native -mavx2 -DLLAMAC_AVX2 -o run run.c -lm
+
 # additionally compiles with OpenMP, allowing multithreaded runs
 # make sure to also enable multiple threads when running, e.g.:
 # OMP_NUM_THREADS=4 ./run out/model.bin
 .PHONY: runomp
 runomp: run.c
 	gcc -Ofast -fopenmp -march=native run.c  -lm  -o run
+
+# additionally compiles with AVX2 intrinsics enabled
+.PHONY: runompavx2
+runompavx2: run.c
+	gcc -Ofast -fopenmp -march=native -mavx2 -DLLAMAC_AVX2 run.c  -lm  -o run
 
 .PHONY: clean
 clean:
