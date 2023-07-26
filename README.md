@@ -161,6 +161,26 @@ OMP_NUM_THREADS=4 ./run out/model.bin
 
 Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimitely familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
 
+## Cmake build
+
+```bash
+mkdir build
+cd build
+cmake ..
+cmake --build .
+./llama2c ../out110m/model110m.bin 0.9 256 ../tokenizer.bin
+```
+
+For openmp support, use:
+```bash
+CC=clang cmake -DUSE_OPENMP=TRUE ..
+```
+
+If default clang doesn't support openmp, use homebrew/manually-installed clang:
+```bash
+CC=/path/to/installed/clang cmake -DUSE_OPENMP=TRUE ..
+```
+
 ## unsorted todos
 
 - why is there a leading space in C sampling code when we `./run`?
