@@ -13,9 +13,14 @@ $ ./run
 #include <time.h>
 #include <math.h>
 #include <string.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <sys/mman.h>
+
+#if defined(_WIN32)
+    #include "mmap-windows.c"
+#else
+    #include <unistd.h>
+    #include <sys/mman.h>
+#endif
 
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
@@ -359,12 +364,17 @@ int argmax(float* v, int n) {
 long time_in_ms() {
     struct timespec time;
     // Get the current time with nanosecond precision
+#if defined(_WIN32)
+    timespec_get(&time, TIME_UTC);
+    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+#else
     if (clock_gettime(CLOCK_REALTIME, &time) == 0) {
         return time.tv_sec * 1000 + time.tv_nsec / 1000000;
     } else {
         perror("clock_gettime");
         return -1; // Return -1 to indicate an error
     }
+#endif
 }
 
 int main(int argc, char *argv[]) {
