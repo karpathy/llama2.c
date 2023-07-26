@@ -2,5 +2,7 @@ build/
 out/
 out44m/
 out110m/
+llama2_7b.bin
 run
+__pycache__/
 .vscode/
