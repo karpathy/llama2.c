@@ -35,22 +35,23 @@ def export(checkpoint, params, filepath='model.bin'):
     p['vocab_size'] = 32000
     n_layers = p['n_layers']
     n_kv_heads = p.get('n_kv_heads', p['n_heads'])
-    # header magic version integer added for two reasons
-    # 1) so that we can version the header
-    # 2) so that the struct maintains strict cache alignment
-    #    which is necessary so that the weights that follow the header are also cache aligned
 
-    # this PR does not address the alignment or versioning problems with the current header
-    # at some point this should be re-enabled
-    # header_magic_version = 0x42000000
+    # header magic version integer added for three reasons
+    # (this PR does not address the alignment or versioning problems with the current header
+    # although at some point this should be re-enabled)
+    #
     # the format of the header_magic_version is three-fold
+    #
     # 1. to provide identification of the file-type via a magic byte (in this case 0x42)
     # 2. to provide versioning information in the next three bytes
     #    0xMajor 0xMinor 0xPoint
     # 3. to pad the header for cache alignment (typically 32 bytes)
     # for now we will skip emitting the header_magic_version
+    #
+    # header_magic_version = 0x42000000
     # header = struct.pack('iiiiiiii', header_magic_version, p['dim'], hidden_dim, n_layers, p['n_heads'], 
     #                                n_kv_heads, -p['vocab_size'], p['max_seq_len'])
+    #
     header = struct.pack('iiiiiii', p['dim'], hidden_dim, n_layers, p['n_heads'], 
                                     n_kv_heads, -p['vocab_size'], p['max_seq_len'])
     # NOTE ABOVE: -ve vocab_size is indicating that the classifier weights are present
