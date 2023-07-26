@@ -468,7 +468,12 @@ int main(int argc, char *argv[]) {
             // we now want to sample from this distribution to get the next token
             next = sample(state.logits, config.vocab_size);
         }
-        printf("%s", vocab[next]);
+        // omit the leading space on the first token
+        if (pos == 0 && vocab[next][0] == ' ') {
+            printf("%s", vocab[next] + 1);
+        } else {
+            printf("%s", vocab[next]);
+        }
         fflush(stdout);
 
         // advance forward
