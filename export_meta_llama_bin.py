@@ -2,6 +2,7 @@
 This script exports the Llama 2 weights in llama2c.bin format.
 """
 import sys
+import os
 import struct
 from pathlib import Path
 import json
@@ -89,7 +90,11 @@ def concat_weights(models):
 
 
 def load_and_export(model_path, output_path):
-    with open(model_path + 'params.json') as f:
+    d = os.path.join(model_path, 'params.json')
+    if not os.path.isfile(d):
+        print('[E] model json not found: ', d)
+        raise ValueError  # or just exit(1)
+    with open(d) as f:
         params = json.load(f)
         print(params)
 
