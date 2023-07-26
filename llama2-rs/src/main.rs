@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
 };
-
+use std::io::{self, Write};
 use rand::Rng;
 
 const CONF_VALS: usize = 7;
@@ -273,8 +273,8 @@ impl RunState {
         let head_size = dim / n_heads;
         let qk_heads = self
             .q
-            .chunks_exact_mut(n_heads)
-            .zip(self.k.chunks_exact_mut(n_heads));
+            .chunks_exact_mut(head_size)
+            .zip(self.k.chunks_exact_mut(head_size));
 
         for (q, k) in qk_heads {
             let mut cis_real = w.freq_cis_real[pos * head_size / 2..]
@@ -396,7 +396,6 @@ impl RunState {
             .take(1)
             .for_each(|src| self.x.as_mut_slice().copy_from_slice(src));
 
-
         for l in 0..C.n_layers {
             let rms_attn_w = _uncheked_slice(&w.rms_att_weight, l * C.dim, C.dim);
             rmsnorm(&mut self.xb, &self.x, rms_attn_w);
@@ -433,6 +432,7 @@ impl RunState {
             .for_each(|(xx, ww)| (*xx) *= ww * ss);
 
         matmul(&mut self.logits, &self.x, &w.token_embedding_table, C.dim);
+
     }
 }
 
@@ -440,7 +440,7 @@ fn main() {
     use std::time::Instant;
     let model_path = "../out/model.bin";
     let tokenizer_path = "../tokenizer.bin";
-    let temperature = 0.9 as Ty;
+    let temperature = 0.0 as Ty;
 
     let config = Config::from_file(model_path);
     let vocab = Vocab::from_file(config.vocab_size, tokenizer_path);
@@ -470,10 +470,11 @@ fn main() {
             cdf_sample(&probs)
         };
         print!("{}", vocab.get_token(next));
+        io::stdout().flush().unwrap();
         pos += 1;
         token = next;
     }
-    println!("");
     let ts = pos as f32 / st.elapsed().as_secs_f32();
+    println!("");
     println!("{:.3} Tokens/Sec", ts);
 }
