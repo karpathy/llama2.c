@@ -335,17 +335,18 @@ impl RunState {
                     *self.att.get_unchecked_mut(t) = score;
                 }
             }
-            inplace_softmax(&mut self.att[..=pos]);
 
-            let seq_cached_vals =
+            let mut seq_cached_vals =
                 _uncheked_slice(&self.value_cache, layer * C.dim * C.seq_len, C.seq_len * C.dim)
                     .chunks_exact(head_size)
                     .skip(h)
                     .step_by(C.n_heads);
+            inplace_softmax(&mut self.att[..=pos]);
             // cahced vals have head_size values in it. we need to go over all t vals and update xb
             // dst is head_size part of xb, we gonna add t (actually pos values) values into it
             let dst = xb_heads.next().unwrap();
-            dbg!(&dst[..6]);
+            // clear dst
+            dst.iter_mut().for_each(|v| *v = 0f32);
             // this is different from Karphaty's impl. first go over all head size values, than skip time stamp
             // Why Karphaty's inner loop does C.dim jumps?
             // this goes over time stamps
@@ -356,50 +357,27 @@ impl RunState {
                     *dst += val * attn_w;
                 }
             }
-            dbg!(&dst[..6]);
-            assert!(false);
         }
         
     }
 
-    fn aggregate_attention(&mut self, l: usize, pos: usize, C: &Config) {
-        let head_size = C.dim / C.n_heads;
-        let mut xb_heads = self.xb.chunks_exact_mut(head_size);
-        for h in 0..C.n_heads {
-            let seq_cached_vals =
-                _uncheked_slice(&self.value_cache, l * C.dim * C.seq_len, C.seq_len * C.dim)
-                    .chunks_exact(head_size)
-                    .skip(h)
-                    .step_by(C.n_heads);
-            // cahced vals have head_size values in it. we need to go over all t vals and update xb
-            // dst is head_size part of xb, we gonna add t (actually pos values) values into it
-            let dst = xb_heads.next().unwrap();
-            // this is different from Karphaty's impl. first go over all head size values, than skip time stamp
-            // Why Karphaty's inner loop does C.dim jumps?
-            // this goes over time stamps
-            for (vals, attn_w) in seq_cached_vals.zip(self.att.iter()).take(pos + 1) {
-                // aggregate timestamp to xb
-                for (val, dst) in vals.iter().zip(dst.iter_mut()) {
-                    *dst += val * attn_w;
-                }
-            }
-        }
-    }
+
 
     fn ffn(&mut self, l: usize, w: &TransformerWeights, C: &Config) {
         let rms_ffn_w = _uncheked_slice(&w.rms_ffn_weight, l * C.dim, C.dim);
         // normalize after adding residual
         rmsnorm(&mut self.xb, &self.x, rms_ffn_w);
+        
         let w1 = _uncheked_slice(&w.w1, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
         let w2 = _uncheked_slice(&w.w2, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
         let w3 = _uncheked_slice(&w.w3, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
         matmul(&mut self.hb, &self.xb, w1, C.dim);
         matmul(&mut self.hb2, &self.xb, w3, C.dim);
-
         // silu on first hidden
         self.hb
             .iter_mut()
-            .for_each(|v| *v = 1 as Ty / (1 as Ty + (-*v).exp()));
+            .for_each(|v| *v = (*v)*(1 as Ty / (1 as Ty + (-*v).exp())));
+
         // mix branches
         self.hb
             .iter_mut()
