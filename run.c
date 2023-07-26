@@ -282,8 +282,11 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
             float* xb = s->xb + h * head_size;
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
+                // get the value vector for this head and at this timestep
                 float* v = s->value_cache + loff + t * dim + h * head_size;
+                // get the attention weight for this timestep
                 float a = att[t];
+                // accumulate the weighted value into xb
                 for (int i = 0; i < head_size; i++) {
                     xb[i] += a * v[i];
                 }
