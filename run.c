@@ -281,10 +281,10 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
             // weighted sum of the values, store back into xb
             float* xb = s->xb + h * head_size;
             memset(xb, 0, head_size * sizeof(float));
-            for (int t = 0; t <= pos; t += 1) {
+            for (int t = 0; t <= pos; t++) {
                 float* v = s->value_cache + loff + t * dim + h * head_size;
-                float a = s->att[h * p->seq_len + t];
-                for (int i = 0; i < head_size; i += 1) {
+                float a = att[t];
+                for (int i = 0; i < head_size; i++) {
                     xb[i] += a * v[i];
                 }
             }
