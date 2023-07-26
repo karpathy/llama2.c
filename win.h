@@ -1,3 +1,9 @@
+/*
+ * Windows Compatibility headers
+ * This source contains compatible versions of mmap & clock_gettime functions
+ * ported for Windows OS
+ */
+
 /* mmap() replacement for Windows
  *
  * Author: Mike Frysinger <vapier@gentoo.org>
@@ -98,3 +104,12 @@ static void munmap(void *addr, size_t length)
 
 #undef DWORD_HI
 #undef DWORD_LO
+
+// define undeclared constant
+#define CLOCK_REALTIME 0
+
+// define simple clock_gettime alternative for Windows
+int clock_gettime(int _, struct timespec *tv)
+{
+    return timespec_get(tv, TIME_UTC) != 0 ? 0 : 1;
+}
