@@ -63,7 +63,7 @@ base models... ¯\\_(ツ)_/¯. Since we can inference the base model, it should 
 
 ## models
 
-For the sake of examples of smaller, from-scratch models, I trained multiple models on TinyStories and catalogue them here:
+For the sake of examples of smaller, from-scratch models, I trained multiple models on TinyStories and catalogue them below. All of these trained in a few hours on my training setup (4X A100 40GB GPUs). The 110M took around 24 hours.
 
 | model | dim | n_layers | n_heads | max context length | parameters | val loss | download
 | --- | --- | --- | --- | --- | --- | --- | --- |
