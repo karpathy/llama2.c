@@ -20,10 +20,10 @@ LF=$'\n'
 prompt=`cat "$file"`
 last_message=${prompt##*$LF}
 
-ai_next="Lily replied to Timmy, \""
+ai_next="Lily replied \""
 if [ "$last_message" != "$ai_next" ]
 then
-  prompt="${prompt}${LF}Timmy replied to Lily, \"${input}\"${LF}${ai_next}"
+  prompt="${prompt}${LF}Timmy replied \"${input}\"${LF}${ai_next}"
 fi
 
 tmp_file=`mktemp`
