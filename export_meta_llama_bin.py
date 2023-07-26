@@ -11,13 +11,13 @@ import torch
 from model import precompute_freqs_cis
 
 
-def export(p, state_dict, filepath='model.bin'):
+def export(p, state_dict, filepath, dtype):
     """export the model weights in fp32 into .bin file to be read from C"""
     f = open(filepath, 'wb')
 
     def serialize(key):
         print(f"writing {key}...")
-        t = state_dict[key].contiguous().view(-1).type(torch.float32).numpy()
+        t = state_dict[key].contiguous().view(-1).type(dtype).numpy()
         f.write(memoryview(t))
         del state_dict[key]
 
@@ -25,12 +25,13 @@ def export(p, state_dict, filepath='model.bin'):
     hidden_dim = state_dict['layers.0.feed_forward.w1.weight'].shape[0]
     p['vocab_size'] = 32000
     p['max_seq_len'] = 2048
+    p['dtype'] = dtype == torch.float32
 
     n_kv_heads = p.get('n_kv_heads') or p['n_heads']
     header = struct.pack(
-        'iiiiiii',
+        'iiiiiiii',
         p['dim'], hidden_dim, p['n_layers'], p['n_heads'],
-        n_kv_heads, -p['vocab_size'], p['max_seq_len']
+        n_kv_heads, -p['vocab_size'], p['max_seq_len'], p['dtype']
     )
     # NOTE ABOVE: -ve vocab_size is indicating that the classifier weights are present
     # in the checkpoint and should be loaded.
@@ -88,7 +89,7 @@ def concat_weights(models):
     return state_dict
 
 
-def load_and_export(model_path, output_path):
+def load_and_export(model_path, output_path, dtype):
     with open(model_path + 'params.json') as f:
         params = json.load(f)
         print(params)
@@ -101,14 +102,15 @@ def load_and_export(model_path, output_path):
 
     state_dict = concat_weights(models)
     del models
-    export(params, state_dict, output_path)
+    export(params, state_dict, output_path, dtype)
 
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
-        print('[Llama model folder path] [output path]')
+        print('[Llama model folder path] [output path] [dtype (float16, float32)]')
         exit()
 
     model_path = sys.argv[1]
     output_path = sys.argv[2]
-    load_and_export(model_path, output_path)
+    dtype = torch.float16 if sys.argv[3] == "float16" else torch.float32
+    load_and_export(model_path, output_path, dtype)

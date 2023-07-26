@@ -46,10 +46,10 @@ This still runs at interactive rates and samples more coherent and diverse stori
 As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). So Step 1, get the Llama 2 checkpoints by following the [Meta instructions](https://github.com/facebookresearch/llama). Once we have those checkpoints, we have to convert them into the llama2.c format. For this we use the `export_meta_llama_bin.py` file, e.g. for 7B model:
 
 ```bash
-python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin
+python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin float32
 ```
 
-The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reaons (accepting PRs for fix). We can run the model as normal:
+The export will take ~1 minute or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reaons (accepting PRs for fix). We can run the model as normal:
 
 ```bash
 ./run llama2_7b.bin
@@ -119,6 +119,21 @@ $ pytest
 ```
 
 Currently you will need two files to test or sample: the [model.bin](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link) file and the [model.ckpt](https://drive.google.com/file/d/1SM0rMxzy7babB-v4MfTg1GFqOCgWar5w/view?usp=share_link) file from PyTorch training I ran earlier. I have to think through running the tests without having to download 200MB of data.
+
+## data types
+
+There are different data types models can be stored in, for example: float16, float32.
+
+```bash
+gcc -O3 -o run run.c -lm -DDTYPE=float16 # float 16
+gcc -O3 -o run run.c -lm -DDTYPE=float   # float 32
+```
+
+In order to run float16 version the model has to be exported to float16.
+
+```
+python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin float16
+```
 
 ## performance
 
