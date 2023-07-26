@@ -277,14 +277,16 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
             // softmax the scores to get attention weights, from 0..pos inclusively
             softmax(att, pos + 1);
-            
+
             // weighted sum of the values, store back into xb
-            for (int i = 0; i < head_size; i++) {
-                float val = 0.0f;
-                for (int t = 0; t <= pos; t++) {
-                    val += att[t] * s->value_cache[loff + t * dim + h * head_size + i]; // note bad locality
+            float* xb = s->xb + h * head_size;
+            memset(xb, 0, head_size * sizeof(float));
+            for (int t = 0; t <= pos; t++) {
+                float* v = s->value_cache + loff + t * dim + h * head_size;
+                float a = att[t];
+                for (int i = 0; i < head_size; i++) {
+                    xb[i] += a * v[i];
                 }
-                s->xb[h * head_size + i] = val;
             }
         }
 
@@ -355,9 +357,14 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
-  struct timespec time;
-  timespec_get(&time, TIME_UTC);
-  return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+    struct timespec time;
+    // Get the current time with nanosecond precision
+    if (clock_gettime(CLOCK_REALTIME, &time) == 0) {
+        return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+    } else {
+        perror("clock_gettime");
+        return -1; // Return -1 to indicate an error
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -478,7 +485,7 @@ int main(int argc, char *argv[]) {
 
     // report achieved tok/s
     long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", config.seq_len / (double)(end-start)*1000);
+    printf("\nachieved tok/s: %f\n", steps / (double)(end-start)*1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
