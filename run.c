@@ -446,7 +446,7 @@ int main(int argc, char *argv[]) {
     malloc_run_state(&state, &config);
     
     // the current position we are in
-    long start = time_in_ms();
+    long start = 0; // init after the initial load of weights
     int next;
     int token = 1; // 1 = BOS token in Llama-2 sentencepiece
     int pos = 0;
@@ -455,6 +455,10 @@ int main(int argc, char *argv[]) {
 
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
+
+        // start timer after weights are loaded from file
+        if (pos == 0)
+            start = time_in_ms();
 
         // sample the next token
         if(temperature == 0.0f) {
