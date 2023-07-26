@@ -446,14 +446,16 @@ int main(int argc, char *argv[]) {
     // create and init the application RunState
     RunState state;
     malloc_run_state(&state, &config);
-    
+
     // the current position we are in
+    const int BOS = 1;  // 1 = BOS token in Llama-2 sentencepiece
+    const int EOS = 2;  // 2 = EOS token in Llama-2 sentencepiece
     long start = time_in_ms();
     int next;
-    int token = 1; // 1 = BOS token in Llama-2 sentencepiece
+    int token = BOS;
     int pos = 0;
     printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
-    while (pos < steps) {
+    while (pos < steps && token != EOS) {
 
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
@@ -480,7 +482,7 @@ int main(int argc, char *argv[]) {
 
     // report achieved tok/s
     long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", steps / (double)(end-start)*1000);
+    printf("\nachieved tok/s: %f\n", pos / (double)(end - start) * 1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
