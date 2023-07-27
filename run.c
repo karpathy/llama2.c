@@ -520,14 +520,14 @@ int main(int argc, char *argv[]) {
     }
 
     // encode prompt
-    char *prompt = "'Abracadabra!' said ";
+    char *prompt = "\"Abracadabra!\" said";
     int prompt_tokens[config.seq_len];
-    int n_tokens;
+    int prompt_token_size;
 
-    bpe_encode(prompt, vocab, config.vocab_size, prompt_tokens, &n_tokens);
+    bpe_encode(prompt, vocab, config.vocab_size, prompt_tokens, &prompt_token_size);
 
     printf("BPE encoding:\n");
-    for(int i=0; i<n_tokens; i++) {
+    for(int i=0; i<prompt_token_size; i++) {
         printf("%d: %s\n", prompt_tokens[i], vocab[prompt_tokens[i]].piece);
     }
     printf("\n\n");
@@ -543,22 +543,27 @@ int main(int argc, char *argv[]) {
     int token = 1; // 1 = BOS token in Llama-2 sentencepiece
     int pos = 0;
     printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
-    while (pos < steps) {
+    while (pos < prompt_token_size + steps) {
 
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
 
-        // sample the next token
-        if(temperature == 0.0f) {
-            // greedy argmax sampling
-            next = argmax(state.logits, config.vocab_size);
+        if(pos < prompt_token_size) {
+            // take next token from prompt
+            next = prompt_tokens[pos];
         } else {
-            // apply the temperature to the logits
-            for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
-            // apply softmax to the logits to get the probabilities for next token
-            softmax(state.logits, config.vocab_size);
-            // we now want to sample from this distribution to get the next token
-            next = sample(state.logits, config.vocab_size);
+            // sample the next token
+            if(temperature == 0.0f) {
+                // greedy argmax sampling
+                next = argmax(state.logits, config.vocab_size);
+            } else {
+                // apply the temperature to the logits
+                for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
+                // apply softmax to the logits to get the probabilities for next token
+                softmax(state.logits, config.vocab_size);
+                // we now want to sample from this distribution to get the next token
+                next = sample(state.logits, config.vocab_size);
+            }
         }
         printf("%s", vocab[next].piece);
         fflush(stdout);
