@@ -13,9 +13,11 @@ $ ./run
 #include <time.h>
 #include <math.h>
 #include <string.h>
-#include <unistd.h>
 #include <fcntl.h>
+#ifndef _WIN32
+#include <unistd.h>
 #include <sys/mman.h>
+#endif 
 
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
@@ -190,9 +192,9 @@ void softmax(float* x, int size) {
 
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
-    #pragma omp parallel for
-    for (int i = 0; i < d; i++) {
-        float val = 0.0f;
+    int i;
+    #pragma omp parallel for private(i)
+    for (i = 0; i < d; i++) {        float val = 0.0f;
         for (int j = 0; j < n; j++) {
             val += w[i * n + j] * x[j];
         }
@@ -255,8 +257,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         memcpy(value_cache_row, s->v, dim*sizeof(*value_cache_row));
         
         // multihead attention. iterate over all heads
-        #pragma omp parallel for
-        for (int h = 0; h < p->n_heads; h++) {
+        int h;
+        #pragma omp parallel for private(h)
+        for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
             float* q = s->q + h * head_size;
             // attention scores for this head
