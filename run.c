@@ -13,10 +13,13 @@ $ ./run
 #include <time.h>
 #include <math.h>
 #include <string.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <sys/mman.h>
-
+#if defined _WIN32
+    #include "win.h"
+#else
+    #include <unistd.h>
+    #include <sys/mman.h>
+#endif
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
@@ -190,8 +193,9 @@ void softmax(float* x, int size) {
 
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
-    #pragma omp parallel for
-    for (int i = 0; i < d; i++) {
+    int i;
+    #pragma omp parallel for private(i)
+    for (i = 0; i < d; i++) {
         float val = 0.0f;
         for (int j = 0; j < n; j++) {
             val += w[i * n + j] * x[j];
@@ -255,8 +259,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         memcpy(value_cache_row, s->v, dim*sizeof(*value_cache_row));
         
         // multihead attention. iterate over all heads
-        #pragma omp parallel for
-        for (int h = 0; h < p->n_heads; h++) {
+        int h;
+        #pragma omp parallel for private(h)
+        for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
             float* q = s->q + h * head_size;
             // attention scores for this head
@@ -360,14 +365,15 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
+#if defined _WIN32
+    // windows specific way to get time
+    return GetTickCount();
+#else
+    // linux specific way to get time
     struct timespec time;
-    // Get the current time with nanosecond precision
-    if (clock_gettime(CLOCK_REALTIME, &time) == 0) {
-        return time.tv_sec * 1000 + time.tv_nsec / 1000000;
-    } else {
-        perror("clock_gettime");
-        return -1; // Return -1 to indicate an error
-    }
+    clock_gettime(CLOCK_REALTIME, &time);
+    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+#endif
 }
 
 int find_arg(char* arg, char *args[], int n) {
