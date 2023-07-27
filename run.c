@@ -345,7 +345,7 @@ unsigned int random_u32() {
     return (rng_seed * 0x2545F4914F6CDD1Dull) >> 32;
 }
 float random_f32() {
-    return (random_u32() >> 9) * (1.0f / 8388608.0f);
+    return (random_u32() >> 8) / 16777216.0f;
 }
 int sample(float* probabilities, int n) {
     // sample index from probabilities, they must sum to 1
