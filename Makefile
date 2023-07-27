@@ -42,7 +42,7 @@ rungnu:
 	$(CC) -Ofast -std=gnu11 -o run run.c -lm
 
 .PHONY: runompgnu
-rungnu:
+runompgnu:
 	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm  -o run
 
 .PHONY: clean
