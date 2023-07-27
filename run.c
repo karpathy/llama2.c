@@ -373,6 +373,71 @@ long time_in_ms() {
     }
 }
 
+int bpe_lookup(char *str, Piece *vocab, int vocab_size)
+{
+    // lookup 'str' in vocabulary as exact piece match
+    for(int i=0; i<vocab_size; i++) {
+        if( strcmp(str, vocab[i].piece) == 0 ) {
+            return i;
+        }
+    }
+    return -1; // -1 if not found in vocabulary
+}
+
+int bpe_encode(char *text, Piece *vocab, int vocab_size, int *tokens, int *n_tokens)
+{
+    // encode text using vocabulary
+    char merged_str[128]; // max string size in vocabulary * 2
+
+    // start from char sequence
+    *n_tokens = 0;
+    for(char *c=text; *c!='\0'; c++) {
+        sprintf(merged_str, "%c", *c);
+        int id = bpe_lookup(merged_str, vocab, vocab_size);
+        if(id==-1) {
+            return 0;
+        }
+        tokens[*n_tokens] = id;
+        (*n_tokens)++;
+        // printf("add_symbol %d %s\n", id, merged_str);
+    }
+
+    // merge best consecutive pairs on each iteration
+    while(1) {
+        float best_score = -1e10;
+        int best_id = -1;
+        int best_idx = -1;
+
+        for(int i=0; i<(*n_tokens-1); i++) {
+            // check if we can merge tokens[i] with tokens[i+1]
+            sprintf(merged_str, "%s%s", vocab[tokens[i]].piece, vocab[tokens[i+1]].piece);
+            int id = bpe_lookup(merged_str, vocab, vocab_size);
+            if(id!=-1 && vocab[id].score > best_score) {
+                best_score = vocab[id].score;
+                best_id = id;
+                best_idx = i;
+            }
+        }
+
+        if(best_idx==-1) {
+            break; // no more merges are possible
+        }
+
+        // printf("best_score: %f idx:%d new_id:%d %s\n", best_score, best_idx, best_id, vocab[best_id].piece);
+
+        // merge best_idx with best_idx+1, 
+        // replace with new token id
+        tokens[best_idx] = best_id;  
+        // and delete token at position best_idx+1
+        for(int i=best_idx+1; i<(*n_tokens-1); i++) 
+            tokens[i] = tokens[i+1];
+        (*n_tokens)--;
+    }
+
+    return 1;
+}
+
+
 int main(int argc, char *argv[]) {
 
     // poor man's C argparse
@@ -453,6 +518,20 @@ int main(int argc, char *argv[]) {
         }
         fclose(file);
     }
+
+    // encode prompt
+    char *prompt = "'Abracadabra!' said ";
+    int prompt_tokens[config.seq_len];
+    int n_tokens;
+
+    bpe_encode(prompt, vocab, config.vocab_size, prompt_tokens, &n_tokens);
+
+    printf("BPE encoding:\n");
+    for(int i=0; i<n_tokens; i++) {
+        printf("%d: %s\n", prompt_tokens[i], vocab[prompt_tokens[i]].piece);
+    }
+    printf("\n\n");
+
 
     // create and init the application RunState
     RunState state;
