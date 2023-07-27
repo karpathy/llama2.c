@@ -444,9 +444,11 @@ int main(int argc, char *argv[]) {
     char *checkpoint = NULL;  // e.g. out/model.bin
     float temperature = 0.9f; // e.g. 1.0, or 0.0
     int steps = 256;          // max number of steps to run for, 0: use seq_len
+    char *prompt = NULL;      // prompt string
+
     // 'checkpoint' is necessary arg
     if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps]\n", argv[0]);
+        printf("Usage: %s <checkpoint_file> [temperature] [steps] [prompt]\n", argv[0]);
         return 1;
     }
     if (argc >= 2) {
@@ -458,6 +460,9 @@ int main(int argc, char *argv[]) {
     }
     if (argc >= 4) {
         steps = atoi(argv[3]);
+    }
+    if (argc >= 5) {
+        prompt = argv[4];
     }
 
     // seed rng with time. if you want deterministic behavior use temperature 0.0
@@ -519,19 +524,12 @@ int main(int argc, char *argv[]) {
         fclose(file);
     }
 
-    // encode prompt
-    char *prompt = "\"Abracadabra!\" said";
+    // encode prompt to tokens if provided
     int prompt_tokens[config.seq_len];
-    int prompt_token_size;
-
-    bpe_encode(prompt, vocab, config.vocab_size, prompt_tokens, &prompt_token_size);
-
-    printf("BPE encoding:\n");
-    for(int i=0; i<prompt_token_size; i++) {
-        printf("%d: %s\n", prompt_tokens[i], vocab[prompt_tokens[i]].piece);
+    int prompt_token_size = 0;
+    if(prompt != NULL) {
+        bpe_encode(prompt, vocab, config.vocab_size, prompt_tokens, &prompt_token_size);
     }
-    printf("\n\n");
-
 
     // create and init the application RunState
     RunState state;
