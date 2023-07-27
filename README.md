@@ -8,38 +8,31 @@ Please note that this started recently as just a fun weekend project: I took my 
 
 ## feel the magic
 
-Let's just run a baby Llama 2 model in C. You need a model checkpoint. Download this 15M parameter model I trained on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset (~58MB download) and place it into the default checkpoint directory `out`:
+Let's just run a baby Llama 2 model in C. You need a model checkpoint. Download this 15M parameter model I trained on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset (~60MB download):
 
 ```bash
-wget https://karpathy.ai/llama2c/model.bin -P out
+wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 ```
 
-(if that doesn't work try [google drive](https://drive.google.com/file/d/1aTimLdx3JktDXxcHySNrZJOOk8Vb1qBR/view?usp=share_link)). Compile and run the C code:
+Compile and run the C code:
 
 ```bash
-gcc -O3 -o run run.c -lm
-./run out/model.bin
+make run
+./run stories15M.bin
 ```
 
-You'll see the text stream a sample. On my M1 MacBook Air this runs at ~110 tokens/s. See [performance](#performance) or the Makefile for compile flags that can significantly speed this up. Sample output:
-
-> Once upon a time, there was a boy named Timmy. Timmy loved to play sports with his friends. He was very good at throwing and catching balls. One day, Timmy's mom gave him a new shirt to wear to a party. Timmy thought it was impressive and asked his mom to explain what a shirt could be for. "A shirt is like a special suit for a basketball game," his mom said. Timmy was happy to hear that and put on his new shirt. He felt like a soldier going to the army and shouting. From that day on, Timmy wore his new shirt every time he played sports with his friends at the party. Once upon a time, there was a little girl named Lily. She loved to play outside with her friends. One day, Lily and her friend Emma were playing with a ball. Emma threw the ball too hard and it hit Lily's face. Lily felt embarrassed and didn't want to play anymore.
-> Emma asked Lily what was wrong, and Lily told her about her memory. Emma told Lily that she was embarrassed because she had thrown the ball too hard. Lily felt bad
-> achieved tok/s: 129.146172
-
-**Update**: I've now also uploaded a bigger checkpoint. This one is dim 512, 8 layers, 8 heads and context length 1024, a ~44M param Transformer. It trained for 200K iterations batch size 32 on 4XA100 40GB GPUs in ~8 hours. You can use this bigger and more powerful checkpoint like so:
+You'll see the text stream a sample. On my M1 MacBook Air this runs at ~110 tokens/s. See [performance](#performance) or the Makefile for compile flags that can significantly speed this up. We can also try a bit bigger 42M parameter model:
 
 ```bash
-wget https://karpathy.ai/llama2c/model44m.bin -P out44m
-./run out44m/model44m.bin
+wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories42M.bin
+./run stories42M.bin
 ```
 
 This still runs at interactive rates and samples more coherent and diverse stories:
 
 > Once upon a time, there was a little girl named Lily. She loved playing with her toys on top of her bed. One day, she decided to have a tea party with her stuffed animals. She poured some tea into a tiny teapot and put it on top of the teapot. Suddenly, her little brother Max came into the room and wanted to join the tea party too. Lily didn't want to share her tea and she told Max to go away. Max started to cry and Lily felt bad. She decided to yield her tea party to Max and they both shared the teapot. But then, something unexpected happened. The teapot started to shake and wiggle. Lily and Max were scared and didn't know what to do. Suddenly, the teapot started to fly towards the ceiling and landed on the top of the bed. Lily and Max were amazed and they hugged each other. They realized that sharing was much more fun than being selfish. From that day on, they always shared their tea parties and toys.
 
-**Update 2**: The 110M param model is also available now, see [models](#models).
-
+There is also an even better 110M param model available, see [models](#models).
 
 ## Meta's Llama 2 models
 
@@ -63,13 +56,13 @@ base models... ¯\\_(ツ)_/¯. Since we can inference the base model, it should 
 
 ## models
 
-For the sake of examples of smaller, from-scratch models, I trained multiple models on TinyStories and catalogue them below. All of these trained in a few hours on my training setup (4X A100 40GB GPUs). The 110M took around 24 hours.
+For the sake of examples of smaller, from-scratch models, I trained a small model series on TinyStories. All of these trained in a few hours on my training setup (4X A100 40GB GPUs). The 110M took around 24 hours. I am hosting them on huggingface hub [tinyllamas](https://huggingface.co/karpathy/tinyllamas), both in the original PyTorch .pt, and also in the llama2.c format .bin:
 
 | model | dim | n_layers | n_heads | max context length | parameters | val loss | download
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| OG | 288 | 6 | 6 | 256 | 15M | | [model.bin](https://karpathy.ai/llama2c/model.bin) |
-| 44M| 512 | 8 | 8 | 1024 | 44M | | [model44m.bin](https://karpathy.ai/llama2c/model44m.bin) |
-| 110M| 768 | 12 | 12 | 1024 | 110M | 0.7601 | [model110m.bin](https://karpathy.ai/llama2c/model110m.bin) |
+| OG | 288 | 6 | 6 | 256 | 15M | 1.072 | [stories15M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin) |
+| 42M| 512 | 8 | 8 | 1024 | 42M | 0.847 | [stories42M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories42M.bin) |
+| 110M| 768 | 12 | 12 | 1024 | 110M | 0.760 | [stories110M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories110M.bin) |
 
 You'll notice that the 110M model is equivalent to GPT-1 in size. Alternatively, this is also the smallest model in the GPT-2 series (`GPT-2 small`), except the max context length is only 1024 instead of 2048. The only notable changes from GPT-1/2 architecture is that Llama uses RoPE relatively positional embeddings instead of absolute/learned positional embeddings, a bit more fancy SwiGLU non-linearity in the MLP, RMSNorm instead of LayerNorm, bias=False on all Linear layers, and is optionally multiquery (but this is not yet supported in llama2.c).
 
@@ -180,6 +173,28 @@ I trained the llama2.c storyteller models on a 4X A100 40GB box graciously provi
 ## discord
 
 Figured it's possible to reuse my existing discord channel (that I use for my [zero to hero youtube series](https://karpathy.ai/zero-to-hero.html)), see #llama2c channel on [discord](https://discord.gg/3zy8kqD9Cp), for any quick questions, related discussions, etc.
+
+## contributing
+
+A few words on this repo and the kinds of PRs that are likely to be accepted. What is the goal of this repo? Basically I think there will be a lot of interest in training or finetuning custom micro-LLMs (think ~100M - ~1B params, but let's say up to ~10B params) across a large diversity of applications, and deploying them in edge-adjacent environments (think MCUs, phones, web browsers, laptops, etc.). I'd like this repo to be the simplest, smallest, most hackable repo to support this workflow, both training and inference. In particular, this repo is not a complex framework with a 1000 knobs controlling inscrutible code across a nested directory structure of hundreds of files. Instead, I expect most applications will wish to create a fork of this repo and hack it to their specific needs and deployment platforms.
+
+People who care about deployment efficiency above all else should look at [llama.cpp](https://github.com/ggerganov/llama.cpp). This repo still cares about efficiency, but not at the cost of simplicity, readability or portability. Basically, I expect that a lot of people come to this repo because the training code is 2 readable .py files and the inference code is 500 lines of C. So I'd like this to continue to be a kind of simplest "reference implementation" that can be easily hacked in a separate fork into whatever downstream application people are excited about. It shouldn't be full-featured. It shouldn't take 100 different options or settings. It shouldn't be the most efficient. A few examples:
+
+- someone re-ordered two loops to improve data locality for a small efficieny win => instant merge.
+- someone added the one line "pragma omp parallel for", which allows you to compile with OpenMP and dramatically speed up the code, or acts as just a comment if you don't compile it that way => instant merge.
+- bug fixes and touchups etc. => happy to merge
+
+A few examples of PRs are that are not an excellent fit:
+
+- adding more than several #ifdefs all over the place in code. If they are localized / few, might be okay.
+- adding a lot of code that is very specific to some specific platform (e.g. MCUs, or some special version of linux or processor). These may be a better fit for forks of the project, and I am very happy to maintain a list of these forks in section below.
+- adding hundreds of lines of code to run.c that are only active in specific scenarios or platforms.
+
+If your candidate PRs have elements of these it doesn't mean they won't get merged, it just means they will make it into the gray territory. TLDR: I am eager to merge any mostly small, mostly localized, broadly applicable, clean changes that improve the efficiency and portability of the repo, while keep its hackability and readability. I appreciate all PRs seeking to help me improve the project, thank you! <3.
+
+## notable forks
+
+- [llama2.rs](https://github.com/gaxler/llama2.rs) by @gaxler: a Rust port of this project
 
 ## License
 
