@@ -336,9 +336,20 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
 }
 
+// https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
+unsigned long long rng_seed;
+unsigned int random_u32() {
+    rng_seed ^= rng_seed >> 12;
+    rng_seed ^= rng_seed << 25;
+    rng_seed ^= rng_seed >> 27;
+    return (rng_seed * 0x2545F4914F6CDD1Dull) >> 32;
+}
+float random_f32() {
+    return (random_u32() >> 9) * (1.0f / 8388608.0f);
+}
 int sample(float* probabilities, int n) {
     // sample index from probabilities, they must sum to 1
-    float r = (float)rand() / (float)RAND_MAX;
+    float r = random_f32();
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probabilities[i];
@@ -399,8 +410,8 @@ int main(int argc, char *argv[]) {
     }
 
     // seed rng with time. if you want deterministic behavior use temperature 0.0
-    srand((unsigned int)time(NULL)); 
-    
+    rng_seed = (unsigned int)time(NULL);
+
     // read in the model.bin file
     Config config;
     TransformerWeights weights;
