@@ -36,6 +36,15 @@ runomp: run.c
 win64: 
 	x86_64-w64-mingw32-gcc-win32 -Ofast -D_WIN32 -o run.exe -I. run.c win.c
 
+# compiles with gnu99 standard flags for amazon linux, coreos, etc. compatibility
+.PHONY: rungnu
+rungnu:
+	$(CC) -Ofast -std=gnu11 -o run run.c -lm
+
+.PHONY: runompgnu
+rungnu:
+	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm  -o run
+
 .PHONY: clean
 clean:
 	rm -f run
