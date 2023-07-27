@@ -360,6 +360,7 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
+#ifndef _WIN32
     struct timespec time;
     // Get the current time with nanosecond precision
     if (clock_gettime(CLOCK_REALTIME, &time) == 0) {
@@ -368,6 +369,9 @@ long time_in_ms() {
         perror("clock_gettime");
         return -1; // Return -1 to indicate an error
     }
+#else
+    return GetTickCount();
+#endif
 }
 
 int main(int argc, char *argv[]) {
