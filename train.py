@@ -142,7 +142,7 @@ model_args = dict(
     vocab_size=32000,
     multiple_of=multiple_of,
     max_seq_len=max_seq_len,
-    #dropout=dropout,
+    dropout=dropout,
 )  # start with model_args from command line
 if init_from == "scratch":
     # init a new model from scratch
