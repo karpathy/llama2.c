@@ -48,6 +48,10 @@ I'm pretty sure that `llama2.c` is going to move fast and get lots of contributi
 
 So any contribution is welcome here!
 
+### Contribution Ideas
+- Parallelize attention over heads
+- WASM port?
+
 
 ## License
 MIT
