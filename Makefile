@@ -32,6 +32,10 @@ runfast: run.c
 runomp: run.c
 	$(CC) -Ofast -fopenmp -march=native run.c  -lm  -o run
 
+.PHONY: win64
+win64: 
+	x86_64-w64-mingw32-gcc-win32 -Ofast -D_WIN32 -o run.exe -I. run.c win.c
+
 .PHONY: clean
 clean:
 	rm -f run
