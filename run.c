@@ -17,6 +17,8 @@ $ ./run
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/mman.h>
+#else
+#include "win.h"
 #endif 
 
 // ----------------------------------------------------------------------------
