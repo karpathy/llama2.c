@@ -365,15 +365,9 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 
 long time_in_ms() {
-#if defined _WIN32
-    // windows specific way to get time
-    return GetTickCount();
-#else
-    // linux specific way to get time
     struct timespec time;
     clock_gettime(CLOCK_REALTIME, &time);
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
-#endif
 }
 
 int main(int argc, char *argv[]) {
