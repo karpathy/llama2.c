@@ -189,11 +189,10 @@ fn rmsnorm(out: &mut [Ty], x: &[Ty], w: &[Ty]) {
 #[cfg(feature = "parallel")]
 fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], in_dim: usize) {
     out.par_iter_mut().enumerate().for_each(|(i, out_val)| {
-        let mut val = 0 as Ty;
-        for j in 0..in_dim {
-            val += w[i * in_dim + j] * x[j];
-        }
-        *out_val = val;
+        *out_val = _uncheked_slice(w, i*in_dim, in_dim)
+            .iter()
+            .zip(x.iter())
+            .fold(0 as Ty, |acc, (&_w, &_x)| acc + _w * _x);
     });
 }
 
