@@ -28,7 +28,7 @@ struct Config {
 impl Config {
     /// Read raw bytes and force those to be our config type (which conforms to C mem layout)
     fn from_file(path: &str) -> Self {
-        let mut model_bin = File::open(path).unwrap();
+        let mut model_bin = File::open(path).expect(format!("Couldn't find model file at {}", path).as_str());
         let mut buffer = [0; CONF_SIZE];
         model_bin.read_exact(&mut buffer).unwrap();
         let raw_conf = unsafe { mem::transmute::<[u8; CONF_SIZE], [i32; CONF_VALS]>(buffer) };
@@ -53,7 +53,7 @@ impl Vocab {
     fn from_file(vocab_size: usize, path: &str) -> Self {
         let mut bytes = Vec::<u8>::new();
         let mut offsets = vec![0usize; 1];
-        let mut vocab_bin = File::open(path).unwrap();
+        let mut vocab_bin = File::open(path).expect(format!("Couldn't find tokenizer file at {}", path).as_str());
         let mut len = [0; 4];
         let mut val = [0; 1];
         for _ in 0..vocab_size {
@@ -469,7 +469,7 @@ fn main() {
         use num_cpus;
         let cpus = num_cpus::get();
         let active_cpus = (cpus >> 2) * 3; // use 75% of available cores
-        println!("[Running Inference on {} CPUs]", active_cpus);
+        println!("--> [Running Inference on {} CPUs]\n\n", active_cpus);
 
         rayon::ThreadPoolBuilder::new()
             .num_threads(active_cpus)
@@ -485,7 +485,7 @@ fn main() {
         v.parse::<Ty>().expect("temperature must be a float")
     });
 
-    let tokenizer_path = "../tokenizer.bin";
+    let tokenizer_path = "tokenizer.bin";
 
     let config = Config::from_file(&model_path);
     let vocab = Vocab::from_file(config.vocab_size, tokenizer_path);

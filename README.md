@@ -19,19 +19,19 @@ Why? Because it was FUN! Plus, I'm curious to see how the C and Rust versions wi
     ```
 2. Make sure you have the tokenizer binary - `tokenizer.bin` (if not see [tokenizer.py](tokenizer.py))
 3. Compile and run the Rust code
-    ```bash
-    cd llama2-rs
-    ```
+
     Single threaded:
+
     ```bash
-    cargo run --release ../stories42M.bin 0.9  # <model_path> [temperature]
+    cargo run --release stories42M.bin 0.9  # <model_path> [temperature]
     ```
 
     Multipthreaded (depends on Rayon)
     ```bash
-    cargo run --release  -F parallel ../stories42M.bin 0.9 # <model_path> [temperature]
+    cargo run --release  -F parallel stories42M.bin 0.9 # <model_path> [temperature]
     ```
 
+    You can also run `make rust` or `make rustfast` to get `run-rs` binary 
 ## Performance
 
 Hacky tokens/sec measurement on dev VM (16 cores/64G mem).

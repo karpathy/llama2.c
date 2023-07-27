@@ -35,3 +35,13 @@ runomp: run.c
 .PHONY: clean
 clean:
 	rm -f run
+
+.PHONY: rust 
+rust:
+	cargo build --release
+	mv target/release/llama2-rs ./run-rs
+
+.PHONY:rustfast 
+rustfast:
+	cargo build --release -F parallel
+	mv target/release/llama2-rs ./run-rs
