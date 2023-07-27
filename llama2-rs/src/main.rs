@@ -8,7 +8,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use std::io::{self, Write};
 
-#[cfg(feature="parallel")]
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 const CONF_VALS: usize = 7;
@@ -189,7 +189,7 @@ fn rmsnorm(out: &mut [Ty], x: &[Ty], w: &[Ty]) {
 #[cfg(feature = "parallel")]
 fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], in_dim: usize) {
     out.par_iter_mut().enumerate().for_each(|(i, out_val)| {
-        *out_val = _uncheked_slice(w, i*in_dim, in_dim)
+        *out_val = _uncheked_slice(w, i * in_dim, in_dim)
             .iter()
             .zip(x.iter())
             .fold(0 as Ty, |acc, (&_w, &_x)| acc + _w * _x);
@@ -198,7 +198,6 @@ fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], in_dim: usize) {
 
 #[cfg(not(feature = "parallel"))]
 fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], in_dim: usize) {
-
     for (row, out_elem) in w.chunks_exact(in_dim).zip(out.iter_mut()) {
         let val = row
             .iter()
@@ -465,28 +464,34 @@ impl RunState {
 }
 
 fn main() {
-
     #[cfg(feature = "parallel")]
     {
         use num_cpus;
         let cpus = num_cpus::get();
-        let active_cpus = (cpus >> 2)*3;
+        let active_cpus = (cpus >> 2) * 3; // use 75% of available cores
         println!("[Running Inference on {} CPUs]", active_cpus);
 
-        rayon::ThreadPoolBuilder::new().num_threads(active_cpus).build_global().unwrap(); 
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(active_cpus)
+            .build_global()
+            .unwrap();
     }
 
+    use std::env;
     use std::time::Instant;
 
-    let model_path = "../out/model.bin";
-    let tokenizer_path = "../tokenizer.bin";
-    let temperature = 0.9 as Ty;
+    let model_path = env::args().nth(1).expect("Must pass weights path");
+    let temperature = env::args().nth(2).map_or(0 as Ty, |v| {
+        v.parse::<Ty>().expect("temperature must be a float")
+    });
 
-    let config = Config::from_file(model_path);
+    let tokenizer_path = "../tokenizer.bin";
+
+    let config = Config::from_file(&model_path);
     let vocab = Vocab::from_file(config.vocab_size, tokenizer_path);
-    let weights = TransformerWeights::read_from_file(&config, model_path);
+    let weights = TransformerWeights::read_from_file(&config, &model_path);
     let mut benches = vec![];
-    for _ in 0..10 {
+    for _ in 0..1 {
         let mut state = RunState::init(&config);
         let mut probs = vec![0 as Ty; config.vocab_size];
 
