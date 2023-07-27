@@ -51,6 +51,7 @@ So any contribution is welcome here!
 ### Contribution Ideas
 - Parallelize attention over heads
 - WASM port?
+- fuse QKV matmuls to a single matmul
 
 
 ## License
