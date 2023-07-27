@@ -194,7 +194,11 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 - [llama2.rs](https://github.com/gaxler/llama2.rs) by @gaxler: a Rust port of this project
 - [go-llama2](https://github.com/tmc/go-llama2) by @tmc: a Go port of this project
+- [llama2.go](https://github.com/nikolaydubina/llama2.go) by @nikolaydubina: a Go port of this project
+- [llama2.go](https://github.com/haormj/llama2.go) by @haormj: a Go port of this project
+- [llama2.go](https://github.com/saracen/llama2.go) by @saracen: a Go port of this project
 - [llama2.c-android](https://github.com/Manuel030/llama2.c-android): by @Manuel030: adds Android binaries of this project
+- [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @leloykun: a C++ port of this project
 
 ## unsorted todos
 
