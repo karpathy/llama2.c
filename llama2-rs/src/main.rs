@@ -1,14 +1,14 @@
-use rand::Rng;
-use std::io::{self, Write};
 use std::mem;
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
 };
 
-use std::io::{self, Write};
-use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
+use std::io::{self, Write};
+
+#[cfg(feature="parallel")]
 use rayon::prelude::*;
 
 const CONF_VALS: usize = 7;
@@ -184,14 +184,29 @@ fn rmsnorm(out: &mut [Ty], x: &[Ty], w: &[Ty]) {
     out.iter_mut().zip(normed).for_each(|(dst, src)| *dst = src);
 }
 
-fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], n: usize) {
+/// For now this is a matvec
+/// Wx: [n, d]x[d,] -> [n,]
+#[cfg(feature = "parallel")]
+fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], in_dim: usize) {
     out.par_iter_mut().enumerate().for_each(|(i, out_val)| {
         let mut val = 0 as Ty;
-        for j in 0..n {
-            val += w[i * n + j] * x[j];
+        for j in 0..in_dim {
+            val += w[i * in_dim + j] * x[j];
         }
         *out_val = val;
     });
+}
+
+#[cfg(not(feature = "parallel"))]
+fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], in_dim: usize) {
+
+    for (row, out_elem) in w.chunks_exact(in_dim).zip(out.iter_mut()) {
+        let val = row
+            .iter()
+            .zip(x.iter())
+            .fold(0 as Ty, |acc, (&_w, &_x)| acc + _w * _x);
+        *out_elem = val;
+    }
 }
 
 fn _uncheked_mut_slice(s: &mut [Ty], offset: usize, size: usize) -> &mut [Ty] {
@@ -451,8 +466,19 @@ impl RunState {
 }
 
 fn main() {
-    rayon::ThreadPoolBuilder::new().num_threads(rayon::max_num_threads() / 2).build_global().unwrap();
+
+    #[cfg(feature = "parallel")]
+    {
+        use num_cpus;
+        let cpus = num_cpus::get();
+        let active_cpus = (cpus >> 2)*3;
+        println!("[Running Inference on {} CPUs]", active_cpus);
+
+        rayon::ThreadPoolBuilder::new().num_threads(active_cpus).build_global().unwrap(); 
+    }
+
     use std::time::Instant;
+
     let model_path = "../out/model.bin";
     let tokenizer_path = "../tokenizer.bin";
     let temperature = 0.9 as Ty;

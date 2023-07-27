@@ -8,9 +8,15 @@ rustflags = ["-C", "target-cpu=native"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+num_cpus = { version = "1.16.0", optional = true }
 rand = { version = "0.8.5", features = ["small_rng"] }
-rayon = "1.7.0"
+rayon = { version = "1.7.0", optional = true }
+true = { version = "0.1.0", optional = true }
 
 
 [profile.release]
 panic = "abort"
+
+
+[features]
+parallel = ["dep:rayon", "dep:num_cpus"]
