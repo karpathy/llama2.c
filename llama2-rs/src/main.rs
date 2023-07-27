@@ -6,6 +6,11 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
+use std::io::{self, Write};
+use rand::{Rng, SeedableRng};
+use rand::rngs::SmallRng;
+use rayon::prelude::*;
+
 const CONF_VALS: usize = 7;
 const CONF_SIZE: usize = std::mem::size_of::<[i32; CONF_VALS]>();
 
@@ -179,16 +184,14 @@ fn rmsnorm(out: &mut [Ty], x: &[Ty], w: &[Ty]) {
     out.iter_mut().zip(normed).for_each(|(dst, src)| *dst = src);
 }
 
-/// For now this is a matvec
-/// Wx: [n, d]x[d,] -> [n,]
-fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], in_dim: usize) {
-    for (row, out_elem) in w.chunks_exact(in_dim).zip(out.iter_mut()) {
-        let val = row
-            .iter()
-            .zip(x.iter())
-            .fold(0 as Ty, |acc, (&_w, &_x)| acc + _w * _x);
-        *out_elem = val;
-    }
+fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], n: usize) {
+    out.par_iter_mut().enumerate().for_each(|(i, out_val)| {
+        let mut val = 0 as Ty;
+        for j in 0..n {
+            val += w[i * n + j] * x[j];
+        }
+        *out_val = val;
+    });
 }
 
 fn _uncheked_mut_slice(s: &mut [Ty], offset: usize, size: usize) -> &mut [Ty] {
@@ -219,9 +222,9 @@ fn inplace_softmax(x: &mut [Ty]) {
 }
 
 fn cdf_sample(probs: &[Ty]) -> usize {
-    let mut rng = rand::thread_rng();
+    let mut small_rng = SmallRng::from_entropy();
 
-    let r = rng.gen::<Ty>();
+    let r = small_rng.gen::<Ty>();
     let mut cdf = 0 as Ty;
     for (idx, p) in probs.iter().enumerate() {
         cdf += *p;
@@ -448,6 +451,7 @@ impl RunState {
 }
 
 fn main() {
+    rayon::ThreadPoolBuilder::new().num_threads(rayon::max_num_threads() / 2).build_global().unwrap();
     use std::time::Instant;
     let model_path = "../out/model.bin";
     let tokenizer_path = "../tokenizer.bin";
