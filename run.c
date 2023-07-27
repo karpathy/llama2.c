@@ -13,10 +13,13 @@ $ ./run
 #include <time.h>
 #include <math.h>
 #include <string.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <sys/mman.h>
-
+#if defined _WIN32
+    #include "win.h"
+#else
+    #include <unistd.h>
+    #include <sys/mman.h>
+#endif
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
@@ -196,8 +199,10 @@ void softmax(float* x, int size) {
 
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
-    #pragma omp parallel for
-    for (int i = 0; i < d; i++) {
+    // by far the most amount of time is spent inside this little function
+    int i;
+    #pragma omp parallel for private(i)
+    for (i = 0; i < d; i++) {
         float val = 0.0f;
         for (int j = 0; j < n; j++) {
             val += w[i * n + j] * x[j];
@@ -207,7 +212,7 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
 }
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
-    
+
     // a few convenience variables
     float *x = s->x;
     int dim = p->dim;
@@ -224,7 +229,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
-    
+
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
@@ -261,8 +266,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         memcpy(value_cache_row, s->v, dim*sizeof(*value_cache_row));
         
         // multihead attention. iterate over all heads
-        #pragma omp parallel for
-        for (int h = 0; h < p->n_heads; h++) {
+        int h;
+        #pragma omp parallel for private(h)
+        for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
             float* q = s->q + h * head_size;
             // attention scores for this head
@@ -288,8 +294,11 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
             float* xb = s->xb + h * head_size;
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
+                // get the value vector for this head and at this timestep
                 float* v = s->value_cache + loff + t * dim + h * head_size;
+                // get the attention weight for this timestep
                 float a = att[t];
+                // accumulate the weighted value into xb
                 for (int i = 0; i < head_size; i++) {
                     xb[i] += a * v[i];
                 }
@@ -314,7 +323,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         for (int i = 0; i < hidden_dim; i++) {
             s->hb[i] = s->hb[i] * (1.0f / (1.0f + expf(-s->hb[i])));
         }
-        
+
         // elementwise multiply with w3(x)
         for (int i = 0; i < hidden_dim; i++) {
             s->hb[i] = s->hb[i] * s->hb2[i];
@@ -364,13 +373,8 @@ int argmax(float* v, int n) {
 
 long time_in_ms() {
     struct timespec time;
-    // Get the current time with nanosecond precision
-    if (clock_gettime(CLOCK_REALTIME, &time) == 0) {
-        return time.tv_sec * 1000 + time.tv_nsec / 1000000;
-    } else {
-        perror("clock_gettime");
-        return -1; // Return -1 to indicate an error
-    }
+    clock_gettime(CLOCK_REALTIME, &time);
+    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
 
 int bpe_lookup(char *str, Piece *vocab, int vocab_size)
@@ -468,15 +472,12 @@ int main(int argc, char *argv[]) {
     // read in the model.bin file
     Config config;
     TransformerWeights weights;
-    int fd = 0;
-    float* data = NULL;
-    long file_size;
+    int fd = 0;         // file descriptor for memory mapping
+    float* data = NULL; // memory mapped data pointer
+    long file_size;     // size of the checkpoint file in bytes
     {
         FILE *file = fopen(checkpoint, "rb");
-        if (!file) {
-            printf("Unable to open the checkpoint file %s!\n", checkpoint);
-            return 1;
-        }
+        if (!file) { printf("Couldn't open file %s\n", checkpoint); return 1; }
         // read in the config header
         if(fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
         // negative vocab size is hacky way of signaling unshared weights. bit yikes.
@@ -501,11 +502,7 @@ int main(int argc, char *argv[]) {
     Piece* vocab = (Piece*)malloc(config.vocab_size * sizeof(Piece));
     {
         FILE *file = fopen("tokenizer.bin", "rb");
-        if (!file) {
-            printf("Unable to open the tokenizer file tokenizer.bin! Run "
-            "python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n");
-            return 1;
-        }
+        if (!file) { printf("Couldn't load tokenizer.bin\n"); return 1; }
         int len;
         float score;
         for (int i = 0; i < config.vocab_size; i++) {
@@ -533,7 +530,7 @@ int main(int argc, char *argv[]) {
     malloc_run_state(&state, &config);
     
     // the current position we are in
-    long start = time_in_ms();
+    long start = 0; // used to time our code, only initialized after first iteration
     int next;
     int token = 1; // 1 = BOS token in Llama-2 sentencepiece
     int pos = 0;
@@ -560,17 +557,23 @@ int main(int argc, char *argv[]) {
                 next = sample(state.logits, config.vocab_size);
             }
         }
-        printf("%s", vocab[next].piece);
+
+        char *token_str = vocab[next].piece;
+        // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
+        token_str = (token == 1 && token_str[0] == ' ') ? token_str+1 : token_str;
+        printf("%s", token_str);
         fflush(stdout);
 
         // advance forward
         token = next;
         pos++;
+        // init our timer here because the first iteration is slow due to memmap
+        if (start == 0) { start = time_in_ms(); }
     }
 
     // report achieved tok/s
     long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", steps / (double)(end-start)*1000);
+    printf("\nachieved tok/s: %f\n", (steps-1) / (double)(end-start)*1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
