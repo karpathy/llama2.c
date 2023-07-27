@@ -455,8 +455,7 @@ int main(int argc, char *argv[]) {
     int token = BOS;
     int pos = 0;
     printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
-    while (pos < steps && token != EOS) {
-
+    do {
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
 
@@ -478,7 +477,7 @@ int main(int argc, char *argv[]) {
         // advance forward
         token = next;
         pos++;
-    }
+    } while (pos < steps && token != EOS && token != BOS);
 
     // report achieved tok/s
     long end = time_in_ms();
