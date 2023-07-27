@@ -3,6 +3,7 @@
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
 import os
+import struct
 from logging import getLogger
 from typing import List
 
@@ -55,9 +56,10 @@ class Tokenizer:
             tokens.append(t)
         
         with open(TOKENIZER_BIN, 'wb') as f:
-            for token in tokens:
-                bytes = token.encode('utf-8')
-                f.write((len(bytes)).to_bytes(4, 'little'))  # write length of bytes
+            for i in range(len(tokens)):
+                bytes = tokens[i].encode('utf-8')
+                score = self.sp_model.get_score(i)
+                f.write(struct.pack("If", len(bytes), score))
                 f.write(bytes)  # write token bytes
 
 if __name__ == "__main__":

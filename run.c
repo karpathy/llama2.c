@@ -71,6 +71,12 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
+typedef struct {
+    // SentencePiece piece text and score
+    char *piece;
+    float score;
+} Piece;
+
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     s->x = calloc(p->dim, sizeof(float));
@@ -425,7 +431,7 @@ int main(int argc, char *argv[]) {
     if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
 
     // read in the tokenizer.bin file
-    char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
+    Piece* vocab = (Piece*)malloc(config.vocab_size * sizeof(Piece));
     {
         FILE *file = fopen("tokenizer.bin", "rb");
         if (!file) {
@@ -434,11 +440,16 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         int len;
+        float score;
         for (int i = 0; i < config.vocab_size; i++) {
             if(fread(&len, sizeof(int), 1, file) != 1) { return 1; }
-            vocab[i] = (char *)malloc(len + 1);
-            if(fread(vocab[i], len, 1, file) != 1) { return 1; }
-            vocab[i][len] = '\0'; // add the string terminating token
+            if(fread(&score, sizeof(float), 1, file) != 1) { return 1; }
+
+            vocab[i].piece = (char *)malloc(len + 1);
+            vocab[i].score = score;
+
+            if(fread(vocab[i].piece, len, 1, file) != 1) { return 1; }
+            vocab[i].piece[len] = '\0'; // add the string terminating token
         }
         fclose(file);
     }
@@ -470,7 +481,7 @@ int main(int argc, char *argv[]) {
             // we now want to sample from this distribution to get the next token
             next = sample(state.logits, config.vocab_size);
         }
-        printf("%s", vocab[next]);
+        printf("%s", vocab[next].piece);
         fflush(stdout);
 
         // advance forward
@@ -484,7 +495,7 @@ int main(int argc, char *argv[]) {
 
     // memory and file handles cleanup
     free_run_state(&state);
-    for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
+    for (int i = 0; i < config.vocab_size; i++) { free(vocab[i].piece); }
     free(vocab);
     if (data != MAP_FAILED) munmap(data, file_size);
     if (fd != -1) close(fd);
