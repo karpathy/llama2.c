@@ -1,3 +1,37 @@
+## Llama 2 everywhere
+
+Standalone and 64bit Binary Portable Llama 2 Inference in one file of C
+
+A friendly fork of the excellent https://github.com/karpathy/llama2.c
+
+Our goal is to mirror the progress of https://github.com/karpathy/llama2.c, add improvements such as as OpenCL / Vulkan GPU inference, webserver etc which certainly would not fit in the upstream do to the minimal / simplicity / elegance requirements constraints there.
+
+# Features
+
++ Executable that runs on
+  + GNU/Systemd
+  + BSD
+  ++ FreeBSD
+  ++ OpenBSD
+  ++ NetBSD
+  + XNU's Not UNIX
+  + Bare Metal (Not fully functional yet but almost...)
+  + Windows
+
++ Runs on ARM64 (aarch64), x86_64
+
++ Standalone
+  + Embedded model
+
+These features depend on a specific cosmocc toolchain: https://github.com/jart/cosmopolitan
+
+Building this with gcc or clang would result in normal binaries similar to upstream.
+
+Read more:
+[How to build](https://github.com/trholding/llama2.c/edit/master/README.md#binary-portability-even-more-magic)
+
+Download the prebuilt run.com binary from releases
+
 ## llama2.c
 
 <img src="assets/llama_cute.jpg" width="300" height="300">
