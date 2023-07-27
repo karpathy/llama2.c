@@ -370,6 +370,14 @@ long time_in_ms() {
     }
 }
 
+int find_arg(char* arg, char *args[], int n) {
+    for (int i = n - 1; i >= 0; i--) {
+        if (!strcmp(args[i], arg)) {
+            return i + 1;
+        }
+    }
+    return 0;
+}
 int main(int argc, char *argv[]) {
 
     // poor man's C argparse
@@ -392,8 +400,10 @@ int main(int argc, char *argv[]) {
         steps = atoi(argv[3]);
     }
 
-    // seed rng with time. if you want deterministic behavior use temperature 0.0
-    srand((unsigned int)time(NULL)); 
+    // by default, seed rng with time. if you want deterministic behavior use temperature 0.0
+    int seed_arg_pos = find_arg("--seed", argv, argc);
+    unsigned int seed = seed_arg_pos ? atoll(argv[seed_arg_pos]) : time(NULL);
+    srand(seed);
     
     // read in the model.bin file
     Config config;
