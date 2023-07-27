@@ -16,7 +16,7 @@ Let's just run 🏃 a baby 👶 Llama 2 model in C. You need a model checkpoint.
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 ```
 
-Compile and run the C code:
+Compile and run the C code 🧑‍💻:
 
 ```bash
 make run
@@ -36,7 +36,7 @@ This still runs 🏃 at interactive rates and samples more coherent and diverse 
 
 There is also an even better 110M param model available, see [models](#models).
 
-## Meta's Llama 2 models
+## Meta's Llama 2 models 🤖
 
 As the neural 🧑‍💻 net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly 🥲 there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). So Step 1, get the Llama 2 checkpoints by following the [Meta instructions ](https://github.com/facebookresearch/llama). Once we have those checkpoints 🎖️, we have to convert them into the llama2.c format 🦙. For this we use the `export_meta_llama_bin.py` file, e.g. for 7B model:
 
@@ -50,15 +50,15 @@ The export 🚢 will take ~10 minutes or so and generate a 26GB file (the weight
 ./run llama2_7b.bin
 ```
 
-This ran 🏃 at about 4 tokens/s compiled with OpenMP on 96 threads on my CPU 💻 Linux box in the cloud. (On my MacBook Air M1, currently it's closer to 30 seconds per token if you just build with `make runfast`.) Example output:
+This ran 🏃 at about 4 tokens/s compiled with OpenMP on 96 threads on my CPU 💻 Linux box in the cloud. (On my MacBook Air M1, currently it's closer to 30 seconds 🕒 per token if you just build with `make runfast`.) Example output:
 
 > The purpose of this document is to highlight the state-of-the-art of CoO generation technologies, both recent developments and those in commercialuse. The focus is on the technologies with the highest merit to become the dominating processes of the future and therefore to be technologies of interest to S&amp;T ... R&amp;D. As such, CoO generation technologies developed in Russia , Japan and Europe are described in some depth. The document starts with an introduction to cobalt oxides as complex products and a short view on cobalt as an essential material. The document continues with the discussion of the available CoO generation processes with respect to energy and capital consumption as well as to environmental damage.
 
-base models... ¯\\_(ツ)_/¯. Since we can inference the base model, it should be possible to also inference the chat 💬 model quite easily, and have a conversation 🗣️ with it. And if we can find a way to run 7B more efficiently, we can start adding LoRA to our training script 📝, and going wild with finetunes all within the repo!
+base models 🤖... ¯\\_(ツ)_/¯. Since we can inference the base model, it should be possible to also inference the chat 💬 model quite easily, and have a conversation 🗣️ with it. And if we can find a way to run 7B more efficiently, we can start adding LoRA to our training script 📝, and going wild with finetunes all within the repo!
 
 ## models 🤖
 
-For the sake of examples of smaller, from-scratch models, I trained a small model series on TinyStories. All of these trained in a few hours on my training setup (4X A100 40GB GPUs). The 110M took around 24 hours. I am hosting them on huggingface hub [tinyllamas](https://huggingface.co/karpathy/tinyllamas), both in the original PyTorch .pt, and also in the llama2.c format .bin:
+For the sake of examples 📄 of smaller 🤏, from-scratch models 🤖, I trained a small model series on TinyStories. All of these trained in a few hours on my training 🎯 setup (4X A100 40GB GPUs). The 110M took around 24 hours. I am hosting them on huggingface hub 🤫 [tinyllamas](https://huggingface.co/karpathy/tinyllamas), both in the original PyTorch .pt, and also in the llama2.c 🦙 format .bin:
 
 | model | dim | n_layers | n_heads | max context length | parameters | val loss | download
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -66,44 +66,44 @@ For the sake of examples of smaller, from-scratch models, I trained a small mode
 | 42M| 512 | 8 | 8 | 1024 | 42M | 0.847 | [stories42M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories42M.bin) |
 | 110M| 768 | 12 | 12 | 1024 | 110M | 0.760 | [stories110M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories110M.bin) |
 
-You'll notice that the 110M model is equivalent to GPT-1 in size. Alternatively, this is also the smallest model in the GPT-2 series (`GPT-2 small`), except the max context length is only 1024 instead of 2048. The only notable changes from GPT-1/2 architecture is that Llama uses RoPE relatively positional embeddings instead of absolute/learned positional embeddings, a bit more fancy SwiGLU non-linearity in the MLP, RMSNorm instead of LayerNorm, bias=False on all Linear layers, and is optionally multiquery (but this is not yet supported in llama2.c).
+You'll notice ✍️ that the 110M model 🤖 is equivalent to GPT-1 in size. Alternatively, this is also the smallest 🤏 model in the GPT-2 series (`GPT-2 small`), except the max context length is only 1024 instead of 2048. The only notable 📝 changes from GPT-1/2 architecture is that Llama uses RoPE relatively positional embeddings instead of absolute/learned positional embeddings, a bit more fancy 👗SwiGLU non-linearity in the MLP, RMSNorm instead of LayerNorm, bias=False on all Linear layers, and is optionally multiquery (but this is not ❌ yet supported in llama2.c).
 
-## training
+## training 🎯
 
-Let's see how we can train a baby Llama 2 from scratch using the code in this repo. First let's download and pretokenize some source dataset, e.g. I like [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) so this is the only example currently available in this repo. But it should be very easy to add datasets, see the code.
+Let's see 👀 how we can train 🎯 a baby 👶 Llama 2 from scratch using the code 🧑‍💻 in this repo. First let's download ⬇️ and pretokenize some source dataset, e.g. I like [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) so this is the only example 📄  currently available in this repo. But it should be very easy to add datasets, see the code 🧑‍💻.
 
 ```bash
 python tinystories.py download
 python tinystories.py pretokenize
 ```
 
-Then train our model:
+Then train our model 🎯:
 
 ```bash
 python train.py
 ```
 
-**brief training guide**. See the train.py script for more exotic launches and hyperparameter overrides. Here is a brief guide to how to set the parameters. Look at the table at the very end of the [Chinchilla paper](https://arxiv.org/abs/2203.15556) to get a sense of how the Transformer parameters (dim, n_layers, n_heads) grow or shrink together. Extrapolate/interpolate this pattern to get bigger or smaller transformers. Set the max context length however you wish, depending on the problem: this should be the max number of tokens that matter to predict the next token. E.g. Llama 2 uses 2048. Next, you want the _total_ batch size per update (printed by the script as "tokens per iteration will be:") to be somewhere around 100K tokens for medium-sized applications. For tiny applications it could be lower, for large training (e.g. GPTs/LLamas) it is usually ~0.5M, or even more. You get there by first maxing out the batch_size to whatever your system allows (e.g. mine was 16 in a recent run because after that my GPU runs out of memory), and then you want to increase gradient_accumulation_steps to be as high as necessary to reach the total batch size of ~100K. Finally, you want to tune your learning_rate (LR). You want this to be as high as your training allows. Very small networks can get away with a large LR (e.g. 1e-3 or even higher). Large networks need lower LRs. 3e-4 is a safe choice in most medium-sized applications, but can be too low for small networks, so try to increase it! Finally, max_iters is the length of training. Play with different settings. I mostly only ever tune these parameters and leave most of the others unchanged. Here is an example of how I trained the 110M model, which I don't think is anywhere near optimal, but looked sensible to me: dim 768, n_layers 12, n_heads 12 (so size of each head is 768 / 12 = 64 channels), seq len of 1024, batch size 16 (this is the most that fit my A100 40GB GPU), gradient_accumulation_steps = 8 was needed to get total tokens batch size to be 16 batch size * 1024 tokens in sequence * 8 grad_accum = 131,072 tokens per update. Good. Learning rate 4e-4 (probably a little too low). max_iters 200K (probably a bit too high). Dropout 0.1, as that usually helps a bit at medium size. That was it. I ran using Distributed Data Parallel (DDP) on 4 GPUs on my cloud machine, training took ~day or so.
+**brief training guide**. See 👀 the train.py script 📄 for more exotic launches 🚀 and hyperparameter overrides. Here is a brief guide 📔 to how to set the parameters. Look at the table at the very end of the [Chinchilla paper](https://arxiv.org/abs/2203.15556) to get a sense of how the Transformer parameters (dim, n_layers, n_heads) grow or shrink together 🫂. Extrapolate/interpolate this pattern to get bigger or smaller 🤏 transformers. Set the max context length however you wish 💭, depending on the problem: this should be the max number of tokens that matter to predict the next token. E.g. Llama 2 🦙 uses 2048. Next, you want the _total_ batch size 👀 per update (printed by the script 📝 as "tokens per iteration will be:") to be somewhere around 100K tokens for medium-sized applications. For tiny 🤏 applications it could be lower 👇, for large training (e.g. GPTs/LLamas) it is usually ~0.5M, or even more. You get there by first maxing out the batch_size to whatever your system allows (e.g. mine was 16 in a recent 🕐 run 🏃 because after that my GPU runs out of memory), and then you want to increase ⬆️ gradient_accumulation_steps to be as high as necessary to reach the total batch size of ~100K. Finally, you want to tune your learning_rate (LR). You want this to be as high as your training allows. Very small 🤌 networks can get away with a large LR (e.g. 1e-3 or even higher). Large networks need lower LRs. 3e-4 is a safe choice 🥇 in most medium-sized applications, but can be too low ⬇️ for small networks, so try to increase it! Finally, max_iters is the length of training 🎯. Play with different settings. I mostly only ever tune these parameters and leave 🚪 most of the others unchanged. Here is an example of how I trained 🎯 the 110M model, which I don't think is anywhere near optimal, but looked 👀 sensible to me: dim 768, n_layers 12, n_heads 12 (so size of each head is 768 / 12 = 64 channels), seq len of 1024, batch size 16 (this is the most that fit my A100 40GB GPU), gradient_accumulation_steps = 8 was needed to get total tokens batch size to be 16 batch size * 1024 tokens in sequence * 8 grad_accum = 131,072 tokens per update. Good. Learning rate 4e-4 (probably a little too low). max_iters 200K (probably a bit too high). Dropout 0.1, as that usually help 🤝 a bit at medium size. That was it. I ran using Distributed Data 📊 Parallel (DDP) on 4 GPUs on my cloud machine, training took ~day or so.
 
-Totally understand if you want to skip model training, for simple demo just download one of the pretrained models (see [models](#models) section), e.g.:
+Totally understand if you want to skip model training 🎯, for simple demo just download ⬇️ one of the pretrained models (see [models](#models) section), e.g.:
 
 ```bash
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 ```
 
-Once we have the model.bin file, we can inference in C. Compile the C code first:
+Once we have the model.bin 🚮 file, we can inference in C. Compile the C code first:
 
 ```bash
 make run
 ```
 
-You can now run it simply as
+You can now run 🏃 it simply as
 
 ```bash
 ./run stories15M.bin
 ```
 
-Watch the tokens stream by, fun! We can also run the PyTorch inference script for a comparison. Download one of the models again from huggingface hub and point the `sample.py` script at it:
+Watch 👀 the tokens stream by, fun! We can also run the PyTorch inference script 📝 for a comparison. Download ⬇️ one of the models again from huggingface hub and point the `sample.py` script 📝 at it:
 
 ```bash
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.pt -P out15M
@@ -111,51 +111,51 @@ mv out15M/stories15M.pt out15M/ckpt.pt # sorry the sample script current assumes
 python sample.py --out_dir=out15M
 ```
 
-Which gives the same results. More detailed testing will be done in `test_all.py`. Currently you will need two files to test or sample: both the .bin file, and the .ckpt file inside a directory (see `test_all.py` for details). Sorry this is a bit janky right now, I have to think through running the tests without having to download 200MB of data. But run the tests with pytest:
+Which gives the same results. More detailed 📄 testing 🎯 will be done in `test_all.py`. Currently you will need two files to test 🎯 or sample: both the .bin file 📂 , and the .ckpt file inside a directory 📂 (see 👀 `test_all.py` for details 📄). Sorry this is a bit janky right now ⌚, I have to think through running 🏃 the tests 🎯 without having to download 200MB of data. But run 🏃 the tests 🎯 with pytest :
 
 ```bash
 $ pytest
 ```
 
-## performance
+## performance 📊
 
-*(NOTE: this guide is not great because I personally spend a lot of my time in Python land and don't have an amazing understanding of a lot of these features and flags. If someone does and is willing to help document and briefly describe some of these and their tradeoffs, I'd welcome a PR)*
+*(NOTE: this guide is not great 🚫 because I personally spend a lot of my time ⌚ in Python land and don't have an amazing understanding of a lot of these features and flags 🏁. If someone does and is willing to help document 📄 and briefly describe some of these and their tradeoffs, I'd welcome a PR)*
 
-There are many ways to potentially speed up this code depending on your system. Here we document a few together with a high-level guide on what they do. Here's again the default way to compile, but using -O3:
+There are many ways to potentially speed up 💨 this code depending on your system 🧑‍💻. Here we document 📄 a few together with a high-level guide 📔 on what they do. Here's again the default way to compile, but using -O3:
 
 ```bash
 gcc -O3 -o run run.c -lm
 ```
 
--O3 includes optimizations that are expensive in terms of compile time and memory usage. Including vectorization, loop unrolling, and predicting branches. Here's a few more to try.
+-O3 includes optimizations 📊 that are expensive in terms of compile time and memory usage. Including vectorization, loop 🔁 unrolling, and predicting branches 🌿. Here's a few more to try.
 
-`-Ofast` Run additional optimizations which may break compliance with the C/IEEE specifications, in addition to `-O3`. See [the GCC docs](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html) for more information.
+`-Ofast` Run 🏃 additional ➕ optimizations which may break compliance with the C/IEEE specifications, in addition ➕ to `-O3`. See [the GCC docs](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html) for more information ℹ.
 
-`-march=native` Compile the program to use the architecture of the machine you're compiling on rather than a more generic CPU. This may enable additional optimizations and hardware-specific tuning such as improved vector instructions/width.
+`-march=native` Compile the program 🧑‍💻 to use the architecture 💻 of the machine you're compiling on rather than a more generic CPU. This may enable additional optimizations 📊 and hardware-specific tuning such as improved vector instructions/width.
 
-The fastest throughput I saw so far on my MacBook Air (M1) is with:
+The fastest 💨 throughput I saw so far on my MacBook Air (M1) 💻  is with:
 
 ```bash
 gcc -Ofast -o run run.c -lm
 ```
 
-You can also experiment with replacing `gcc` with `clang`.
+You can also experiment 🧪 with replacing `gcc` with `clang`.
 
-**OpenMP** Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention. You can compile e.g. like so:
+**OpenMP** Big improvements can also be achieved 🏆 by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention. You can compile e.g. like so:
 
 ```bash
 clang -Ofast -fopenmp -march=native run.c  -lm  -o run
 ```
 
-You can try swapping clang/gcc, and may try to leave out -march=native. However, when you run inference make sure to use OpenMP flags to set the number of threads, e.g.:
+You can try swapping 🔁 clang/gcc, and may try to leave out -march=native. However, when you run 🏃 inference make sure to use OpenMP flags to set the number of threads, e.g.:
 
 ```bash
 OMP_NUM_THREADS=4 ./run out/model.bin
 ```
 
-Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimately familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
+Depending on your system resources 💻 you may want to tweak these hyperparameters. (TODO: I am not intimately familiar with OpenMP and its configuration, if someone would like to flesh ⚡ out this section I would welcome a PR).
 
-## platforms
+## platforms 📊
 
 On **Windows**, use `build_msvc.bat` in a Visual Studio Command Prompt to build with msvc, or you can use `make win64` to use mingw compiler toolchain from linux or windows to build the windows target. MSVC build will automatically use openmp and max threads appropriate for your CPU unless you set `OMP_NUM_THREADS` env.
 
