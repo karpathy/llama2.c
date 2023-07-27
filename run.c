@@ -399,7 +399,6 @@ int bpe_encode(char *text, Piece *vocab, int vocab_size, int *tokens, int *n_tok
         }
         tokens[*n_tokens] = id;
         (*n_tokens)++;
-        // printf("add_symbol %d %s\n", id, merged_str);
     }
 
     // merge best consecutive pairs on each iteration
@@ -422,8 +421,6 @@ int bpe_encode(char *text, Piece *vocab, int vocab_size, int *tokens, int *n_tok
         if(best_idx==-1) {
             break; // no more merges are possible
         }
-
-        // printf("best_score: %f idx:%d new_id:%d %s\n", best_score, best_idx, best_id, vocab[best_id].piece);
 
         // merge best_idx with best_idx+1, 
         // replace with new token id
