@@ -467,7 +467,9 @@ int main(int argc, char *argv[]) {
             // we now want to sample from this distribution to get the next token
             next = sample(state.logits, config.vocab_size);
         }
-        printf("%s", vocab[next]);
+        // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
+        char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
+        printf("%s", token_str);
         fflush(stdout);
 
         // advance forward
