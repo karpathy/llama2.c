@@ -1,8 +1,11 @@
+use rand::Rng;
+use std::io::{self, Write};
 use std::mem;
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
 };
+
 use std::io::{self, Write};
 use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
@@ -63,7 +66,7 @@ impl Vocab {
             });
         }
 
-        assert_eq!(offsets.len(), vocab_size as usize + 1);
+        assert_eq!(offsets.len(), vocab_size + 1);
 
         Self { bytes, offsets }
     }
@@ -123,25 +126,25 @@ fn _alloc_and_read(file: &mut File, size: usize) -> Vec<Ty> {
 }
 
 impl TransformerWeights {
-    fn read_from_file(C: &Config, path: &str) -> Self {
+    fn read_from_file(cfg: &Config, path: &str) -> Self {
         let mut model_bin = File::open(path).unwrap();
         model_bin.seek(SeekFrom::Start(CONF_SIZE as u64)).unwrap();
         let mut f = |s: usize| _alloc_and_read(&mut model_bin, s);
-        let head_size = C.dim / C.n_heads;
+        let head_size = cfg.dim / cfg.n_heads;
         Self {
-            token_embedding_table: f(C.vocab_size * C.dim),
-            rms_att_weight: f(C.n_layers * C.dim),
-            wq: f(C.n_layers * C.dim * C.dim),
-            wk: f(C.n_layers * C.dim * C.dim),
-            wv: f(C.n_layers * C.dim * C.dim),
-            wo: f(C.n_layers * C.dim * C.dim),
-            rms_ffn_weight: f(C.n_layers * C.dim),
-            w1: f(C.n_layers * C.dim * C.hidden_dim),
-            w2: f(C.n_layers * C.dim * C.hidden_dim),
-            w3: f(C.n_layers * C.dim * C.hidden_dim),
-            rms_final_weight: f(C.dim),
-            freq_cis_real: f(C.seq_len * (head_size / 2)),
-            freq_cis_imag: f(C.seq_len * (head_size / 2)),
+            token_embedding_table: f(cfg.vocab_size * cfg.dim),
+            rms_att_weight: f(cfg.n_layers * cfg.dim),
+            wq: f(cfg.n_layers * cfg.dim * cfg.dim),
+            wk: f(cfg.n_layers * cfg.dim * cfg.dim),
+            wv: f(cfg.n_layers * cfg.dim * cfg.dim),
+            wo: f(cfg.n_layers * cfg.dim * cfg.dim),
+            rms_ffn_weight: f(cfg.n_layers * cfg.dim),
+            w1: f(cfg.n_layers * cfg.dim * cfg.hidden_dim),
+            w2: f(cfg.n_layers * cfg.dim * cfg.hidden_dim),
+            w3: f(cfg.n_layers * cfg.dim * cfg.hidden_dim),
+            rms_final_weight: f(cfg.dim),
+            freq_cis_real: f(cfg.seq_len * (head_size / 2)),
+            freq_cis_imag: f(cfg.seq_len * (head_size / 2)),
         }
     }
 }
@@ -194,14 +197,15 @@ fn matmul(out: &mut [Ty], x: &[Ty], w: &[Ty], n: usize) {
 fn _uncheked_mut_slice(s: &mut [Ty], offset: usize, size: usize) -> &mut [Ty] {
     let ptr = s.as_mut_ptr();
     unsafe {
-        let st = ptr.offset(offset as isize);
+        let st = ptr.add(offset);
         std::slice::from_raw_parts_mut(st, size)
     }
 }
+
 fn _uncheked_slice(s: &[Ty], offset: usize, size: usize) -> &[Ty] {
     let ptr = s.as_ptr();
     unsafe {
-        let st = ptr.offset(offset as isize);
+        let st = ptr.add(offset);
         std::slice::from_raw_parts(st, size)
     }
 }
@@ -232,21 +236,21 @@ fn cdf_sample(probs: &[Ty]) -> usize {
 }
 
 impl RunState {
-    fn init(C: &Config) -> Self {
+    fn init(cfg: &Config) -> Self {
         let f = |size: usize| vec![0 as Ty; size];
         Self {
-            x: f(C.dim),
-            xb: f(C.dim),
-            xb2: f(C.dim),
-            hb: f(C.hidden_dim),
-            hb2: f(C.hidden_dim),
-            q: f(C.dim),
-            k: f(C.dim),
-            v: f(C.dim),
-            att: f(C.seq_len),
-            logits: f(C.vocab_size),
-            key_cache: f(C.n_layers * C.seq_len * C.dim),
-            value_cache: f(C.n_layers * C.seq_len * C.dim),
+            x: f(cfg.dim),
+            xb: f(cfg.dim),
+            xb2: f(cfg.dim),
+            hb: f(cfg.hidden_dim),
+            hb2: f(cfg.hidden_dim),
+            q: f(cfg.dim),
+            k: f(cfg.dim),
+            v: f(cfg.dim),
+            att: f(cfg.seq_len),
+            logits: f(cfg.vocab_size),
+            key_cache: f(cfg.n_layers * cfg.seq_len * cfg.dim),
+            value_cache: f(cfg.n_layers * cfg.seq_len * cfg.dim),
         }
     }
 
@@ -260,10 +264,10 @@ impl RunState {
         matmul(&mut self.v, &self.xb, wv, dim);
     }
 
-    fn cache_kv(&mut self, pos: usize, layer: usize, C: &Config) {
-        let offset = layer * C.dim * C.seq_len + pos * C.dim;
-        let kc = _uncheked_mut_slice(&mut self.key_cache, offset, C.dim).as_mut();
-        let vc = _uncheked_mut_slice(&mut self.value_cache, offset, C.dim).as_mut();
+    fn cache_kv(&mut self, pos: usize, layer: usize, cfg: &Config) {
+        let offset = layer * cfg.dim * cfg.seq_len + pos * cfg.dim;
+        let kc = _uncheked_mut_slice(&mut self.key_cache, offset, cfg.dim);
+        let vc = _uncheked_mut_slice(&mut self.value_cache, offset, cfg.dim);
         // TODO: make theese unsafe and remove len checks
         kc.copy_from_slice(&self.k);
         vc.copy_from_slice(&self.v);
@@ -297,18 +301,18 @@ impl RunState {
         }
     }
 
-    fn attention(&mut self, pos: usize, layer: usize, C: &Config) {
+    fn attention(&mut self, pos: usize, layer: usize, cfg: &Config) {
         assert!(
-            pos < C.seq_len,
+            pos < cfg.seq_len,
             "Can't attend outside of initialized seq lenght"
         );
 
-        let head_size = C.dim / C.n_heads;
+        let head_size = cfg.dim / cfg.n_heads;
 
         // (seq_len, dim)
         let seq_cached_keys = self
             .key_cache
-            .chunks_exact(C.seq_len * C.dim)
+            .chunks_exact(cfg.seq_len * cfg.dim)
             .skip(layer)
             .take(1)
             .next()
@@ -316,13 +320,13 @@ impl RunState {
 
         let mut q_heads = self.q.chunks_exact(head_size);
         let mut xb_heads = self.xb.chunks_exact_mut(head_size);
-        for h in 0..C.n_heads {
+        for h in 0..cfg.n_heads {
             let q = q_heads.next().unwrap();
 
             let mut head_k_all_pos = seq_cached_keys
                 .chunks_exact(head_size)
                 .skip(h)
-                .step_by(C.n_heads);
+                .step_by(cfg.n_heads);
 
             for t in 0..=pos {
                 let k = head_k_all_pos.next().unwrap();
@@ -336,11 +340,14 @@ impl RunState {
                 }
             }
 
-            let mut seq_cached_vals =
-                _uncheked_slice(&self.value_cache, layer * C.dim * C.seq_len, C.seq_len * C.dim)
-                    .chunks_exact(head_size)
-                    .skip(h)
-                    .step_by(C.n_heads);
+            let seq_cached_vals = _uncheked_slice(
+                &self.value_cache,
+                layer * cfg.dim * cfg.seq_len,
+                cfg.seq_len * cfg.dim,
+            )
+            .chunks_exact(head_size)
+            .skip(h)
+            .step_by(cfg.n_heads);
             inplace_softmax(&mut self.att[..=pos]);
             // cahced vals have head_size values in it. we need to go over all t vals and update xb
             // dst is head_size part of xb, we gonna add t (actually pos values) values into it
@@ -351,71 +358,79 @@ impl RunState {
             // Why Karphaty's inner loop does C.dim jumps?
             // this goes over time stamps
             for (vals, attn_w) in seq_cached_vals.zip(self.att.iter()).take(pos + 1) {
-                
                 // aggregate timestamp to xb
                 for (val, dst) in vals.iter().zip(dst.iter_mut()) {
                     *dst += val * attn_w;
                 }
             }
         }
-        
     }
 
-
-
-    fn ffn(&mut self, l: usize, w: &TransformerWeights, C: &Config) {
-        let rms_ffn_w = _uncheked_slice(&w.rms_ffn_weight, l * C.dim, C.dim);
+    fn ffn(&mut self, l: usize, w: &TransformerWeights, cfg: &Config) {
+        let rms_ffn_w = _uncheked_slice(&w.rms_ffn_weight, l * cfg.dim, cfg.dim);
         // normalize after adding residual
         rmsnorm(&mut self.xb, &self.x, rms_ffn_w);
-        
-        let w1 = _uncheked_slice(&w.w1, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
-        let w2 = _uncheked_slice(&w.w2, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
-        let w3 = _uncheked_slice(&w.w3, C.dim * C.hidden_dim * l, C.hidden_dim * C.dim);
-        matmul(&mut self.hb, &self.xb, w1, C.dim);
-        matmul(&mut self.hb2, &self.xb, w3, C.dim);
+
+        let w1 = _uncheked_slice(
+            &w.w1,
+            cfg.dim * cfg.hidden_dim * l,
+            cfg.hidden_dim * cfg.dim,
+        );
+        let w2 = _uncheked_slice(
+            &w.w2,
+            cfg.dim * cfg.hidden_dim * l,
+            cfg.hidden_dim * cfg.dim,
+        );
+        let w3 = _uncheked_slice(
+            &w.w3,
+            cfg.dim * cfg.hidden_dim * l,
+            cfg.hidden_dim * cfg.dim,
+        );
+        matmul(&mut self.hb, &self.xb, w1, cfg.dim);
+        matmul(&mut self.hb2, &self.xb, w3, cfg.dim);
         // silu on first hidden
         self.hb
             .iter_mut()
-            .for_each(|v| *v = (*v)*(1 as Ty / (1 as Ty + (-*v).exp())));
+            .for_each(|v| *v = (*v) * (1 as Ty / (1 as Ty + (-*v).exp())));
 
         // mix branches
         self.hb
             .iter_mut()
             .zip(self.hb2.iter())
-            .for_each(|(h1, &h2)| *h1 = (*h1) * h2);
+            .for_each(|(h1, &h2)| *h1 *= h2);
 
-        matmul(&mut self.xb, &self.hb, w2, C.hidden_dim);
+        matmul(&mut self.xb, &self.hb, w2, cfg.hidden_dim);
     }
 
-    fn step(&mut self, token: usize, pos: usize, w: &TransformerWeights, C: &Config) {
+    fn step(&mut self, token: usize, pos: usize, w: &TransformerWeights, cfg: &Config) {
         // copy content row
         // TODO: mayne direct indexing w/o bound checks is faster? benchmark
         w.token_embedding_table
-            .chunks_exact(C.dim)
+            .chunks_exact(cfg.dim)
             .skip(token)
             .take(1)
             .for_each(|src| self.x.as_mut_slice().copy_from_slice(src));
 
-        for l in 0..C.n_layers {
-            let rms_attn_w = _uncheked_slice(&w.rms_att_weight, l * C.dim, C.dim);
+        for l in 0..cfg.n_layers {
+            let rms_attn_w = _uncheked_slice(&w.rms_att_weight, l * cfg.dim, cfg.dim);
             rmsnorm(&mut self.xb, &self.x, rms_attn_w);
-            
-            self.qkv_for_layer(l, w, C.dim);
-            
-            self.rope(pos, w, C.n_heads, C.dim);
-            self.cache_kv(pos, l, C);
-            self.attention(pos, l, C);
+
+            self.qkv_for_layer(l, w, cfg.dim);
+
+            self.rope(pos, w, cfg.n_heads, cfg.dim);
+            self.cache_kv(pos, l, cfg);
+            self.attention(pos, l, cfg);
             // self.aggregate_attention(l, pos, C);
 
-            let wo = _uncheked_slice(&w.wo, l * C.dim * C.dim, C.dim * C.dim);
-            matmul(&mut self.xb2, &self.xb, wo, C.dim);
+            let wo = _uncheked_slice(&w.wo, l * cfg.dim * cfg.dim, cfg.dim * cfg.dim);
+            matmul(&mut self.xb2, &self.xb, wo, cfg.dim);
             // post attention residual
             self.x
                 .iter_mut()
                 .zip(self.xb2.iter())
                 .for_each(|(dst, src)| *dst += *src);
 
-            self.ffn(l, w, C);
+            self.ffn(l, w, cfg);
             // post ffn residual
             self.x
                 .iter_mut()
@@ -431,8 +446,7 @@ impl RunState {
             .zip(w.rms_final_weight.iter())
             .for_each(|(xx, ww)| (*xx) *= ww * ss);
 
-        matmul(&mut self.logits, &self.x, &w.token_embedding_table, C.dim);
-
+        matmul(&mut self.logits, &self.x, &w.token_embedding_table, cfg.dim);
     }
 }
 
@@ -441,41 +455,48 @@ fn main() {
     use std::time::Instant;
     let model_path = "../out/model.bin";
     let tokenizer_path = "../tokenizer.bin";
-    let temperature = 0.0 as Ty;
+    let temperature = 0.9 as Ty;
 
     let config = Config::from_file(model_path);
     let vocab = Vocab::from_file(config.vocab_size, tokenizer_path);
     let weights = TransformerWeights::read_from_file(&config, model_path);
-    let mut state = RunState::init(&config);
-    let mut probs = vec![0 as Ty; config.vocab_size];
+    let mut benches = vec![];
+    for _ in 0..10 {
+        let mut state = RunState::init(&config);
+        let mut probs = vec![0 as Ty; config.vocab_size];
 
-    let st = Instant::now();
-    let mut pos = 0;
-    let mut token = 1;
-    while pos < config.seq_len {
-        state.step(token, pos, &weights, &config);
-        let next = if temperature == 0 as Ty {
-            state
-                .logits
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                .map(|(index, _)| index)
-                .unwrap()
-        } else {
-            state
-                .logits
-                .iter().zip(probs.iter_mut())
-                .for_each(|(logit, p)| *p = logit / temperature);
-            inplace_softmax(&mut probs);
-            cdf_sample(&probs)
-        };
-        print!("{}", vocab.get_token(next));
-        io::stdout().flush().unwrap();
-        pos += 1;
-        token = next;
+        let st = Instant::now();
+        let mut pos = 0;
+        let mut token = 1;
+        while pos < config.seq_len {
+            state.step(token, pos, &weights, &config);
+            let next = if temperature == 0 as Ty {
+                state
+                    .logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                    .map(|(index, _)| index)
+                    .unwrap()
+            } else {
+                state
+                    .logits
+                    .iter()
+                    .zip(probs.iter_mut())
+                    .for_each(|(logit, p)| *p = logit / temperature);
+                inplace_softmax(&mut probs);
+                cdf_sample(&probs)
+            };
+            print!("{}", vocab.get_token(next));
+            io::stdout().flush().unwrap();
+            pos += 1;
+            token = next;
+        }
+        let ts = pos as f32 / st.elapsed().as_secs_f32();
+        benches.push(ts);
     }
-    let ts = pos as f32 / st.elapsed().as_secs_f32();
-    println!("");
-    println!("{:.3} Tokens/Sec", ts);
+    let ts = benches.iter().fold(0f32, |acc, v| acc + v);
+    let ts = ts / (benches.len() as f32);
+
+    println!("\n{:.3} Tokens/Sec", ts);
 }
