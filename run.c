@@ -391,7 +391,7 @@ int bpe_lookup(char *str, Piece *vocab, int vocab_size)
 int bpe_encode(char *text, Piece *vocab, int vocab_size, int *tokens, int *n_tokens)
 {
     // encode text using vocabulary
-    char merged_str[128]; // max string size in vocabulary * 2
+    char merged_str[33]; // max string size in vocabulary * 2 + 1 for null byte
 
     // start from char sequence
     *n_tokens = 0;
