@@ -118,32 +118,32 @@ void free_run_state(RunState* s) {
 void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int shared_weights) {
     float* ptr = f;
     w->token_embedding_table = ptr;
-    ptr += p->vocab_size * p->dim;
+    ptr += (size_t) p->vocab_size * p->dim;
     w->rms_att_weight = ptr;
-    ptr += p->n_layers * p->dim;
+    ptr += (size_t) p->n_layers * p->dim;
     w->wq = ptr;
-    ptr += p->n_layers * p->dim * p->dim;
+    ptr += (size_t) p->n_layers * p->dim * p->dim;
     w->wk = ptr;
-    ptr += p->n_layers * p->dim * p->dim;
+    ptr += (size_t) p->n_layers * p->dim * p->dim;
     w->wv = ptr;
-    ptr += p->n_layers * p->dim * p->dim;
+    ptr += (size_t) p->n_layers * p->dim * p->dim;
     w->wo = ptr;
-    ptr += p->n_layers * p->dim * p->dim;
+    ptr += (size_t) p->n_layers * p->dim * p->dim;
     w->rms_ffn_weight = ptr;
-    ptr += p->n_layers * p->dim;
+    ptr += (size_t) p->n_layers * p->dim;
     w->w1 = ptr;
-    ptr += p->n_layers * p->dim * p->hidden_dim;
+    ptr += (size_t) p->n_layers * p->dim * p->hidden_dim;
     w->w2 = ptr;
-    ptr += p->n_layers * p->hidden_dim * p->dim;
+    ptr += (size_t) p->n_layers * p->hidden_dim * p->dim;
     w->w3 = ptr;
-    ptr += p->n_layers * p->dim * p->hidden_dim;
+    ptr += (size_t) p->n_layers * p->dim * p->hidden_dim;
     w->rms_final_weight = ptr;
-    ptr += p->dim;
+    ptr += (size_t) p->dim;
     w->freq_cis_real = ptr;
     int head_size = p->dim / p->n_heads;
-    ptr += p->seq_len * head_size / 2;
+    ptr += (size_t) p->seq_len * head_size / 2;
     w->freq_cis_imag = ptr;
-    ptr += p->seq_len * head_size / 2;
+    ptr += (size_t) p->seq_len * head_size / 2;
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
