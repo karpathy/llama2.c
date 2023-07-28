@@ -14,6 +14,7 @@ if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR
    CMAKE_C_COMPILER_ID STREQUAL "GNU"   OR
    CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
   target_compile_options(llama2c PRIVATE -Wall -Wextra -Ofast)
+  target_link_libraries(llama2c PRIVATE m)
 endif()
 
 if(USE_OPENMP)
