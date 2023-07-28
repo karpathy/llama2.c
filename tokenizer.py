@@ -3,6 +3,7 @@
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
 import os
+import struct
 from logging import getLogger
 from typing import List
 
@@ -39,26 +40,35 @@ class Tokenizer:
         return self.sp_model.decode(t)
 
     def export(self):
-        tokens = []
+
+        # get all the tokens (postprocessed) and their scores as floats
+        tokens, scores = [], []
         for i in range(self.n_words):
 
             # decode the token and light postprocessing
             t = self.sp_model.id_to_piece(i)
+            s = self.sp_model.get_score(i)
             if i == self.bos_id:
                 t = '\n<s>\n'
             elif i == self.eos_id:
                 t = '\n</s>\n'
             elif len(t) == 6 and t.startswith('<0x') and t.endswith('>'):
                 t = chr(int(t[3:5], 16)) # e.g. make '<0x01>' into '\x01'
-            t = t.replace('▁', ' ') # sentencepiece uses this as the whitespace
+            t = t.replace('▁', ' ') # sentencepiece uses this character as whitespace
+            b = t.encode('utf-8') # bytes of this token, utf-8 encoded
 
-            tokens.append(t)
+            tokens.append(b)
+            scores.append(s)
         
+        # record the max token length
+        max_token_length = max(len(t) for t in tokens)
+
+        # write to a binary file
         with open(TOKENIZER_BIN, 'wb') as f:
-            for token in tokens:
-                bytes = token.encode('utf-8')
-                f.write((len(bytes)).to_bytes(4, 'little'))  # write length of bytes
-                f.write(bytes)  # write token bytes
+            f.write(struct.pack("I", max_token_length))
+            for bytes, score in zip(tokens, scores):
+                f.write(struct.pack("fI", score, len(bytes)))
+                f.write(bytes)
 
 if __name__ == "__main__":
     t = Tokenizer()
