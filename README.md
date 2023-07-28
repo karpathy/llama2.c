@@ -39,7 +39,7 @@ Hacky tokens/sec measurement on dev VM (16 cores/64G mem).
 |    tok/s   | 15M | 42M | 110M
 |-------|-----|-----|-----|
 | 1 core|  ~75|   ~25   | ~10
-| 12 cores |  ~310   |  ~110   | ~50
+| 12 cores |  ~310   |  ~110   | ~65
 
 
 
