@@ -34,11 +34,20 @@ This still runs at interactive rates and samples more coherent and diverse stori
 
 > Once upon a time, there was a little girl named Lily. She loved playing with her toys on top of her bed. One day, she decided to have a tea party with her stuffed animals. She poured some tea into a tiny teapot and put it on top of the teapot. Suddenly, her little brother Max came into the room and wanted to join the tea party too. Lily didn't want to share her tea and she told Max to go away. Max started to cry and Lily felt bad. She decided to yield her tea party to Max and they both shared the teapot. But then, something unexpected happened. The teapot started to shake and wiggle. Lily and Max were scared and didn't know what to do. Suddenly, the teapot started to fly towards the ceiling and landed on the top of the bed. Lily and Max were amazed and they hugged each other. They realized that sharing was much more fun than being selfish. From that day on, they always shared their tea parties and toys.
 
+You can also prompt the model with a prefix (sadly, because this is currently done via positional arguments, you also have to specify temperature 1.0 and 256 steps, before you enter the prompt):
+
+```bash
+./run stories42M.bin 1.0 256 "One day, Lily met a Shoggoth"
+```
+
+> One day, Lily met a Shoggoth. He was very shy, but was also very generous. Lily said “Hello Shoggy! Can I be your friend?” Shoggy was happy to have a friend and said “Yes, let’s explore the universe together!” So they set off on a journey to explore the universe. As they travelled, Shoggy was happy to explain to Lily about all the wonderful things in the universe. At the end of the day, Lily and Shoggy had gathered lots of wonderful things from the universe, and they both felt very proud. They promised to explore the universe as one big pair and to never stop being generous to each other.
+
 There is also an even better 110M param model available, see [models](#models).
 
 ## Meta's Llama 2 models
 
-As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). So Step 1, get the Llama 2 checkpoints by following the [Meta instructions](https://github.com/facebookresearch/llama). Once we have those checkpoints, we have to convert them into the llama2.c format. For this we use the `export_meta_llama_bin.py` file, e.g. for 7B model:
+As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). So Step 1, get the Llama 2 checkpoints by following the [Meta instructions](https://github.com/facebookresearch/llama). Once we have those checkpoints, we have to convert them into the llama2.c format.
+For this we need to install the python dependencies (`pip install -r requirements.txt`) and then use the `export_meta_llama_bin.py` file, e.g. for 7B model:
 
 ```bash
 python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin
@@ -50,7 +59,7 @@ The export will take ~10 minutes or so and generate a 26GB file (the weights of 
 ./run llama2_7b.bin
 ```
 
-This ran at about 4 tokens/s compiled with OpenMP on 96 threads on my CPU Linux box in the cloud. (On my MacBook Air M1, currently it's closer to 30 seconds per token if you just build with `make runfast`.) Example output:
+This ran at about 4 tokens/s compiled with [OpenMP](#OpenMP) on 96 threads on my CPU Linux box in the cloud. (On my MacBook Air M1, currently it's closer to 30 seconds per token if you just build with `make runfast`.) Example output:
 
 > The purpose of this document is to highlight the state-of-the-art of CoO generation technologies, both recent developments and those in commercial use. The focus is on the technologies with the highest merit to become the dominating processes of the future and therefore to be technologies of interest to S&amp;T ... R&amp;D. As such, CoO generation technologies developed in Russia, Japan and Europe are described in some depth. The document starts with an introduction to cobalt oxides as complex products and a short view on cobalt as an essential material. The document continues with the discussion of the available CoO generation processes with respect to energy and capital consumption as well as to environmental damage.
 
@@ -119,45 +128,43 @@ $ pytest
 
 ## performance
 
-*(NOTE: this guide is not great because I personally spend a lot of my time in Python land and don't have an amazing understanding of a lot of these features and flags. If someone does and is willing to help document and briefly describe some of these and their tradeoffs, I'd welcome a PR)*
-
-There are many ways to potentially speed up this code depending on your system. Here we document a few together with a high-level guide on what they do. Here's again the default way to compile, but using -O3:
+There are many ways to potentially speed up this code depending on your system. Have a look at the [Makefile](Makefile), which contains a lot of notes. The `make run` command currently uses the `-O3` optimization by default, i.e.:
 
 ```bash
 gcc -O3 -o run run.c -lm
 ```
 
--O3 includes optimizations that are expensive in terms of compile time and memory usage. Including vectorization, loop unrolling, and predicting branches. Here's a few more to try.
+-O3 includes optimizations that are expensive in terms of compile time and memory usage. Including vectorization, loop unrolling, and predicting branches.
 
-`-Ofast` Run additional optimizations which may break compliance with the C/IEEE specifications, in addition to `-O3`. See [the GCC docs](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html) for more information.
+To get a much better performance, try to compile with `make runfast`. This turns on the `-Ofast` flag, which includes additional optimizations that may break compliance with the C/IEEE specifications, in addition to `-O3`. See [the GCC docs](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html) for more information.
 
-`-march=native` Compile the program to use the architecture of the machine you're compiling on rather than a more generic CPU. This may enable additional optimizations and hardware-specific tuning such as improved vector instructions/width.
+Try `-march=native` to compile the program to use the architecture of the machine you're compiling on rather than a more generic CPU. This may enable additional optimizations and hardware-specific tuning such as improved vector instructions/width.
 
-The fastest throughput I saw so far on my MacBook Air (M1) is with:
-
-```bash
-gcc -Ofast -o run run.c -lm
-```
+The fastest throughput I saw so far on my MacBook Air (M1) so far is with `make runfast`. 
 
 You can also experiment with replacing `gcc` with `clang`.
 
-**OpenMP** Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention. You can compile e.g. like so:
+### OpenMP
+Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention, allowing the work in the loops to be split up over multiple processors.
+You'll need to install the OpenMP library and the clang compiler first (e.g. `apt install clang libomp-dev` on ubuntu). I was not able to get improvements from OpenMP on my MacBook, though. Then you can compile with `make runomp`, which does:
 
 ```bash
 clang -Ofast -fopenmp -march=native run.c  -lm  -o run
 ```
 
-You can try swapping clang/gcc, and may try to leave out -march=native. However, when you run inference make sure to use OpenMP flags to set the number of threads, e.g.:
+When you run inference make sure to use OpenMP flags to set the number of threads, e.g.:
 
 ```bash
 OMP_NUM_THREADS=4 ./run out/model.bin
 ```
 
-Depending on your system resources you may want to tweak these hyperparameters. (TODO: I am not intimately familiar with OpenMP and its configuration, if someone would like to flesh out this section I would welcome a PR).
+Depending on your system resources you may want to tweak these hyperparameters and use more threads. But more is not always better, usually this is a bit U shaped.
 
 ## platforms
 
 On **Windows**, use `build_msvc.bat` in a Visual Studio Command Prompt to build with msvc, or you can use `make win64` to use mingw compiler toolchain from linux or windows to build the windows target. MSVC build will automatically use openmp and max threads appropriate for your CPU unless you set `OMP_NUM_THREADS` env.
+
+On **Centos 7**, **Amazon Linux 2018** use `rungnu` Makefile target: `make rungnu` or `make runompgnu` to use openmp.
 
 ## ack
 
@@ -189,13 +196,19 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 - [llama2.rs](https://github.com/gaxler/llama2.rs) by @gaxler: a Rust port of this project
 - [go-llama2](https://github.com/tmc/go-llama2) by @tmc: a Go port of this project
+- [llama2.go](https://github.com/nikolaydubina/llama2.go) by @nikolaydubina: a Go port of this project
+- [llama2.go](https://github.com/haormj/llama2.go) by @haormj: a Go port of this project
+- [llama2.go](https://github.com/saracen/llama2.go) by @saracen: a Go port of this project
+- [llama2.c-android](https://github.com/Manuel030/llama2.c-android): by @Manuel030: adds Android binaries of this project
+- [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @leloykun: a C++ port of this project
 
 ## unsorted todos
 
-- why is there a leading space in C sampling code when we `./run`?
-- support Llama 2 Chat models, and tune run.c to Chat UI/UX
+- support Llama 2 7B Chat model and tune run.c to Chat UI/UX
+- speed up 7B Llama 2 models sufficiently to work at interactive rates on Apple Silicon MacBooks
 - possibly include emscripten / web backend (as seen in @gg PR)
-- currently the project only runs in fp32, want to explore more reduced precision inference.
+- currently the project only runs in fp32, how easy would it be to different precisions?
+- look into quantization and what would be involved
 - todo multiquery support? doesn't seem as useful for smaller models that run on CPU (?)
 - todo support inferencing beyond max_seq_len steps, have to think through the kv cache
 - why is MFU so low (~10%) on my A100 40GB for training?
