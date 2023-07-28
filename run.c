@@ -24,13 +24,13 @@ $ ./run
 // Transformer and RunState structs, and related memory management
 
 typedef struct {
-    int dim; // transformer dimension
-    int hidden_dim; // for ffn layers
-    int n_layers; // number of layers
-    int n_heads; // number of query heads
-    int n_kv_heads; // number of key/value heads (can be < query heads because of multiquery)
-    int vocab_size; // vocabulary size, usually 256 (byte-level)
-    int seq_len; // max sequence length
+    size_t dim; // transformer dimension
+    size_t hidden_dim; // for ffn layers
+    size_t n_layers; // number of layers
+    size_t n_heads; // number of query heads
+    size_t n_kv_heads; // number of key/value heads (can be < query heads because of multiquery)
+    size_t vocab_size; // vocabulary size, usually 256 (byte-level)
+    size_t seq_len; // max sequence length
 } Config;
 
 typedef struct {
@@ -110,6 +110,19 @@ void free_run_state(RunState* s) {
     free(s->logits);
     free(s->key_cache);
     free(s->value_cache);
+}
+
+// ----------------------------------------------------------------------------
+// initialization: read model header converting types from int32_t to size_t
+
+size_t read_config(Config* config, FILE* file) {
+    size_t* c = (size_t*)config;
+    int32_t x;
+    for (int i = 0; i < sizeof(Config)/sizeof(size_t); i++) {
+        if (fread(&x, sizeof(int32_t), 1, file) != 1) { return 0; }
+        *c++ = (size_t)x;
+    }
+    return 1;
 }
 
 // ----------------------------------------------------------------------------
@@ -209,9 +222,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
     // a few convenience variables
     float *x = s->x;
-    int dim = p->dim;
-    int hidden_dim =  p->hidden_dim;
-    int head_size = dim / p->n_heads;
+    size_t dim = p->dim;
+    size_t hidden_dim =  p->hidden_dim;
+    size_t head_size = dim / p->n_heads;
 
     // copy the token embedding into x
     float* content_row = &(w->token_embedding_table[token * dim]);
@@ -253,7 +266,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         }
 
         // save key,value at this time step (pos) to our kv cache
-        int loff = l * p->seq_len * dim; // kv cache layer offset for convenience
+        size_t loff = l * p->seq_len * dim; // kv cache layer offset for convenience
         float* key_cache_row = s->key_cache + loff + pos * dim;
         float* value_cache_row = s->value_cache + loff + pos * dim;
         memcpy(key_cache_row, s->k, dim*sizeof(*key_cache_row));
@@ -488,10 +501,10 @@ int main(int argc, char *argv[]) {
         FILE *file = fopen(checkpoint, "rb");
         if (!file) { printf("Couldn't open file %s\n", checkpoint); return 1; }
         // read in the config header
-        if (fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
+        if (read_config(&config, file) != 1) { return 1; }
         // negative vocab size is hacky way of signaling unshared weights. bit yikes.
-        int shared_weights = config.vocab_size > 0 ? 1 : 0;
-        config.vocab_size = abs(config.vocab_size);
+        int shared_weights = (int32_t)config.vocab_size > 0 ? 1 : 0;
+        config.vocab_size = abs((int32_t)config.vocab_size);
         // figure out the file size
         fseek(file, 0, SEEK_END); // move file pointer to end of file
         file_size = ftell(file); // get the file size, in bytes
