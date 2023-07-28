@@ -514,7 +514,7 @@ int main(int argc, char *argv[]) {
         if (fd == -1) { printf("open failed!\n"); return 1; }
         data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (data == MAP_FAILED) { printf("mmap failed!\n"); return 1; }
-        float* weights_ptr = data + sizeof(Config)/sizeof(float);
+        float* weights_ptr = data + sizeof(Config)/sizeof(size_t);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
     }
     // right now we cannot run for more than config.seq_len steps
