@@ -194,7 +194,10 @@ void softmax(float* x, int size) {
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
+    #pragma omp target data map(tofrom: w[0:d*n],x[0:n], xout[0:d])
+    {
     int i;
+    #pragma omp target device (0)
     #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
         float val = 0.0f;
@@ -202,6 +205,7 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
             val += w[i * n + j] * x[j];
         }
         xout[i] = val;
+    }
     }
 }
 
@@ -221,6 +225,11 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
     float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
 
+    //tmp files to read the current W being multiplied. Directly passing w->k .. doesn't work due to no support for virtual address offloading
+    float* tmp_w = (float*)malloc(dim*dim*sizeof(float));
+    float* tmp_w_hid = (float*)malloc(dim*hidden_dim*sizeof(float));
+    float* tmp_w_cls = (float*)malloc(p->vocab_size*dim*sizeof(float));
+
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
 
@@ -228,9 +237,12 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
-        matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
+        memcpy(tmp_w, w->wq + l*dim*dim, dim*dim*sizeof(float));
+        matmul(s->q, s->xb, tmp_w, dim, dim);
+        memcpy(tmp_w, w->wk + l*dim*dim, dim*dim*sizeof(float));
+        matmul(s->k, s->xb, tmp_w, dim, dim);
+        memcpy(tmp_w, w->wv + l*dim*dim, dim*dim*sizeof(float));
+        matmul(s->v, s->xb, tmp_w, dim, dim);
 
         // apply RoPE rotation to the q and k vectors for each head
         for (int h = 0; h < p->n_heads; h++) {
@@ -300,7 +312,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         }
 
         // final matmul to get the output of the attention
-        matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
+        memcpy(tmp_w, w->wo + l*dim*dim, dim*dim*sizeof(float));
+        matmul(s->xb2, s->xb, tmp_w, dim, dim);
 
         // residual connection back into x
         accum(x, s->xb2, dim);
@@ -310,8 +323,10 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
-        matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+        memcpy(tmp_w_hid, w->w1 + l*dim*hidden_dim, hidden_dim*dim*sizeof(float));
+        matmul(s->hb, s->xb, tmp_w_hid, dim, hidden_dim);
+        memcpy(tmp_w_hid, w->w3 + l*dim*hidden_dim, hidden_dim*dim*sizeof(float));
+        matmul(s->hb2, s->xb, tmp_w_hid, dim, hidden_dim);
         
         // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         for (int i = 0; i < hidden_dim; i++) {
@@ -324,7 +339,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         }
 
         // final matmul to get the output of the ffn
-        matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
+        memcpy(tmp_w_hid, w->w2 + l*dim*hidden_dim, hidden_dim*dim*sizeof(float));
+        matmul(s->xb, s->hb, tmp_w_hid, hidden_dim, dim);
 
         // residual connection
         accum(x, s->xb, dim);
@@ -334,7 +350,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     rmsnorm(x, x, w->rms_final_weight, dim);
 
     // classifier into logits
-    matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
+    memcpy(tmp_w_cls, w->wcls, dim*p->vocab_size*sizeof(float));
+    matmul(s->logits, x, tmp_w_cls, p->dim, p->vocab_size);
 }
 
 // ----------------------------------------------------------------------------
