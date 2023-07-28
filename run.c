@@ -222,7 +222,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
 
     // forward all the layers
-    for(int l = 0; l < p->n_layers; l++) {
+    for(size_t l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
