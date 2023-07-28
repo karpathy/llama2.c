@@ -446,37 +446,51 @@ int argmax(float* v, int n) {
     }
     return max_i;
 }
+
+char *get_arg(int cnt, char *args[], int n) {
+    for (int i = 1; i < n; i++) {
+        if (args[i][0] != '-') {
+            cnt--;
+            if (cnt == 0) {
+                return args[i];
+            }
+        }
+    }
+    return NULL;
+}
+char *get_named_arg(char *arg, char *args[], int n) {
+    for (int i = n - 1; i >= 0; i--) { // find the last occurrence
+        if (!strncmp(args[i], arg, strlen(arg))) { // if args[i] starts with arg
+            return args[i] + strlen(arg); // return the stripped args[i]
+        }
+    }
+    return NULL;
+}
 // ----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
 
-    // poor man's C argparse
-    char *checkpoint = NULL;  // e.g. out/model.bin
-    float temperature = 0.9f; // e.g. 1.0, or 0.0
-    int steps = 256;          // max number of steps to run for, 0: use seq_len
-    char *prompt = NULL;      // prompt string
-
     // 'checkpoint' is necessary arg
-    if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps] [prompt]\n", argv[0]);
+    char *checkpoint = get_arg(1, argv, argc);  // e.g. out/model.bin
+    if (checkpoint == NULL) {
+        printf("Usage: %s <checkpoint_file> [temperature] [steps]\n", argv[0]);
         return 1;
     }
-    if (argc >= 2) {
-        checkpoint = argv[1];
-    }
-    if (argc >= 3) {
-        // optional temperature. 0.0 = (deterministic) argmax sampling. 1.0 = baseline
-        temperature = atof(argv[2]);
-    }
-    if (argc >= 4) {
-        steps = atoi(argv[3]);
-    }
-    if (argc >= 5) {
-        prompt = argv[4];
-    }
 
-    // seed rng with time. if you want deterministic behavior use temperature 0.0
-    rng_seed = (unsigned int)time(NULL);
+    // optional temperature. 0.0 = (deterministic) argmax sampling. 1.0 = baseline
+    char *temperature_arg = get_arg(2, argv, argc); // e.g. 1.0, or 0.0
+    float temperature = temperature_arg ? atof(temperature_arg) : 0.9f;
+
+    // max number of steps to run for, 0: use seq_len
+    char *steps_arg = get_arg(3, argv, argc);
+    int steps = steps_arg ? atoi(steps_arg) : 256;
+
+    // prompt string
+    char *prompt = get_arg(4, argv, argc);
+
+    // by default, seed rng with time. if you want deterministic behavior use temperature 0.0
+    char *seed_arg = get_named_arg("--seed=", argv, argc);
+    rng_seed = seed_arg ? atoll(seed_arg) : time(NULL);
 
     // read in the model.bin file
     Config config;
