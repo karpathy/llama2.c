@@ -473,7 +473,7 @@ int main(int argc, char *argv[]) {
     // 'checkpoint' is necessary arg
     char *checkpoint = get_arg(1, argv, argc);  // e.g. out/model.bin
     if (checkpoint == NULL) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps]\n", argv[0]);
+        printf("Usage: %s <checkpoint_file> [temperature] [steps] [prompt]\n", argv[0]);
         return 1;
     }
 
