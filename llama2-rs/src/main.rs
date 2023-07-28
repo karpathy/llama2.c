@@ -290,7 +290,7 @@ fn _att_head_impl(
     inplace_softmax(&mut att[..=pos]);
     // cahced vals have head_size values in it. we need to go over all t vals and update xb
     // dst is head_size part of xb, we gonna add t (actually pos values) values into it
-    let dst = _uncheked_mut_slice(xb, h * head_size, head_size);
+    let dst = xb;
     // clear dst
     dst.iter_mut().for_each(|v| *v = 0f32);
     // this is different from Karphaty's impl. first go over all head size values, than skip time stamp
@@ -387,21 +387,20 @@ impl RunState {
             .next()
             .unwrap();
 
-        // let mut q_heads = self.q.chunks_exact(head_size);
-        // let mut xb_heads = self.xb.chunks_exact_mut(head_size);
+        
 
-        (0..cfg.n_heads).for_each(|h| {
+        // TODO: redesign this to remove the ugly feature split
+        #[cfg(feature = "parallel")]
+        (0..cfg.n_heads).into_par_iter().for_each(|h| {
             let q = _uncheked_slice(&self.q, h * head_size, head_size);
 
             // Brutishly force xb to be mutable slice
             // only a single head is going to be using this part of xb.
             let xb = _uncheked_mut_slice(&self.xb, h * head_size, head_size);
             let att = _uncheked_mut_slice(&self.att, h * cfg.seq_len, cfg.seq_len);
-            let layer_cached_vals = _uncheked_slice(
-                &self.value_cache,
-                layer * cfg.dim * cfg.seq_len+head_size*h,
-                cfg.seq_len * cfg.dim,
-            );
+            // let cached_keys =
+            let layer_cached_vals =
+                _uncheked_slice(&self.value_cache, 0, cfg.n_layers * cfg.seq_len * cfg.dim);
 
             _att_head_impl(
                 layer,
@@ -417,50 +416,56 @@ impl RunState {
             )
         });
 
-        // for h in 0..cfg.n_heads {
-        //     let q = q_heads.next().unwrap();
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut q_heads = self.q.chunks_exact(head_size);
+            let mut xb_heads = self.xb.chunks_exact_mut(head_size);
 
-        //     let mut head_k_all_pos = layer_cached_keys
-        //         .chunks_exact(head_size)
-        //         .skip(h)
-        //         .step_by(cfg.n_heads);
+            for h in 0..cfg.n_heads {
+                let q = q_heads.next().unwrap();
 
-        //     for t in 0..=pos {
-        //         let k = head_k_all_pos.next().unwrap();
-        //         let score = k
-        //             .iter()
-        //             .zip(q.iter())
-        //             .fold(0 as Ty, |acc, (_k, _q)| acc + _k * _q);
-        //         let score = score / (head_size as Ty).sqrt();
-        //         unsafe {
-        //             *self.att.get_unchecked_mut(t) = score;
-        //         }
-        //     }
+                let mut head_k_all_pos = layer_cached_keys
+                    .chunks_exact(head_size)
+                    .skip(h)
+                    .step_by(cfg.n_heads);
 
-        //     let seq_cached_vals = _uncheked_slice(
-        //         &self.value_cache,
-        //         layer * cfg.dim * cfg.seq_len,
-        //         cfg.seq_len * cfg.dim,
-        //     )
-        //     .chunks_exact(head_size)
-        //     .skip(h)
-        //     .step_by(cfg.n_heads);
-        //     inplace_softmax(&mut self.att[..=pos]);
-        //     // cahced vals have head_size values in it. we need to go over all t vals and update xb
-        //     // dst is head_size part of xb, we gonna add t (actually pos values) values into it
-        //     let dst = xb_heads.next().unwrap();
-        //     // clear dst
-        //     dst.iter_mut().for_each(|v| *v = 0f32);
-        //     // this is different from Karphaty's impl. first go over all head size values, than skip time stamp
-        //     // Why Karphaty's inner loop does C.dim jumps?
-        //     // this goes over time stamps
-        //     for (vals, attn_w) in seq_cached_vals.zip(self.att.iter()).take(pos + 1) {
-        //         // aggregate timestamp to xb
-        //         for (val, dst) in vals.iter().zip(dst.iter_mut()) {
-        //             *dst += val * attn_w;
-        //         }
-        //     }
-        // }
+                for t in 0..=pos {
+                    let k = head_k_all_pos.next().unwrap();
+                    let score = k
+                        .iter()
+                        .zip(q.iter())
+                        .fold(0 as Ty, |acc, (_k, _q)| acc + _k * _q);
+                    let score = score / (head_size as Ty).sqrt();
+                    unsafe {
+                        *self.att.get_unchecked_mut(t) = score;
+                    }
+                }
+
+                let seq_cached_vals = _uncheked_slice(
+                    &self.value_cache,
+                    layer * cfg.dim * cfg.seq_len,
+                    cfg.seq_len * cfg.dim,
+                )
+                .chunks_exact(head_size)
+                .skip(h)
+                .step_by(cfg.n_heads);
+                inplace_softmax(&mut self.att[..=pos]);
+                // cahced vals have head_size values in it. we need to go over all t vals and update xb
+                // dst is head_size part of xb, we gonna add t (actually pos values) values into it
+                let dst = xb_heads.next().unwrap();
+                // clear dst
+                dst.iter_mut().for_each(|v| *v = 0f32);
+                // this is different from Karphaty's impl. first go over all head size values, than skip time stamp
+                // Why Karphaty's inner loop does C.dim jumps?
+                // this goes over time stamps
+                for (vals, attn_w) in seq_cached_vals.zip(self.att.iter()).take(pos + 1) {
+                    // aggregate timestamp to xb
+                    for (val, dst) in vals.iter().zip(dst.iter_mut()) {
+                        *dst += val * attn_w;
+                    }
+                }
+            }
+        }
     }
 
     fn ffn(&mut self, l: usize, w: &TransformerWeights, cfg: &Config) {
