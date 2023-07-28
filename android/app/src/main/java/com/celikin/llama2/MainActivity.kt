@@ -23,7 +23,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         binding.regenerate.setOnClickListener {
             binding.sampleText.text = ""
-            inferenceRunnerManager.run()
+            val prompt = binding.promptEdit.text.toString()
+            inferenceRunnerManager.run(prompt)
         }
         initInference()
     }

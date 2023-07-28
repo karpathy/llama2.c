@@ -10,9 +10,9 @@
 #include <android/log.h>
 #include <errno.h>
 
-#define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "some-tag", __VA_ARGS__))
-#define LOGW(...) ((void)__android_log_print(ANDROID_LOG_WARN, "some-tag", __VA_ARGS__))
-#define LOGE(...) ((void)__android_log_print(ANDROID_LOG_ERROR, "some-tag", __VA_ARGS__))
+#define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "llama2_inference", __VA_ARGS__))
+#define LOGW(...) ((void)__android_log_print(ANDROID_LOG_WARN, "llama2_inference", __VA_ARGS__))
+#define LOGE(...) ((void)__android_log_print(ANDROID_LOG_ERROR, "llama2_inference", __VA_ARGS__))
 
 
 static jclass g_InferenceJniBridgeJavaClass;
@@ -95,7 +95,7 @@ void malloc_run_state(RunState *s, Config *p) {
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
         || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
         || !s->value_cache) {
-        LOGE("malloc failed!");
+        LOGE("malloc failed!\n");
         exit(1);
     }
 }
@@ -196,6 +196,7 @@ void softmax(float *x, int size) {
 
 void matmul(float *xout, float *x, float *w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
+    // by far the most amount of time is spent inside this little function
     int i;
 #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
@@ -339,9 +340,100 @@ void transformer(int token, int pos, Config *p, RunState *s, TransformerWeights 
     matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
 }
 
+// ----------------------------------------------------------------------------
+// byte pair encoding (BPE) tokenizer, encodes strings into tokens so we can prompt
+
+int str_lookup(char *str, char **vocab, int vocab_size) {
+    // find the first perfect match for str in vocab, return its index or -1 if not found
+    for (int i = 0; i < vocab_size; i++) {
+        if (strcmp(str, vocab[i]) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size,
+                unsigned int max_token_length, int *tokens, int *n_tokens) {
+
+    // a temporary buffer to merge two consecutive tokens
+    char *str_buffer = malloc(
+            (max_token_length * 2 + 1) * sizeof(char)); // *2 for concat, +1 for null terminator
+
+    // first encode every individual byte in the input string
+    *n_tokens = 0; // the number of tokens
+    for (char *c = text; *c != '\0'; c++) {
+        sprintf(str_buffer, "%c", *c);
+        int id = str_lookup(str_buffer, vocab, vocab_size);
+        if (id == -1) {
+            printf("not good\n");
+            exit(1);
+        }
+        tokens[*n_tokens] = id;
+        (*n_tokens)++;
+    }
+
+    // merge the best consecutive pair each iteration, according the scores in vocab_scores
+    while (1) {
+        float best_score = -1e10;
+        int best_id = -1;
+        int best_idx = -1;
+
+        for (int i = 0; i < (*n_tokens - 1); i++) {
+            // check if we can merge the pair (tokens[i], tokens[i+1])
+            sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i + 1]]);
+            int id = str_lookup(str_buffer, vocab, vocab_size);
+            if (id != -1 && vocab_scores[id] > best_score) {
+                // this merge pair exists in vocab! record its score and position
+                best_score = vocab_scores[id];
+                best_id = id;
+                best_idx = i;
+            }
+        }
+
+        if (best_idx == -1) {
+            break; // we couldn't find any more pairs to merge, so we're done
+        }
+
+        // merge the consecutive pair (best_idx, best_idx+1) into new token best_id
+        tokens[best_idx] = best_id;
+        // delete token at position best_idx+1, shift the entire sequence back 1
+        for (int i = best_idx + 1; i < (*n_tokens - 1); i++) {
+            tokens[i] = tokens[i + 1];
+        }
+        (*n_tokens)--; // token length decreased
+    }
+
+    free(str_buffer);
+}
+
+// ----------------------------------------------------------------------------
+// utilities
+
+long time_in_ms() {
+    // return time in milliseconds, for benchmarking the model speed
+    struct timespec time;
+    clock_gettime(CLOCK_REALTIME, &time);
+    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+}
+
+unsigned long long rng_seed;
+
+unsigned int random_u32() {
+    // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
+    rng_seed ^= rng_seed >> 12;
+    rng_seed ^= rng_seed << 25;
+    rng_seed ^= rng_seed >> 27;
+    return (rng_seed * 0x2545F4914F6CDD1Dull) >> 32;
+}
+
+float random_f32() { // random float32 in [0,1)
+    return (random_u32() >> 8) / 16777216.0f;
+}
+
 int sample(float *probabilities, int n) {
     // sample index from probabilities, they must sum to 1
-    float r = (float) rand() / (float) RAND_MAX;
+    float r = random_f32();
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probabilities[i];
@@ -364,32 +456,24 @@ int argmax(float *v, int n) {
     }
     return max_i;
 }
-
 // ----------------------------------------------------------------------------
 
-long time_in_ms() {
-    // linux specific way to get time
-    struct timespec time;
-    clock_gettime(CLOCK_REALTIME, &time);
-    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
-}
-
-
 int run_inference(JNIEnv *env, jobject thiz, char *checkpoint, char *tokenizer, float temperature,
-                  int steps) {
+                  int steps, char *prompt) {
+
     // seed rng with time. if you want deterministic behavior use temperature 0.0
-    srand((unsigned int) time(NULL));
+    rng_seed = (unsigned int) time(NULL);
 
     // read in the model.bin file
     Config config;
     TransformerWeights weights;
-    int fd = 0;
-    float *data = NULL;
-    long file_size;
+    int fd = 0;         // file descriptor for memory mapping
+    float *data = NULL; // memory mapped data pointer
+    long file_size;     // size of the checkpoint file in bytes
     {
         FILE *file = fopen(checkpoint, "rb");
         if (!file) {
-            LOGE("Unable to open the checkpoint file %s!\n", checkpoint);
+            LOGE("Couldn't open file %s\n", checkpoint);
             return 1;
         }
         // read in the config header
@@ -404,12 +488,12 @@ int run_inference(JNIEnv *env, jobject thiz, char *checkpoint, char *tokenizer, 
         // memory map the Transformer weights into the data pointer
         fd = open(checkpoint, O_RDONLY); // open in read only mode
         if (fd == -1) {
-            LOGE("open failed!");
+            LOGE("open failed!\n");
             return 1;
         }
         data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (data == MAP_FAILED) {
-            LOGE("mmap failed!");
+            LOGE("mmap failed!\n");
             return 1;
         }
         float *weights_ptr = data + sizeof(Config) / sizeof(float);
@@ -420,18 +504,33 @@ int run_inference(JNIEnv *env, jobject thiz, char *checkpoint, char *tokenizer, 
 
     // read in the tokenizer.bin file
     char **vocab = (char **) malloc(config.vocab_size * sizeof(char *));
+    float *vocab_scores = (float *) malloc(config.vocab_size * sizeof(float));
+    unsigned int max_token_length;
     {
         FILE *file = fopen(tokenizer, "rb");
         if (!file) {
-            LOGE("Unable to open the tokenizer file tokenizer.bin! "
-                 "Run python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n");
+            LOGE("couldn't load tokenizer.bin\n");
+            return 1;
+        }
+        if (fread(&max_token_length, sizeof(int), 1, file) != 1) {
+            LOGE("failed read\n");
             return 1;
         }
         int len;
         for (int i = 0; i < config.vocab_size; i++) {
-            if (fread(&len, sizeof(int), 1, file) != 1) { return 1; }
+            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) {
+                LOGE("failed read\n");
+                return 1;
+            }
+            if (fread(&len, sizeof(int), 1, file) != 1) {
+                LOGE("failed read\n");
+                return 1;
+            }
             vocab[i] = (char *) malloc(len + 1);
-            if (fread(vocab[i], len, 1, file) != 1) { return 1; }
+            if (fread(vocab[i], len, 1, file) != 1) {
+                LOGE("failed read\n");
+                return 1;
+            }
             vocab[i][len] = '\0'; // add the string terminating token
         }
         fclose(file);
@@ -441,44 +540,67 @@ int run_inference(JNIEnv *env, jobject thiz, char *checkpoint, char *tokenizer, 
     RunState state;
     malloc_run_state(&state, &config);
 
-    // the current position we are in
-    long start = time_in_ms();
-    int next;
-    int token = 1; // 1 = BOS token in Llama-2 sentencepiece
-    int pos = 0;
-//    printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
+    // process the prompt, if any
+    int *prompt_tokens = NULL;
+    int num_prompt_tokens = 0;
+    if (prompt != NULL) {
+        prompt_tokens = (int *) malloc(config.seq_len * sizeof(int));
+        bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens,
+                   &num_prompt_tokens);
+    }
+
+    // start the main loop
+    long start = 0;  // used to time our code, only initialized after first iteration
+    int next;        // will store the next token in the sequence
+    int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
+    int pos = 0;     // position in the sequence
+    on_new_token_callback(env, thiz,
+                          "<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
 
-        // sample the next token
-        if (temperature == 0.0f) {
-            // greedy argmax sampling
-            next = argmax(state.logits, config.vocab_size);
+        if (pos < num_prompt_tokens) {
+            // if we are still processing the input prompt, force the next prompt token
+            next = prompt_tokens[pos];
         } else {
-            // apply the temperature to the logits
-            for (int q = 0; q < config.vocab_size; q++) { state.logits[q] /= temperature; }
-            // apply softmax to the logits to get the probabilities for next token
-            softmax(state.logits, config.vocab_size);
-            // we now want to sample from this distribution to get the next token
-            next = sample(state.logits, config.vocab_size);
+            // sample the next token
+            if (temperature == 0.0f) {
+                // greedy argmax sampling: take the token with the highest probability
+                next = argmax(state.logits, config.vocab_size);
+            } else {
+                // apply the temperature to the logits
+                for (int q = 0; q < config.vocab_size; q++) { state.logits[q] /= temperature; }
+                // apply softmax to the logits to get the probabilities for next token
+                softmax(state.logits, config.vocab_size);
+                // we sample from this distribution to get the next token
+                next = sample(state.logits, config.vocab_size);
+            }
         }
-        on_new_token_callback(env, thiz, vocab[next]);
+
+        // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
+        char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next] + 1 : vocab[next];
+        on_new_token_callback(env, thiz, token_str);
+        fflush(stdout);
+
         // advance forward
         token = next;
         pos++;
+        // init our timer here because the first iteration is slow due to memmap
+        if (start == 0) { start = time_in_ms(); }
     }
 
     // report achieved tok/s
     long end = time_in_ms();
-    int tokens_in_sec = steps / (double) (end - start) * 1000;
-    LOGI("achieved tok/s: %d", tokens_in_sec);
+    LOGI("\nachieved tok/s: %f\n", (steps - 1) / (double) (end - start) * 1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
     for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
     free(vocab);
+    free(vocab_scores);
+    if (prompt_tokens != NULL) free(prompt_tokens);
     if (data != MAP_FAILED) munmap(data, file_size);
     if (fd != -1) close(fd);
     return 0;
@@ -505,18 +627,21 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved) {
 
 JNIEXPORT void JNICALL
 Java_com_celikin_llama2_wrapper_InferenceRunner_run(JNIEnv *env, jobject thiz, jstring checkpoint,
-                                            jstring tokenizer, jfloat temperature, jint steps) {
+                                                    jstring tokenizer, jfloat temperature,
+                                                    jint steps, jstring prompt) {
 
     const char *checkpoint_path = (*env)->GetStringUTFChars(env, checkpoint, 0);
     const char *tokenizer_path = (*env)->GetStringUTFChars(env, tokenizer, 0);
+    const char *_prompt = (*env)->GetStringUTFChars(env, prompt, 0);
 
-    LOGI("inference loaded checkpoint path: %s tokenizer path: %s temperature %f, steps %d",
-         checkpoint_path, tokenizer_path, temperature, steps);
+    LOGI("inference loaded checkpoint path: %s tokenizer path: %s temperature %f, steps %d prompt %s",
+         checkpoint_path, tokenizer_path, temperature, steps, _prompt);
 
-    run_inference(env, thiz, checkpoint_path, tokenizer_path, temperature, steps);
+    run_inference(env, thiz, checkpoint_path, tokenizer_path, temperature, steps, _prompt);
 
     (*env)->ReleaseStringUTFChars(env, checkpoint, checkpoint_path);
     (*env)->ReleaseStringUTFChars(env, tokenizer, tokenizer_path);
+    (*env)->ReleaseStringUTFChars(env, prompt, _prompt);
 }
 
 JNIEXPORT void JNICALL

@@ -12,7 +12,8 @@ object InferenceRunner {
         checkpoint: String,
         tokenizer: String,
         temperature: Float,
-        steps: Int
+        steps: Int,
+        prompt: String
     )
 
     external fun stop()

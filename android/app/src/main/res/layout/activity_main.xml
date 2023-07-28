@@ -6,6 +6,16 @@
     android:layout_height="match_parent"
     tools:context="com.celikin.llama2.MainActivity">
 
+    <EditText
+        android:id="@+id/prompt_edit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="story about teddy bear"
+        android:padding="8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <Button
         android:id="@+id/regenerate"
         android:layout_width="wrap_content"
@@ -13,14 +23,14 @@
         android:text="generate new text"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toBottomOf="@+id/prompt_edit" />
 
     <TextView
         android:id="@+id/sample_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:padding="8dp"
-        android:text="Push the button!"
+        android:text="Type your own prompt and push the button!"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/regenerate" />
