@@ -1,0 +1,96 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - master
+    paths: ['.github/workflows/**', '**/Makefile', '**/*.c', '**/*.h']
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths: ['**/Makefile', '**/*.c', '**/*.h']
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+
+jobs:
+  # check basic builds to avoid breaking changes
+  ubuntu-focal-make:
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Clone
+        id: checkout
+        uses: actions/checkout@v3
+
+      - name: Dependencies
+        id: depends
+        run: |
+          sudo apt-get update
+          sudo apt-get install build-essential -y
+
+      - name: Build
+        id: make_build
+        run: |
+          make
+
+      - name: Build runfast
+        id: make_build_runfast
+        run: |
+          make runfast
+
+  macOS-latest-make:
+    runs-on: macos-latest
+
+    steps:
+      - name: Clone
+        id: checkout
+        uses: actions/checkout@v3
+
+      - name: Dependencies
+        id: depends
+        continue-on-error: true
+        run: |
+          brew update
+
+      - name: Build
+        id: make_build
+        run: |
+          make
+
+      - name: Build runfast
+        id: make_build_runfast
+        run: |
+          make runfast
+
+      - name: Build clang
+        id: make_build_clang
+        run: |
+          make run CC=clang
+
+  windows-latest-make:
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        arch:
+          - amd64
+          - amd64_x86
+          - amd64_arm64
+
+    steps:
+      - name: Clone
+        id: checkout
+        uses: actions/checkout@v3
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1
+
+      - name: Setup MSVC ${{ matrix.arch }}
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Build ${{ matrix.arch }}
+        id: build_msvc
+        run: |
+          .\build_msvc.bat
