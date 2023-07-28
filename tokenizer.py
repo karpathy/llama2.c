@@ -59,7 +59,7 @@ class Tokenizer:
 
             tokens.append(b)
             scores.append(s)
-        
+
         # record the max token length
         max_token_length = max(len(t) for t in tokens)
 

@@ -138,7 +138,7 @@ class Attention(nn.Module):
 
         # restore time as batch dimension and concat heads
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
-        
+
         # final projection into the residual stream
         output = self.wo(output)
         output = self.resid_dropout(output)
@@ -154,7 +154,7 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
         self.dropout = nn.Dropout(dropout)
-    
+
     def forward(self, x):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
@@ -203,7 +203,7 @@ class Transformer(nn.Module):
         # some useful precompute for the RoPE relative positional embeddings. TODO why * 2 here? confuse
         freqs_cis = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len * 2)
         self.register_buffer("freqs_cis", freqs_cis, persistent=False)
-        
+
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -281,7 +281,7 @@ class Transformer(nn.Module):
         flops_promised = 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
         mfu = flops_achieved / flops_promised
         return mfu
-    
+
     @torch.inference_mode()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
         """
@@ -311,7 +311,7 @@ class Transformer(nn.Module):
                 idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
-            
+
         return idx
 
     def export(self, filepath='model.bin'):
@@ -327,13 +327,13 @@ class Transformer(nn.Module):
         hidden_dim = self.layers[0].feed_forward.w1.weight.shape[0]
         p = self.params
         n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
-        header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads, 
+        header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
                                        n_kv_heads, p.vocab_size, p.max_seq_len)
         f.write(header)
 
         # next write out the embedding weights
         serialize(self.tok_embeddings.weight)
-        
+
         # now all the layers
         # attention weights
         for layer in self.layers:

@@ -11,8 +11,8 @@ from model import ModelArgs, Transformer
 
 def test_argmax_inference():
     """
-    Only the simplest test for now: run inference with temperature 0 
-    (for determinism) in both C and PyTorch, and see that the sampled tokens 
+    Only the simplest test for now: run inference with temperature 0
+    (for determinism) in both C and PyTorch, and see that the sampled tokens
     are the same.
     """
     test_ckpt_dir = "out" # TODO create a dummy test checkpoint for this?
