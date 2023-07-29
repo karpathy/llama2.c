@@ -350,8 +350,8 @@ int str_lookup(char *str, char **vocab, int vocab_size) {
     return -1;
 }
 
-void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
-    
+void bpe_encode(char *text, char **vocab, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
+
     // a temporary buffer to merge two consecutive tokens
     char* str_buffer = malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
 
@@ -365,35 +365,25 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
         (*n_tokens)++;
     }
 
-    // merge the best consecutive pair each iteration, according the scores in vocab_scores
-    while (1) {
-        float best_score = -1e10;
-        int best_id = -1;
-        int best_idx = -1;
-
-        for (int i=0; i < (*n_tokens-1); i++) {
-            // check if we can merge the pair (tokens[i], tokens[i+1])
-            sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i+1]]);
+    // merge consecutive tokens until there are no more new merges
+    int merge_found = 1;
+    while (merge_found) {
+        merge_found = 0;
+        int i = 0;
+        for (int next = i+1; next < *n_tokens; next++) {
+            // check if we can merge the pair (token[i], token[next])
+            sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[next]]);
             int id = str_lookup(str_buffer, vocab, vocab_size);
-            if (id != -1 && vocab_scores[id] > best_score) {
-                // this merge pair exists in vocab! record its score and position
-                best_score = vocab_scores[id];
-                best_id = id;
-                best_idx = i;
+            if (id != -1) {
+                tokens[i] = id; // merge next token
+                merge_found = 1;
+            } else {
+                // we cannot merge further, proceed with next token
+                i++;
+                tokens[i] = tokens[next];
             }
         }
-
-        if (best_idx == -1) {
-            break; // we couldn't find any more pairs to merge, so we're done
-        }
-
-        // merge the consecutive pair (best_idx, best_idx+1) into new token best_id
-        tokens[best_idx] = best_id;
-        // delete token at position best_idx+1, shift the entire sequence back 1
-        for (int i = best_idx+1; i < (*n_tokens-1); i++) {
-            tokens[i] = tokens[i+1];
-        }
-        (*n_tokens)--; // token length decreased
+        *n_tokens = i+1;
     }
 
     free(str_buffer);
@@ -535,7 +525,7 @@ int main(int argc, char *argv[]) {
     int num_prompt_tokens = 0;
     if (prompt != NULL) {
         prompt_tokens = (int*)malloc(config.seq_len * sizeof(int));
-        bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
+        bpe_encode(prompt, vocab, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
     }
 
     // start the main loop
