@@ -68,18 +68,26 @@ __global__ void rmsnorm_kernel(half* o, half* x, half* weight, int size, int ele
     }
 }
 
-// one output per warp so that we can parallelize the dot product across the warp
 // Note that ~95% of total time is spent here, so optimizing this is important
-__global__ void mat_vec_kernel(half* output, half* input, half* weight, int n, int d, int numSerialElements) {
+// 1. One output generated per warp so that we can parallelize the dot product across the warp
+// 2. We load 8 elements at a time for efficiency (assume dimensions to be multiple of 8)
+__global__ void mat_vec_kernel(half* output, half* input, half* weight, int n, int d, int numSerialLoads) {
     int index = blockIdx.x * blockDim.y + threadIdx.y;
     if (index >= d)
         return;
 
     float sum = 0;
-    for (int i = 0; i < numSerialElements; i++) {
-        int j = i * 32 + threadIdx.x;
-        if (j < n)
-            sum += ((float)weight[index * n + j]) * ((float)input[j]);
+
+    for (int i = 0; i < numSerialLoads; i++) {
+        int j = (i * 32 + threadIdx.x) * 8;
+        if (j < n) {
+            half w[8];
+            half ip[8];
+            *((uint4 *)(&w)) = *((uint4 *)(&weight[index * n + j]));
+            *((uint4 *)(&ip)) = *((uint4 *)(&input[j]));
+            for (int el = 0; el < 8; el++)
+                sum += float(w[el]) * float(ip[el]);
+        }
     }
 
     using WarpReduce = cub::WarpReduce<float>;
@@ -423,10 +431,12 @@ void softmax(float* x, int size) {
 }
 
 void matmul(half* xout, half* x, half* w, int n, int d) {
+    if ((n & 7) || (d & 7)) { printf("fast matrix-vector kernel doesn't support non-multiple of 8 dimensions\n"); exit(1); }
     int serialElements = divUp(n, 32);
+    int serialLoads = divUp(serialElements, 8);
     dim3 block_dim(32, 4);
     int blocks = divUp(d, 4);
-    mat_vec_kernel <<<blocks, block_dim >>> (xout, x, w, n, d, serialElements);
+    mat_vec_kernel <<<blocks, block_dim >>> (xout, x, w, n, d, serialLoads);
 }
 
 void RoPERotation(half *q, half *k, half *f_real, half *f_imag, int num_heads, int head_size) {
