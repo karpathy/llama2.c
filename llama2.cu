@@ -14,6 +14,191 @@ Inference for Llama-2 Transformer model in pure Cuda.
 #include <cub/cub.cuh>
 
 // ----------------------------------------------------------------------------
+// GPU kernels
+
+__global__ void element_wise_add_kernel(half* dest, half* src, int size) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size)
+        dest[i] = (half)((float)dest[i] + (float)src[i]);
+}
+
+__global__ void convert_fp32_to_fp16(half* out, float* in, int elements) {
+    int index = blockIdx.x * 256 + threadIdx.x;
+    if (index < elements)
+        out[index] = (half)in[index];
+}
+
+__global__ void convert_fp16_to_fp32(float* out, half* in, int elements) {
+    int index = blockIdx.x * 256 + threadIdx.x;
+    if (index < elements)
+        out[index] = (float)in[index];
+}
+
+// Single block - not enough parallelism for the GPU, but it's just 1% of total time
+__global__ void rmsnorm_kernel(half* o, half* x, half* weight, int size, int elementsPerThread) {
+    float ss = 0.0f;
+    for (int i = 0; i < elementsPerThread; i++) {
+        int index = threadIdx.x + i * 1024;
+        if (index < size)
+            ss += (float)x[index];
+    }
+
+    using BlockReduce = cub::BlockReduce<float, 1024>;
+    __shared__ typename BlockReduce::TempStorage temp;
+    ss = BlockReduce(temp).Sum(ss * ss);
+
+    __shared__ float shared_ss;
+    if (threadIdx.x == 0) {
+        ss /= size;
+        ss += 1e-5f;
+        ss = 1.0f / sqrtf(ss);
+        shared_ss = ss;
+    }
+    __syncthreads();
+    ss = shared_ss;
+
+    // normalize
+    for (int i = 0; i < elementsPerThread; i++) {
+        int index = threadIdx.x + i * 1024;
+        if (index < size) {
+            float val = (float)x[index];
+            val *= ss * (float)weight[index];
+            o[index] = (half)val;
+        }
+    }
+}
+
+// one output per warp so that we can parallelize the dot product across the warp
+// Note that ~95% of total time is spent here, so optimizing this is important
+__global__ void mat_vec_kernel(half* output, half* input, half* weight, int n, int d, int numSerialElements) {
+    int index = blockIdx.x * blockDim.y + threadIdx.y;
+    if (index >= d)
+        return;
+
+    float sum = 0;
+    for (int i = 0; i < numSerialElements; i++) {
+        int j = i * 32 + threadIdx.x;
+        if (j < n)
+            sum += ((float)weight[index * n + j]) * ((float)input[j]);
+    }
+
+    using WarpReduce = cub::WarpReduce<float>;
+    __shared__ typename WarpReduce::TempStorage temp;
+    sum = WarpReduce(temp).Sum(sum);
+
+    if (threadIdx.x == 0)
+        output[index] = (half)sum;
+}
+
+// Each block processes a single head
+__global__ void RoPERotation_kernel(half* sq, half* sk, half* f_real, half* f_imag, int num_heads, int head_size) {
+    int h = blockIdx.x;
+    half* q = sq + h * head_size;
+    half* k = sk + h * head_size;
+
+    int i = threadIdx.x * 2;
+    float q0 = q[i];
+    float q1 = q[i + 1];
+    float k0 = k[i];
+    float k1 = k[i + 1];
+    float fcr = f_real[i / 2];
+    float fci = f_imag[i / 2];
+    q[i] = q0 * fcr - q1 * fci;
+    q[i + 1] = q0 * fci + q1 * fcr;
+    k[i] = k0 * fcr - k1 * fci;
+    k[i + 1] = k0 * fci + k1 * fcr;
+}
+
+__device__ void softmax_gpu(float* __restrict__ x, int size) {
+    using BlockReduce = cub::BlockReduce<float, 1024>;
+    __shared__ typename BlockReduce::TempStorage temp;
+    __shared__ float shared_val;
+
+    int tid = threadIdx.x;
+    int step = blockDim.x;
+
+    // find max value (for numerical stability)
+    float max_val = tid < size ? x[tid] : 0;
+    for (int i = tid + step; i < size; i += step)
+        if (x[i] > max_val)
+            max_val = x[i];
+
+    max_val = BlockReduce(temp).Reduce(max_val, cub::Max());
+    if (threadIdx.x == 0)
+        shared_val = max_val;
+    __syncthreads();
+    max_val = shared_val;
+
+    // exp and sum
+    float sum = 0.0f;
+    for (int i = tid; i < size; i += step) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+
+    sum = BlockReduce(temp).Sum(sum);
+    if (threadIdx.x == 0)
+        shared_val = sum;
+    __syncthreads();
+    sum = shared_val;
+
+    // normalize
+    for (int i = tid; i < size; i += step)
+        x[i] /= sum;
+}
+
+// Each block processes a single head
+// Poor parallelism and even poorer memory access pattern.
+// Ankan - TODO: optimize this.
+#define MAX_SEQ_LEN 8192
+__global__ void MultiHeadAttention_kernel(half* __restrict__ output, const half* __restrict__ sq,
+    const half* __restrict__ key_cache, const half* __restrict__ value_cache,
+    int num_heads, int head_size, int loff, int seq_len, int dim) {
+    int h = blockIdx.x;
+
+    // get the query vector for this head
+    const half* q = sq + h * head_size;
+    // attention scores for this head
+    __shared__ float att[MAX_SEQ_LEN];
+
+    // iterate over all timesteps, including the current one
+    for (int t = threadIdx.x; t < seq_len; t += blockDim.x) {
+        // get the key vector for this head and at this timestep
+        const half* k = key_cache + loff + t * dim + h * head_size;
+        // calculate the attention score as the dot product of q and k
+        float score = 0.0f;
+        for (int i = 0; i < head_size; i++)
+            score += (float)q[i] * (float)k[i];
+        score /= sqrtf(head_size);
+        // save the score to the attention buffer
+        att[t] = score;
+    }
+    __syncthreads();
+
+    // softmax the scores to get attention weights
+    softmax_gpu(att, seq_len);
+    __syncthreads();
+
+    // weighted sum of the values, store back into xb
+    for (int i = threadIdx.x; i < head_size; i += blockDim.x) {
+        float val = 0.0f;
+        for (int t = 0; t < seq_len; t++)
+            val += att[t] * (float)value_cache[loff + t * dim + h * head_size + i];
+        output[h * head_size + i] = (half)val;
+    }
+}
+
+__global__ void silu_element_wise_mul_kernel(half* dest, half* src, int size) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size) {
+        float val = (float)dest[i];
+        val *= 1.0f / (1.0f + expf(-val));
+        val *= (float)src[i];
+        dest[i] = (half)val;
+    }
+}
+
+// ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
 typedef struct {
@@ -61,12 +246,11 @@ typedef struct {
     half* k; // key (dim,)
     half* v; // value (dim,)
     half* logits_gpu; // output logits
+    float* logits_temp; // logits in GPU memory converted to float
+    float* logits; // logits copied CPU side
     // kv cache
     half* key_cache;   // (layer, seq_len, dim)
     half* value_cache; // (layer, seq_len, dim)
-
-    float* logits;     // logits copied CPU side (and converted to float)
-    float* logits_temp;
 } RunState;
 
 void malloc_run_state(RunState* s, Config* p) {
@@ -103,10 +287,10 @@ void free_run_state(RunState* s) {
     cudaFree(s->k);
     cudaFree(s->v);
     cudaFree(s->logits_gpu);
-    cudaFree(s->key_cache);
-    cudaFree(s->value_cache);
     cudaFree(s->logits_temp);
     free(s->logits);
+    cudaFree(s->key_cache);
+    cudaFree(s->value_cache);
 }
 
 void malloc_weights(TransformerWeights* w, Config* p, int shared_weights) {
@@ -161,24 +345,12 @@ int divUp(int a, int b) {
     return (a - 1) / b + 1;
 }
 
-__global__ void ConvertFP32toFP16(half *out, float *in, int elements) {
-    int index = blockIdx.x * 256 + threadIdx.x;
-    if (index < elements)
-        out[index] = (half)in[index];
-}
-
-__global__ void ConvertFP16toFP32(float* out, half* in, int elements) {
-    int index = blockIdx.x * 256 + threadIdx.x;
-    if (index < elements)
-        out[index] = (float)in[index];
-}
-
 int uploadWeight(void *w, int elements, FILE* f, void *scratchCpu, void *scratchGpu) {
     int count = fread(scratchCpu, sizeof(float), elements, f);
     if (count != elements) return 1;
     // copy and convert fp32->fp16
     cudaMemcpyAsync(scratchGpu, scratchCpu, sizeof(float) * elements, cudaMemcpyHostToDevice);
-    ConvertFP32toFP16 <<<divUp(elements, 256), 256 >>> ((half*)w, (float*)scratchGpu, elements);
+    convert_fp32_to_fp16 <<<divUp(elements, 256), 256 >>> ((half*)w, (float*)scratchGpu, elements);
     return 0;
 }
 
@@ -219,187 +391,46 @@ int checkpoint_init_weights(TransformerWeights* w, Config* p, FILE* f, int share
 // ----------------------------------------------------------------------------
 // neural net blocks
 
-__global__ void elementwiseAdd(half* dest, half* src, int size) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < size)
-        dest[i] = (half)((float)dest[i] + (float)src[i]);
-}
-
 void accum(half* a, half* b, int size) {
     int blocks = divUp(size, 256);
-    elementwiseAdd << <blocks, 256 >> > (a, b, size);
+    element_wise_add_kernel << <blocks, 256 >> > (a, b, size);
 }
 
-
-// Single block - not enough parallelism for the GPU, but it's just 1% of total time
-__global__ void rmsNormKernel(half* o, half* x, half *weight, int size, int elementsPerThread)
-{
-    float ss = 0.0f;
-    for (int i = 0; i < elementsPerThread; i++) {
-        int index = threadIdx.x + i * 1024;
-        if (index < size)
-            ss += (float) x[index];
-    }
-
-    using BlockReduce = cub::BlockReduce<float, 1024>;
-    __shared__ typename BlockReduce::TempStorage temp;
-    ss = BlockReduce(temp).Sum(ss * ss);
-
-    __shared__ float shared_ss;
-    if (threadIdx.x == 0) {
-        ss /= size;
-        ss += 1e-5f;
-        ss = 1.0f / sqrtf(ss);
-        shared_ss = ss;
-    }
-    __syncthreads();
-    ss = shared_ss;
-
-    // normalize
-    for (int i = 0; i < elementsPerThread; i++) {
-        int index = threadIdx.x + i * 1024;
-        if (index < size) {
-            float val = (float)x[index];
-            val *= ss * (float)weight[index];
-            o[index] = (half)val;
-        }
-    }
-}
 
 void rmsnorm(half* o, half* x, half* weight, int size) {
     int elementsPerThread = divUp(size, 1024);
-    rmsNormKernel <<<1, 1024 >>> (o, x, weight, size, elementsPerThread);
+    rmsnorm_kernel <<<1, 1024 >>> (o, x, weight, size, elementsPerThread);
 }
 
-// one output per warp so that we can parallelize the dot product across the warp
-__global__ void matVecKernel(half* output, half* input, half* weight, int n, int d, int numSerialElements) {
-    int index = blockIdx.x * blockDim.y + threadIdx.y;
-    if (index >= d)
-        return;
-
-    float sum = 0;
-    for (int i = 0; i < numSerialElements; i++) {
-        int j = i * 32 + threadIdx.x;
-        if (j < n)
-            sum += ((float) weight[index * n + j]) * ((float)input[j]);
+void softmax(float* x, int size) {
+    // find max value (for numerical stability)
+    float max_val = x[0];
+    for (int i = 1; i < size; i++) {
+        if (x[i] > max_val) {
+            max_val = x[i];
+        }
     }
-
-    using WarpReduce = cub::WarpReduce<float>;
-    __shared__ typename WarpReduce::TempStorage temp;
-    sum = WarpReduce(temp).Sum(sum);
-
-    if (threadIdx.x == 0)
-        output[index] = (half)sum;
+    // exp and sum
+    float sum = 0.0f;
+    for (int i = 0; i < size; i++) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+    // normalize
+    for (int i = 0; i < size; i++) {
+        x[i] /= sum;
+    }
 }
-
 
 void matmul(half* xout, half* x, half* w, int n, int d) {
     int serialElements = divUp(n, 32);
     dim3 block_dim(32, 4);
     int blocks = divUp(d, 4);
-    matVecKernel <<<blocks, block_dim >>> (xout, x, w, n, d, serialElements);
-}
-
-// Each block processes a single head
-__global__ void RoPERotation_kernel(half* sq, half* sk, half* f_real, half* f_imag, int num_heads, int head_size) {
-    int h = blockIdx.x;
-    half* q = sq + h * head_size;
-    half* k = sk + h * head_size;
-
-    int i = threadIdx.x * 2;
-    float q0 = q[i];
-    float q1 = q[i + 1];
-    float k0 = k[i];
-    float k1 = k[i + 1];
-    float fcr = f_real[i / 2];
-    float fci = f_imag[i / 2];
-    q[i] = q0 * fcr - q1 * fci;
-    q[i + 1] = q0 * fci + q1 * fcr;
-    k[i] = k0 * fcr - k1 * fci;
-    k[i + 1] = k0 * fci + k1 * fcr;
+    mat_vec_kernel <<<blocks, block_dim >>> (xout, x, w, n, d, serialElements);
 }
 
 void RoPERotation(half *q, half *k, half *f_real, half *f_imag, int num_heads, int head_size) {
     RoPERotation_kernel <<<num_heads, head_size / 2 >>> (q, k, f_real, f_imag, num_heads, head_size);
-}
-
-__device__ void softmax_gpu(float* __restrict__ x, int size) {
-    using BlockReduce = cub::BlockReduce<float, 1024>;
-    __shared__ typename BlockReduce::TempStorage temp;
-    __shared__ float shared_val;
-
-    int tid = threadIdx.x;
-    int step = blockDim.x;
-
-    // find max value (for numerical stability)
-    float max_val = tid < size ? x[tid] : 0;
-    for (int i = tid + step; i < size; i += step)
-        if (x[i] > max_val)
-            max_val = x[i];
-
-    max_val = BlockReduce(temp).Reduce(max_val, cub::Max());
-    if (threadIdx.x == 0)
-        shared_val = max_val;
-    __syncthreads();
-    max_val = shared_val;
-
-    // exp and sum
-    float sum = 0.0f;
-    for (int i = tid; i < size; i += step) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-
-    sum = BlockReduce(temp).Sum(sum);
-    if (threadIdx.x == 0)
-        shared_val = sum;
-    __syncthreads();
-    sum = shared_val;
-
-    // normalize
-    for (int i = tid; i < size; i += step)
-        x[i] /= sum;
-}
-
-// Each block processes a single head
-// Poor parallelism and even poorer memory access pattern.
-// Ankan - TODO: optimize this.
-#define MAX_SEQ_LEN 8192
-__global__ void MultiHeadAttention_kernel(half * __restrict__ output, const half* __restrict__ sq, 
-    const half* __restrict__ key_cache, const half* __restrict__ value_cache,
-    int num_heads, int head_size, int loff, int seq_len, int dim) {
-    int h = blockIdx.x;
-
-    // get the query vector for this head
-    const half* q = sq + h * head_size;
-    // attention scores for this head
-    __shared__ float att[MAX_SEQ_LEN];
-
-    // iterate over all timesteps, including the current one
-    for (int t = threadIdx.x; t < seq_len; t+= blockDim.x) {
-        // get the key vector for this head and at this timestep
-        const half* k = key_cache + loff + t * dim + h * head_size;
-        // calculate the attention score as the dot product of q and k
-        float score = 0.0f;
-        for (int i = 0; i < head_size; i++)
-            score += (float)q[i] * (float)k[i];
-        score /= sqrtf(head_size);
-        // save the score to the attention buffer
-        att[t] = score;
-    }
-    __syncthreads();
-
-    // softmax the scores to get attention weights
-    softmax_gpu(att, seq_len);
-    __syncthreads();
-
-    // weighted sum of the values, store back into xb
-    for (int i = threadIdx.x; i < head_size; i += blockDim.x) {
-        float val = 0.0f;
-        for (int t = 0; t < seq_len; t++)
-            val += att[t] * (float)value_cache[loff + t * dim + h * head_size + i];
-        output[h * head_size + i] = (half) val;
-    }
 }
 
 void MultiHeadAttention(half *output, half *q, half *key_cache, half *value_cache, int num_heads, int head_size, int loff, int seq_len) {
@@ -407,19 +438,8 @@ void MultiHeadAttention(half *output, half *q, half *key_cache, half *value_cach
     MultiHeadAttention_kernel <<<num_heads, 1024>>> (output, q, key_cache, value_cache, num_heads, head_size, loff, seq_len, dim);
 }
 
-__global__ void siluElementwiseMul_kernel(half* dest, half* src, int size) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < size) {
-        float val = (float)dest[i];
-        val *= 1.0f / (1.0f + expf(-val));
-        val *= (float)src[i];
-        dest[i] = (half)val;
-    }
-}
-
 void siluElementwiseMul(half *hb, half *hb2, int size) {
-    int blocks = divUp(size, 256);
-    siluElementwiseMul_kernel <<<blocks, 256 >>> (hb, hb2, size);
+   silu_element_wise_mul_kernel <<<divUp(size, 256), 256 >>> (hb, hb2, size);
 }
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
@@ -492,28 +512,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     matmul(s->logits_gpu, x, w->wcls, p->dim, p->vocab_size);
 
     // copy logits from GPU->CPU
-    ConvertFP16toFP32 <<<divUp(p->vocab_size, 256), 256 >>> (s->logits_temp, s->logits_gpu, p->vocab_size);
+    convert_fp16_to_fp32 <<<divUp(p->vocab_size, 256), 256 >>> (s->logits_temp, s->logits_gpu, p->vocab_size);
     cudaMemcpy(s->logits, s->logits_temp, p->vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
-}
-
-void softmax(float* x, int size) {
-    // find max value (for numerical stability)
-    float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
-        }
-    }
-    // exp and sum
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-    // normalize
-    for (int i = 0; i < size; i++) {
-        x[i] /= sum;
-    }
 }
 
 int transformer_str(char* input, int pos, Config* p, RunState* s, TransformerWeights* w, char** vocab) {
@@ -550,6 +550,12 @@ int transformer_str(char* input, int pos, Config* p, RunState* s, TransformerWei
     return pos;
 }
 
+long time_in_ms() {
+    struct timespec time;
+    timespec_get(&time, TIME_UTC);
+    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+}
+
 int sample(float* probabilities, int n) {
     // sample index from probabilities, they must sum to 1
     float r = (float)rand() / (float)RAND_MAX;
@@ -577,12 +583,6 @@ int argmax(float* v, int n) {
 }
 
 // ----------------------------------------------------------------------------
-
-long time_in_ms() {
-    struct timespec time;
-    timespec_get(&time, TIME_UTC);
-    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
-}
 
 int main(int argc, char* argv[]) {
 
