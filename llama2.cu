@@ -516,49 +516,93 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     cudaMemcpy(s->logits, s->logits_temp, p->vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
-int transformer_str(char* input, int pos, Config* p, RunState* s, TransformerWeights* w, char** vocab) {
-    while (input[0] != 0) {
-        int next = -1;
-        int next_length = 0;
-        for (int i = 0; i < p->vocab_size; i++) {
-            char* v = vocab[i];
-            int j = 0;
-            int hit = 1;
-            while (v[j] != 0) {
-                if (0 == input[j] || v[j] != input[j]) {
-                    hit = 0;
-                    break;
-                }
-                ++j;
-            }
-            if (hit && j > next_length) {
-                next_length = j;
-                next = i;
+// ----------------------------------------------------------------------------
+// byte pair encoding (BPE) tokenizer, encodes strings into tokens so we can prompt
+
+int str_lookup(char *str, char **vocab, int vocab_size) {
+    // find the first perfect match for str in vocab, return its index or -1 if not found
+    for (int i = 0; i < vocab_size; i++) {
+        if (strcmp(str, vocab[i]) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
+    
+    // a temporary buffer to merge two consecutive tokens
+    char* str_buffer = (char*) malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
+
+    // first encode every individual byte in the input string
+    *n_tokens = 0; // the number of tokens
+    for (char *c = text; *c != '\0'; c++) {
+        sprintf(str_buffer, "%c", *c);
+        int id = str_lookup(str_buffer, vocab, vocab_size);
+        if (id == -1) { printf("not good\n"); exit(1);}
+        tokens[*n_tokens] = id;
+        (*n_tokens)++;
+    }
+
+    // merge the best consecutive pair each iteration, according the scores in vocab_scores
+    while (1) {
+        float best_score = -1e10;
+        int best_id = -1;
+        int best_idx = -1;
+
+        for (int i=0; i < (*n_tokens-1); i++) {
+            // check if we can merge the pair (tokens[i], tokens[i+1])
+            sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i+1]]);
+            int id = str_lookup(str_buffer, vocab, vocab_size);
+            if (id != -1 && vocab_scores[id] > best_score) {
+                // this merge pair exists in vocab! record its score and position
+                best_score = vocab_scores[id];
+                best_id = id;
+                best_idx = i;
             }
         }
 
-        if (0 > next) return pos;
+        if (best_idx == -1) {
+            break; // we couldn't find any more pairs to merge, so we're done
+        }
 
-        pos++;
-        transformer(next, pos, p, s, w);
-
-        printf("[%s]", vocab[next]);
-        fflush(stdout);
-
-        input += next_length;
+        // merge the consecutive pair (best_idx, best_idx+1) into new token best_id
+        tokens[best_idx] = best_id;
+        // delete token at position best_idx+1, shift the entire sequence back 1
+        for (int i = best_idx+1; i < (*n_tokens-1); i++) {
+            tokens[i] = tokens[i+1];
+        }
+        (*n_tokens)--; // token length decreased
     }
-    return pos;
+
+    free(str_buffer);
 }
 
+// ----------------------------------------------------------------------------
+// utilities
+
 long time_in_ms() {
+    // return time in milliseconds, for benchmarking the model speed
     struct timespec time;
     timespec_get(&time, TIME_UTC);
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
 
+unsigned long long rng_seed;
+unsigned int random_u32() {
+    // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
+    rng_seed ^= rng_seed >> 12;
+    rng_seed ^= rng_seed << 25;
+    rng_seed ^= rng_seed >> 27;
+    return (rng_seed * 0x2545F4914F6CDD1Dull) >> 32;
+}
+float random_f32() { // random float32 in [0,1)
+    return (random_u32() >> 8) / 16777216.0f;
+}
+
 int sample(float* probabilities, int n) {
     // sample index from probabilities, they must sum to 1
-    float r = (float)rand() / (float)RAND_MAX;
+    float r = random_f32();
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probabilities[i];
@@ -581,15 +625,16 @@ int argmax(float* v, int n) {
     }
     return max_i;
 }
-
 // ----------------------------------------------------------------------------
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
 
     // poor man's C argparse
-    char* checkpoint = NULL;  // e.g. out/model.bin
+    char *checkpoint = NULL;  // e.g. out/model.bin
     float temperature = 0.9f; // e.g. 1.0, or 0.0
     int steps = 256;          // max number of steps to run for, 0: use seq_len
+    char *prompt = NULL;      // prompt string
+
     // 'checkpoint' is necessary arg
     if (argc < 2) {
         printf("Usage: %s <checkpoint_file> [temperature] [steps] [prompt]\n", argv[0]);
@@ -605,25 +650,20 @@ int main(int argc, char* argv[]) {
     if (argc >= 4) {
         steps = atoi(argv[3]);
     }
-
-    char* prompt = NULL;
     if (argc >= 5) {
         prompt = argv[4];
     }
 
     // seed rng with time. if you want deterministic behavior use temperature 0.0
-    srand((unsigned int)time(NULL));
+    rng_seed = (unsigned int)time(NULL);
 
     // read in the model.bin file
     Config config;
     TransformerWeights weights;
     int shared_weights;
     {
-        FILE* file = fopen(checkpoint, "rb");
-        if (!file) {
-            printf("Unable to open the checkpoint file %s!\n", checkpoint);
-            return 1;
-        }
+        FILE *file = fopen(checkpoint, "rb");
+        if (!file) { printf("Couldn't open file %s\n", checkpoint); return 1; }
         // read in the config header
         if (fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
 
@@ -637,25 +677,24 @@ int main(int argc, char* argv[]) {
         // read in the Transformer weights
         malloc_weights(&weights, &config, shared_weights);
         if (checkpoint_init_weights(&weights, &config, file, shared_weights)) { return 1; }
-
     }
-    // validate steps
-    if (steps <= 0) { steps = config.seq_len; }
+    // right now we cannot run for more than config.seq_len steps
+    if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
 
     // read in the tokenizer.bin file
     char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
+    float* vocab_scores = (float*)malloc(config.vocab_size * sizeof(float));
+    unsigned int max_token_length;
     {
-        FILE* file = fopen("tokenizer.bin", "rb");
-        if (!file) {
-            printf("Unable to open the tokenizer file tokenizer.bin! Run "
-                "python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n");
-            return 1;
-        }
+        FILE *file = fopen("tokenizer.bin", "rb");
+        if (!file) { printf("couldn't load tokenizer.bin\n"); return 1; }
+        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { printf("failed read\n"); return 1; }
         int len;
         for (int i = 0; i < config.vocab_size; i++) {
-            if (fread(&len, sizeof(int), 1, file) != 1) { return 1; }
-            vocab[i] = (char*)malloc(len + 1);
-            if (fread(vocab[i], len, 1, file) != 1) { return 1; }
+            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { printf("failed read\n"); return 1;}
+            if (fread(&len, sizeof(int), 1, file) != 1) { printf("failed read\n"); return 1; }
+            vocab[i] = (char *)malloc(len + 1);
+            if (fread(vocab[i], len, 1, file) != 1) { printf("failed read\n"); return 1; }
             vocab[i][len] = '\0'; // add the string terminating token
         }
         fclose(file);
@@ -665,62 +704,69 @@ int main(int argc, char* argv[]) {
     RunState state;
     malloc_run_state(&state, &config);
 
-    // the current position we are in
-    long start = time_in_ms();
-    int next;
-    int token = 1; // 1 = BOS token in Llama-2 sentencepiece
-    int pos = 0;
-    printf("<s>\n"); // explicit print the initial BOS token (=1), stylistically symmetric
-    transformer(token, pos, &config, &state, &weights);
-
-    if (prompt) {
-        pos = transformer_str(prompt, pos, &config, &state, &weights, vocab);
-        steps += pos;
+    // process the prompt, if any
+    int *prompt_tokens = NULL;
+    int num_prompt_tokens = 0;
+    if (prompt != NULL) {
+        prompt_tokens = (int*)malloc(config.seq_len * sizeof(int));
+        bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
     }
 
-    // can't run for more than seq_len total steps
-    if (steps > config.seq_len)
-        steps = config.seq_len;
-
+    // start the main loop
+    long start = 0;  // used to time our code, only initialized after first iteration
+    int next;        // will store the next token in the sequence
+    int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
+    int pos = 0;     // position in the sequence
+    printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
     while (pos < steps) {
-        // sample the next token
-        if (temperature == 0.0f) {
-            // greedy argmax sampling
-            next = argmax(state.logits, config.vocab_size);
+
+        // forward the transformer to get logits for the next token
+        transformer(token, pos, &config, &state, &weights);
+
+        if(pos < num_prompt_tokens) {
+            // if we are still processing the input prompt, force the next prompt token
+            next = prompt_tokens[pos];
+        } else {
+            // sample the next token
+            if (temperature == 0.0f) {
+                // greedy argmax sampling: take the token with the highest probability
+                next = argmax(state.logits, config.vocab_size);
+            } else {
+                // apply the temperature to the logits
+                for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
+                // apply softmax to the logits to get the probabilities for next token
+                softmax(state.logits, config.vocab_size);
+                // we sample from this distribution to get the next token
+                next = sample(state.logits, config.vocab_size);
+            }
         }
-        else {
-            // apply the temperature to the logits
-            for (int q = 0; q < config.vocab_size; q++) { state.logits[q] /= temperature; }
-            
-            // apply softmax to the logits to get the probabilities for next token
-            softmax(state.logits, config.vocab_size);
-            // we now want to sample from this distribution to get the next token
-            next = sample(state.logits, config.vocab_size);
-        }
-        printf("%s", vocab[next]);
+
+        // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
+        char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
+        printf("%s", token_str);
         fflush(stdout);
 
-        // break if EOS token is reached
-        if (next == 2)
-            break;
+        if (next == 2) break; // break if EOS token is reached
 
         // advance forward
         token = next;
         pos++;
-
-        // forward the transformer to get logits for the next token
-        transformer(token, pos, &config, &state, &weights);
+        // init our timer here because the first iteration could be slow
+        if (start == 0) { start = time_in_ms(); }
     }
 
     // report achieved tok/s
     long end = time_in_ms();
     double time = (end - start) / 1000.0;
-    printf("\nachieved tok/s: %f. Tokens: %d, seconds: %g\n", pos / time, pos, time);
+    int timed_tokens = pos - 1;
+    printf("\nachieved tok/s: %f. Tokens: %d, seconds: %g\n", timed_tokens / time, timed_tokens, time);
 
     // memory cleanup
     free_run_state(&state);
     free_weights(&weights, shared_weights);
     for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
     free(vocab);
+    free(vocab_scores);
+    if (prompt_tokens != NULL) free(prompt_tokens);
     return 0;
 }
