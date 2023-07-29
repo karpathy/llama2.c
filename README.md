@@ -86,6 +86,12 @@ python tinystories.py download
 python tinystories.py pretokenize
 ```
 
+You can also change parallel setting of the pretokenizer for better performance by
+```bash
+python tinystories.py pretokenize 4 # Do pretokenize in parallel in 4 processes
+```
+Be careful not to set the parallel level too high as it may lock your system up. The "right" setting depends on many things e.g., the total number of physical/virtual cores or the overall loading of the system etc. In general, setting this value to be a little lower than the physical CPU cores on your system would be safe.
+
 Then train our model:
 
 ```bash

@@ -8,7 +8,7 @@ import json
 import os
 import random
 from typing import List
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import requests
@@ -36,7 +36,7 @@ def download_file(url: str, fname: str, chunk_size=1024):
             bar.update(size)
 
 
-def download():
+def download(*args):
     """Downloads the dataset to disk."""
     os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
@@ -66,33 +66,36 @@ def download():
     print(f"Number of shards: {len(shard_filenames)}")
     print(f"Example story:\n{data[0]}")
 
-def pretokenize():
-    enc = Tokenizer()
 
-    def process_shard(shard):
-        with open(shard, "r") as f:
-            data = json.load(f)
-        all_tokens = []
-        for example in tqdm(data):
-            text = example["story"]
-            text = text.strip() # get rid of leading/trailing whitespace
-            tokens = enc.encode(text, bos=True, eos=False)  # encode the text, use BOS
-            all_tokens.extend(tokens)
-        # convert to uint16 nparray
-        all_tokens = np.array(all_tokens, dtype=np.uint16)
-        # write to disk
-        tokenized_filename = shard.replace(".json", ".bin")
-        with open(tokenized_filename, "wb") as f:
-            f.write(all_tokens.tobytes())
-        print(f"Saved {tokenized_filename}")
+def process_shard(shard):
+    enc = Tokenizer()
+    with open(shard, "r") as f:
+        data = json.load(f)
+    all_tokens = []
+    for example in data:
+        text = example["story"]
+        text = text.strip() # get rid of leading/trailing whitespace
+        tokens = enc.encode(text, bos=True, eos=False)  # encode the text, use BOS
+        all_tokens.extend(tokens)
+    # convert to uint16 nparray
+    all_tokens = np.array(all_tokens, dtype=np.uint16)
+    # write to disk
+    tokenized_filename = shard.replace(".json", ".bin")
+    with open(tokenized_filename, "wb") as f:
+        f.write(all_tokens.tobytes())
+    #print(f"Saved {tokenized_filename}")
+
+def pretokenize(parallel):
 
     # iterate the shards and tokenize all of them one by one
     data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
     shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
 
-    # process all the shards in a threadpool
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        executor.map(process_shard, shard_filenames)
+    print(f"Pretokenize training data in {parallel} processes in parallel ...")
+
+    # process all the shards in a process pool
+    with ProcessPoolExecutor(max_workers=parallel) as executor:
+        list(tqdm(executor.map(process_shard, shard_filenames), total=len(shard_filenames)))
 
     print("Done.")
 
@@ -156,11 +159,14 @@ class Task:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("stage", type=str, choices=["download", "train_tokenizer", "pretokenize"])
+    parser.add_argument("-p", "--parallel", type=int, default=1, help="run tokenizer in parallel processes")
     args = parser.parse_args()
-
     # depending on the stage call the appropriate function
     fun = {
         "download": download,
         "pretokenize": pretokenize,
     }
-    fun[args.stage]()
+    # parallel level should be a positive value
+    args.parallel = max(1, args.parallel)
+
+    fun[args.stage](args.parallel)
