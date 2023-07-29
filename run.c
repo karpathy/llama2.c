@@ -194,19 +194,18 @@ void softmax(float* x, int size) {
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
-    #pragma omp target data map(tofrom: w[0:d*n],x[0:n], xout[0:d])
-    {
     int i;
-    #pragma omp target device (0)
-    #pragma omp parallel for private(i)
+    #pragma omp target data map(to:x[0:n]) map(from:xout[0:d])
+    #pragma omp target teams distribute
     for (i = 0; i < d; i++) {
         float val = 0.0f;
+        #pragma parallel for reduction(+:val) 
         for (int j = 0; j < n; j++) {
             val += w[i * n + j] * x[j];
         }
         xout[i] = val;
     }
-    }
+    
 }
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
@@ -226,10 +225,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
 
     //tmp files to read the current W being multiplied. Directly passing w->k .. doesn't work due to no support for virtual address offloading
-    float* tmp_w = (float*)malloc(dim*dim*sizeof(float));
-    float* tmp_w_hid = (float*)malloc(dim*hidden_dim*sizeof(float));
-    float* tmp_w_cls = (float*)malloc(p->vocab_size*dim*sizeof(float));
-
+    
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
 
@@ -237,12 +233,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         // qkv matmuls for this position
-        memcpy(tmp_w, w->wq + l*dim*dim, dim*dim*sizeof(float));
-        matmul(s->q, s->xb, tmp_w, dim, dim);
-        memcpy(tmp_w, w->wk + l*dim*dim, dim*dim*sizeof(float));
-        matmul(s->k, s->xb, tmp_w, dim, dim);
-        memcpy(tmp_w, w->wv + l*dim*dim, dim*dim*sizeof(float));
-        matmul(s->v, s->xb, tmp_w, dim, dim);
+        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
+        matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
+        matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
 
         // apply RoPE rotation to the q and k vectors for each head
         for (int h = 0; h < p->n_heads; h++) {
@@ -312,8 +305,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         }
 
         // final matmul to get the output of the attention
-        memcpy(tmp_w, w->wo + l*dim*dim, dim*dim*sizeof(float));
-        matmul(s->xb2, s->xb, tmp_w, dim, dim);
+        matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
 
         // residual connection back into x
         accum(x, s->xb2, dim);
@@ -323,10 +315,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        memcpy(tmp_w_hid, w->w1 + l*dim*hidden_dim, hidden_dim*dim*sizeof(float));
-        matmul(s->hb, s->xb, tmp_w_hid, dim, hidden_dim);
-        memcpy(tmp_w_hid, w->w3 + l*dim*hidden_dim, hidden_dim*dim*sizeof(float));
-        matmul(s->hb2, s->xb, tmp_w_hid, dim, hidden_dim);
+        matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
+        matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
         
         // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         for (int i = 0; i < hidden_dim; i++) {
@@ -339,8 +329,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         }
 
         // final matmul to get the output of the ffn
-        memcpy(tmp_w_hid, w->w2 + l*dim*hidden_dim, hidden_dim*dim*sizeof(float));
-        matmul(s->xb, s->hb, tmp_w_hid, hidden_dim, dim);
+        matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
 
         // residual connection
         accum(x, s->xb, dim);
@@ -350,8 +339,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     rmsnorm(x, x, w->rms_final_weight, dim);
 
     // classifier into logits
-    memcpy(tmp_w_cls, w->wcls, dim*p->vocab_size*sizeof(float));
-    matmul(s->logits, x, tmp_w_cls, p->dim, p->vocab_size);
+    matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
 }
 
 // ----------------------------------------------------------------------------
@@ -561,6 +549,11 @@ int main(int argc, char *argv[]) {
     int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     int pos = 0;     // position in the sequence
     printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
+    int size_qkvO = config.dim*config.dim*config.n_layers;
+    int size_ffn = config.hidden_dim*config.dim*config.n_layers;
+    int size_cls = config.dim*config.vocab_size;
+
+    #pragma omp target data map(to:weights.wq[0:size_qkvO],weights.wk[0:size_qkvO],weights.wv[0:size_qkvO],weights.wo[0:size_qkvO],weights.w1[0:size_ffn],weights.w3[0:size_ffn],weights.w2[0:size_ffn],weights.wcls[0:size_cls])
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
