@@ -23,27 +23,27 @@ rundebug: run.c
 # In our specific application this is *probably* okay to use
 .PHONY: runfast
 runfast: run.c
-	$(CC) -Ofast -o run run.c -lm
+	$(CC) -Ofast -funroll-all-loops -o run run.c -lm
 
 # additionally compiles with OpenMP, allowing multithreaded runs
 # make sure to also enable multiple threads when running, e.g.:
 # OMP_NUM_THREADS=4 ./run out/model.bin
 .PHONY: runomp
 runomp: run.c
-	$(CC) -Ofast -fopenmp -march=native run.c  -lm  -o run
+	$(CC) -Ofast -funroll-all-loops -fopenmp -march=native run.c  -lm  -o run
 
 .PHONY: win64
 win64: 
-	x86_64-w64-mingw32-gcc-win32 -Ofast -D_WIN32 -o run.exe -I. run.c win.c
+	x86_64-w64-mingw32-gcc-win32 -Ofast -funroll-all-loops -D_WIN32 -o run.exe -I. run.c win.c
 
 # compiles with gnu99 standard flags for amazon linux, coreos, etc. compatibility
 .PHONY: rungnu
 rungnu:
-	$(CC) -Ofast -std=gnu11 -o run run.c -lm
+	$(CC) -Ofast -funroll-all-loops -std=gnu11 -o run run.c -lm
 
 .PHONY: runompgnu
 runompgnu:
-	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm  -o run
+	$(CC) -Ofast -funroll-all-loops -fopenmp -std=gnu11 run.c  -lm  -o run
 
 .PHONY: clean
 clean:
