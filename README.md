@@ -202,6 +202,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - [llama2.c-android](https://github.com/Manuel030/llama2.c-android): by @Manuel030: adds Android binaries of this project
 - [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @leloykun: a C++ port of this project
 - [llama2.js](https://github.com/epicure/llama2.js) by @epicure: a JavaScript port of this project
+- [llama2.zig](https://github.com/cgbur/llama2.zig) by @cgbur: A Zig port of this project
 
 ## unsorted todos
 
