@@ -455,6 +455,7 @@ int main(int argc, char *argv[]) {
     float temperature = 0.9f; // e.g. 1.0, or 0.0
     int steps = 256;          // max number of steps to run for, 0: use seq_len
     char *prompt = NULL;      // prompt string
+    int EOS_ID = 2;
 
     // 'checkpoint' is necessary arg
     if (argc < 2) {
@@ -575,13 +576,16 @@ int main(int argc, char *argv[]) {
         // advance forward
         token = next;
         pos++;
+        if (prompt != NULL && next == EOS_ID){
+            break;
+        }
         // init our timer here because the first iteration is slow due to memmap
         if (start == 0) { start = time_in_ms(); }
     }
 
     // report achieved tok/s
     long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", (steps-1) / (double)(end-start)*1000);
+    printf("\nachieved tok/s: %f\n", pos / (double)(end-start)*1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
