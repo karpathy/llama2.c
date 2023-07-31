@@ -283,13 +283,15 @@ class Transformer(nn.Module):
         return mfu
     
     @torch.inference_mode()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, decoder=None):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         Also note this is a super inefficient version of sampling with no key/value cache.
         """
+        if decoder:
+            assert idx.size(0) == 1
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.params.max_seq_len else idx[:, -self.params.max_seq_len:]
@@ -309,6 +311,8 @@ class Transformer(nn.Module):
                 # apply softmax to convert logits to (normalized) probabilities
                 probs = F.softmax(logits, dim=-1)
                 idx_next = torch.multinomial(probs, num_samples=1)
+            if decoder:
+                print(decoder.decode_one_word(idx_next.item()), end='', flush=True)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
             
