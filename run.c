@@ -399,6 +399,16 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     free(str_buffer);
 }
 
+void token_candidates(int* excluded_tokens, int last_token, char **vocab, int vocab_size) {
+    char* last = vocab[last_token];
+    size_t len = strlen(last);
+    for (int i = 0; i < vocab_size; i++) {
+        if (strncmp(last, vocab[i], len) != 0) {
+            excluded_tokens[i] = 1;
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------
 // utilities
 
@@ -434,18 +444,22 @@ int sample(float* probabilities, int n) {
     return n - 1; // in case of rounding errors
 }
 
-int argmax(float* v, int n) {
+int argmax(float* v, int n, int* excluded) {
     // return argmax of v in elements 0..n
     int max_i = 0;
     float max_p = v[0];
     for (int i = 1; i < n; i++) {
-        if (v[i] > max_p) {
-            max_i = i;
-            max_p = v[i];
+        // consider only tokens not in the excluded set
+        if (!excluded || !excluded[i]) {
+            if (v[i] > max_p) {
+                max_i = i;
+                max_p = v[i];
+            }
         }
     }
     return max_i;
 }
+
 // ----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
@@ -529,6 +543,7 @@ int main(int argc, char *argv[]) {
     // create and init the application RunState
     RunState state;
     malloc_run_state(&state, &config);
+    int* excluded_tokens = calloc(config.vocab_size, sizeof(int));
 
     // process the prompt, if any
     int *prompt_tokens = NULL;
@@ -536,6 +551,8 @@ int main(int argc, char *argv[]) {
     if (prompt != NULL) {
         prompt_tokens = (int*)malloc(config.seq_len * sizeof(int));
         bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
+        token_candidates(excluded_tokens, prompt_tokens[num_prompt_tokens-1], vocab, config.vocab_size);
+        num_prompt_tokens--; // strip last_token from prompt
     }
 
     // start the main loop
@@ -549,14 +566,17 @@ int main(int argc, char *argv[]) {
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
 
-        if(pos < num_prompt_tokens) {
+        if (pos < num_prompt_tokens) {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos];
+        } else if (prompt != NULL && pos == num_prompt_tokens) {
+            // first token out of prompt: take the best among the candidate tokens
+            next = argmax(state.logits, config.vocab_size, excluded_tokens);
         } else {
             // sample the next token
             if (temperature == 0.0f) {
                 // greedy argmax sampling: take the token with the highest probability
-                next = argmax(state.logits, config.vocab_size);
+                next = argmax(state.logits, config.vocab_size, NULL);
             } else {
                 // apply the temperature to the logits
                 for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
@@ -588,6 +608,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
     free(vocab);
     free(vocab_scores);
+    free(excluded_tokens);
     if (prompt_tokens != NULL) free(prompt_tokens);
     if (data != MAP_FAILED) munmap(data, file_size);
     if (fd != -1) close(fd);
