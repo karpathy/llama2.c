@@ -9,6 +9,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <errno.h>
+#include <omp.h>
 
 #define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "llama2_inference", __VA_ARGS__))
 #define LOGW(...) ((void)__android_log_print(ANDROID_LOG_WARN, "llama2_inference", __VA_ARGS__))
@@ -628,7 +629,7 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved) {
 JNIEXPORT void JNICALL
 Java_com_celikin_llama2_wrapper_InferenceRunner_run(JNIEnv *env, jobject thiz, jstring checkpoint,
                                                     jstring tokenizer, jfloat temperature,
-                                                    jint steps, jstring prompt) {
+                                                    jint steps, jstring prompt, jint ompthreads) {
 
     const char *checkpoint_path = (*env)->GetStringUTFChars(env, checkpoint, 0);
     const char *tokenizer_path = (*env)->GetStringUTFChars(env, tokenizer, 0);
@@ -636,7 +637,7 @@ Java_com_celikin_llama2_wrapper_InferenceRunner_run(JNIEnv *env, jobject thiz, j
 
     LOGI("inference loaded checkpoint path: %s tokenizer path: %s temperature %f, steps %d prompt %s",
          checkpoint_path, tokenizer_path, temperature, steps, _prompt);
-
+    omp_set_num_threads(ompthreads);
     run_inference(env, thiz, checkpoint_path, tokenizer_path, temperature, steps, _prompt);
 
     (*env)->ReleaseStringUTFChars(env, checkpoint, checkpoint_path);

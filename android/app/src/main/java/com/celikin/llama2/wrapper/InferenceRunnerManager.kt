@@ -13,14 +13,22 @@ class InferenceRunnerManager {
         InferenceRunner.setInferenceCallback(callback)
     }
 
-    fun run(prompt: String = "") {
+    fun run(
+        prompt: String = "",
+        temperature: Float = 0.9f,
+        steps: Int = 256,
+        checkpoint: String = "/data/local/tmp/stories15M.bin",
+        tokenizer: String = "/data/local/tmp/tokenizer.bin",
+        ompthreads: Int = 4,
+    ) {
         applicationScope.launch {
             InferenceRunner.run(
-                checkpoint = "/data/local/tmp/stories15M.bin",
-                tokenizer = "/data/local/tmp/tokenizer.bin",
-                temperature = 0.9f,
-                steps = 256,
-                prompt = prompt
+                checkpoint = checkpoint,
+                tokenizer = tokenizer,
+                temperature = temperature,
+                steps = steps,
+                prompt = prompt,
+                ompthreads = ompthreads
             )
         }
     }

@@ -27,6 +27,9 @@ project("inference")
 set(OPTIMIZATION_FLAGS
         -Ofast
         -fopenmp
+        -funroll-all-loops
+        -Wall
+        -Wextra
         )
 
 add_library(${CMAKE_PROJECT_NAME} SHARED

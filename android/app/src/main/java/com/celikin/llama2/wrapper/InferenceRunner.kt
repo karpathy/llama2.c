@@ -13,7 +13,8 @@ object InferenceRunner {
         tokenizer: String,
         temperature: Float,
         steps: Int,
-        prompt: String
+        prompt: String,
+        ompthreads: Int
     )
 
     external fun stop()
