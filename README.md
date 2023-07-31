@@ -160,6 +160,13 @@ OMP_NUM_THREADS=4 ./run out/model.bin
 
 Depending on your system resources you may want to tweak these hyperparameters and use more threads. But more is not always better, usually this is a bit U shaped.
 
+### vectorisation in clang
+Some systems may not [vectorize some of the math function calls](https://llvm.org/docs/Vectorizers.html#vectorization-of-function-calls), such as expf, when using clang. To enable better vectorization, you can add the `-fno-math-errno` flag. If the performance is still not satisfactory, you can also specify a vector library with the `-fveclib=LIB` flag, where `LIB` is one of the options returned by `clang --autocomplete=-fveclib=`. Note that some of these options may require additional libraries to be installed. For example, on a glibc-based Linux distro, you can use the following command:
+
+```bash
+clang -fveclib=libmvec -fno-math-errno -Ofast -fopenmp -march=native run.c -lm -o run
+```
+
 ## platforms
 
 On **Windows**, use `build_msvc.bat` in a Visual Studio Command Prompt to build with msvc, or you can use `make win64` to use mingw compiler toolchain from linux or windows to build the windows target. MSVC build will automatically use openmp and max threads appropriate for your CPU unless you set `OMP_NUM_THREADS` env.
