@@ -7,9 +7,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class InferenceRunnerManager {
+    private lateinit var folderPath: String
     private val applicationScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    fun init(callback: InferenceRunner.InferenceCallback) {
+    fun init(callback: InferenceRunner.InferenceCallback, folderPath: String) {
+        this.folderPath = folderPath
         InferenceRunner.setInferenceCallback(callback)
     }
 
@@ -17,18 +19,18 @@ class InferenceRunnerManager {
         prompt: String = "",
         temperature: Float = 0.9f,
         steps: Int = 256,
-        checkpoint: String = "/data/local/tmp/stories15M.bin",
-        tokenizer: String = "/data/local/tmp/tokenizer.bin",
-        ompthreads: Int = 4,
+        checkpointFileName: String = "stories15M.bin",
+        tokenizerFileName: String = "tokenizer.bin",
+        ompThreads: Int = 4,
     ) {
         applicationScope.launch {
             InferenceRunner.run(
-                checkpoint = checkpoint,
-                tokenizer = tokenizer,
+                checkpoint = "$folderPath/$checkpointFileName",
+                tokenizer = "$folderPath/$tokenizerFileName",
                 temperature = temperature,
                 steps = steps,
                 prompt = prompt,
-                ompthreads = ompthreads
+                ompthreads = ompThreads
             )
         }
     }

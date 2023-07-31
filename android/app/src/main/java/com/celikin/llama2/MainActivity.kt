@@ -2,9 +2,11 @@ package com.celikin.llama2
 
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
+import androidx.lifecycle.lifecycleScope
 import com.celikin.llama2.databinding.ActivityMainBinding
 import com.celikin.llama2.wrapper.InferenceRunner
 import com.celikin.llama2.wrapper.InferenceRunnerManager
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,15 +28,21 @@ class MainActivity : AppCompatActivity() {
             val prompt = binding.promptEdit.text.toString()
             inferenceRunnerManager.run(prompt)
         }
-        initInference()
+
+        lifecycleScope.launch {
+            val assetsFolder = copyAssets(arrayOf("stories15M.bin", "tokenizer.bin"))
+            initInference(assetsFolder)
+        }
+
     }
 
     private fun updateText(token: String) {
         binding.sampleText.text = "${binding.sampleText.text}$token"
     }
 
-    private fun initInference() {
-        inferenceRunnerManager = InferenceRunnerManager().apply { init(callback) }
+    private fun initInference(assetsFolder: String) {
+        inferenceRunnerManager = InferenceRunnerManager()
+            .apply { init(callback, assetsFolder) }
     }
 
 }
