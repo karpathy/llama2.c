@@ -305,8 +305,6 @@ typedef struct {
     half* hb; // buffer for hidden dimension in the ffn (hidden_dim,)
     half* hb2; // buffer for hidden dimension in the ffn (hidden_dim,)
     half* q; // query (dim,)
-    half* k; // key (dim,)
-    half* v; // value (dim,)
     half* att; // buffer for scores/attention values (n_heads, seq_len)
     half* logits_gpu; // output logits
     float* logits_temp; // logits in GPU memory converted to float
@@ -323,8 +321,6 @@ void malloc_run_state(RunState* s, Config* p) {
     cudaMalloc((void**)&s->hb, p->hidden_dim * sizeof(half));
     cudaMalloc((void**)&s->hb2, p->hidden_dim * sizeof(half));
     cudaMalloc((void**)&s->q, p->dim * sizeof(half));
-    cudaMalloc((void**)&s->k, p->dim * sizeof(half));
-    cudaMalloc((void**)&s->v, p->dim * sizeof(half));
     cudaMalloc((void**)&s->att, p->n_heads * p->dim * sizeof(half));
     cudaMalloc((void**)&s->logits_gpu, p->vocab_size * sizeof(half));
     cudaMalloc((void**)&s->key_cache, p->n_layers * p->seq_len * p->dim * sizeof(half));    // potentially huge allocs
@@ -334,7 +330,7 @@ void malloc_run_state(RunState* s, Config* p) {
 
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-        || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
+        || !s->att || !s->logits || !s->key_cache
         || !s->value_cache || !s->logits_gpu || !s->logits_temp) {
         printf("malloc failed!\n");
         exit(1);
@@ -348,8 +344,6 @@ void free_run_state(RunState* s) {
     cudaFree(s->hb);
     cudaFree(s->hb2);
     cudaFree(s->q);
-    cudaFree(s->k);
-    cudaFree(s->v);
     cudaFree(s->att);
     cudaFree(s->logits_gpu);
     cudaFree(s->logits_temp);
@@ -546,21 +540,21 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l * dim, dim);
 
-        // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l * dim * dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l * dim * dim, dim, dim);
-        matmul(s->v, s->xb, w->wv + l * dim * dim, dim, dim);
-
-        // apply RoPE rotation to the q and k vectors for each head
-        RoPERotation(s->q, s->k, freq_cis_real_row, freq_cis_imag_row, p->n_heads, head_size);
-
-        // save key,value at this time step (pos) to our kv cache
+        // we directly store (key, value) at this time step (pos) to our kv cache
         int loff = l * p->seq_len * dim; // kv cache layer offset for convenience
         half* key_cache_row = s->key_cache + loff + pos * dim;
         half* value_cache_row = s->value_cache + loff + pos * dim;
-        cudaMemcpyAsync(key_cache_row, s->k, dim * sizeof(half), cudaMemcpyDeviceToDevice);
-        cudaMemcpyAsync(value_cache_row, s->v, dim * sizeof(half), cudaMemcpyDeviceToDevice);
 
+        // qkv matmuls for this position
+        matmul(s->q, s->xb, w->wq + l * dim * dim, dim, dim);
+        matmul(key_cache_row, s->xb, w->wk + l * dim * dim, dim, dim);
+        matmul(value_cache_row, s->xb, w->wv + l * dim * dim, dim, dim);
+
+        // apply RoPE rotation to the q and k vectors for each head
+        // also save the output (key, value) at this time step (pos) to our kv cache
+        RoPERotation(s->q, key_cache_row, freq_cis_real_row, freq_cis_imag_row, p->n_heads, head_size);
+
+        // apply MHA using the query and the key-value cache
         MultiHeadAttention(s->xb, s->q, s->key_cache + loff, s->value_cache + loff, s->att, p->n_heads, head_size, pos+1);
 
         // final matmul to get the output of the attention
