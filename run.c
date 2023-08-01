@@ -52,8 +52,8 @@ typedef struct {
     // final rmsnorm
     float* rms_final_weight; // (dim,)
     // freq_cis for RoPE relatively positional embeddings
-    float* freq_cis_real; // (seq_len, dim/2)
-    float* freq_cis_imag; // (seq_len, dim/2)
+    float* freq_cis_real; // (seq_len, dim/n_heads/2)
+    float* freq_cis_imag; // (seq_len, dim/n_heads/2)
     // (optional) classifier weights for the logits, on the last layer
     float* wcls;
 } TransformerWeights;
@@ -237,8 +237,10 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         // rotate q and k by the freq_cis_real and freq_cis_imag
         int freq_cis_size = head_size / 2;
         for (int h = 0; h < p->n_heads; h++) {
+            // get the q and k complex vectors for this head
             float complex* q_c = (float complex*)(s->q + h * head_size);
             float complex* k_c = (float complex*)(s->k + h * head_size);
+            // rotate q and k by the freq_cis_real and freq_cis_imag
             for (int i = 0; i < freq_cis_size; i++) {
                 float complex f = freq_cis_real_row[i] + freq_cis_imag_row[i] * I;
                 q_c[i] *= f;
