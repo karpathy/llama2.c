@@ -138,6 +138,8 @@ gcc -O3 -o run run.c -lm
 
 To get a much better performance, try to compile with `make runfast`. This turns on the `-Ofast` flag, which includes additional optimizations that may break compliance with the C/IEEE specifications, in addition to `-O3`. See [the GCC docs](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html) for more information.
 
+To use make runfast with PGO optimizations compile with make runfastpgo. This didnt make any noticable different on m1. 
+
 Try `-march=native` to compile the program to use the architecture of the machine you're compiling on rather than a more generic CPU. This may enable additional optimizations and hardware-specific tuning such as improved vector instructions/width.
 
 The fastest throughput I saw so far on my MacBook Air (M1) so far is with `make runfast`. 

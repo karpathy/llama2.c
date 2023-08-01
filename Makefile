@@ -25,6 +25,15 @@ rundebug: run.c
 runfast: run.c
 	$(CC) -Ofast -o run run.c -lm
 
+# on macos you'll need to have llvm installed, and in your path '''brew install llvm'''
+# export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+.PHONY: runfastpgo
+runfast: run.c
+	$(CC) -Ofast -fprofile-instr-generate -o run run.c -lm
+	./run stories15M.bin
+	xcrun llvm-profdata merge -sparse default.profraw -o default.profdata
+	$(CC) -Ofast -fprofile-instr-use=default.profdata -o run run.c -lm
+
 # additionally compiles with OpenMP, allowing multithreaded runs
 # make sure to also enable multiple threads when running, e.g.:
 # OMP_NUM_THREADS=4 ./run out/model.bin
@@ -48,3 +57,6 @@ runompgnu:
 .PHONY: clean
 clean:
 	rm -f run
+	rm -f *.profdata
+	rm -f *.profraw
+
