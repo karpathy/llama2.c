@@ -206,17 +206,17 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## unsorted todos
 
-- support Llama 2 7B Chat model and tune run.c to Chat UI/UX
-- speed up 7B Llama 2 models sufficiently to work at interactive rates on Apple Silicon MacBooks
-- possibly include emscripten / web backend (as seen in @gg PR)
-- currently the project only runs in fp32, how easy would it be to different precisions?
-- look into quantization and what would be involved
-- todo multiquery support? doesn't seem as useful for smaller models that run on CPU (?)
-- todo support inferencing beyond max_seq_len steps, have to think through the kv cache
-- why is MFU so low (~10%) on my A100 40GB for training?
-- weird errors with torch.compile and wandb when using DDP
-- (LoRA) finetuning of Llama 2 models
-- make more better tests to decrease yolo
+- [ ] support Llama 2 7B Chat model and tune run.c to Chat UI/UX
+- [ ] speed up 7B Llama 2 models sufficiently to work at interactive rates on Apple Silicon MacBooks
+- [ ] possibly include emscripten / web backend (as seen in @gg PR)
+- [ ] currently the project only runs in fp32, how easy would it be to different precisions?
+- [ ] look into quantization and what would be involved
+- [ ] todo multiquery support? doesn't seem as useful for smaller models that run on CPU (?)
+- [ ] todo support inferencing beyond max_seq_len steps, have to think through the kv cache
+- [ ] why is MFU so low (~10%) on my A100 40GB for training?
+- [ ] weird errors with torch.compile and wandb when using DDP
+- [ ] (LoRA) finetuning of Llama 2 models
+- [ ] make more better tests to decrease yolo
 
 ## License
 
