@@ -234,7 +234,6 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
 
         // apply RoPE rotation to the q and k vectors for each head
-        // rotate q and k by the freq_cis_real and freq_cis_imag
         int freq_cis_size = head_size / 2;
         for (int h = 0; h < p->n_heads; h++) {
             // get the q and k complex vectors for this head
