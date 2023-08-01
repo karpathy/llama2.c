@@ -235,12 +235,15 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // apply RoPE rotation to the q and k vectors for each head
         // rotate q and k by the freq_cis_real and freq_cis_imag
-        float complex* q_c = (float complex*)s->q;
-        float complex* k_c = (float complex*)s->k;
-        for (int i = 0; i < p->n_heads * head_size / 2; i++) {
-            float complex f = freq_cis_real_row[i % (head_size / 2)] + freq_cis_imag_row[i % (head_size / 2)] * I;
-            q_c[i] *= f;
-            k_c[i] *= f;
+        int freq_cis_size = head_size / 2;
+        for (int h = 0; h < p->n_heads; h++) {
+            float complex* q_c = (float complex*)(s->q + h * head_size);
+            float complex* k_c = (float complex*)(s->k + h * head_size);
+            for (int i = 0; i < freq_cis_size; i++) {
+                float complex f = freq_cis_real_row[i] + freq_cis_imag_row[i] * I;
+                q_c[i] *= f;
+                k_c[i] *= f;
+            }
         }
 
         // save key,value at this time step (pos) to our kv cache
