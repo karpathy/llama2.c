@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.utils import parametrize
 
 @dataclass
 class ModelArgs:
@@ -388,3 +389,55 @@ class Transformer(nn.Module):
         # write to binary file
         f.close()
         print(f"wrote {filepath}")
+
+
+class LoraLinear(nn.Module):
+    """
+    LoRA: Low-Rank Adaptation of Large Language Models - https://arxiv.org/abs/2106.09685
+
+    Heavily inspired by minLoRA - https://github.com/cccntu/minLoRA
+
+    Leverages the parametrizations feature from pytorch. This allows us to add the LoRA
+    matrices to the weights during the forward pass rather than computing the modified
+    forward pass explicitly, i.e., we compute (W + BA)x rather than Wx + BAx.
+    """
+
+    def __init__(self, fan_in, fan_out, rank=4, dropout_p=0.0, alpha=1.0):
+        super().__init__()
+        self.fan_in = fan_in
+        self.fan_out = fan_out
+        self.rank = rank
+        self.dropout_p = dropout_p
+
+        self.lora_a = nn.Parameter(torch.zeros(rank, fan_in))
+        self.lora_b = nn.Parameter(torch.zeros(fan_out, rank))
+
+        nn.init.kaiming_uniform_(self.lora_a, a=math.sqrt(5))
+
+        self.scaling = alpha / rank
+        self.dropout = nn.Dropout(dropout_p)
+
+    def forward(self, weight):
+        return weight + torch.matmul(self.lora_b, self.dropout(self.lora_a)) * self.scaling
+
+
+def apply_lora(model: nn.Module, layer_types=[nn.Linear], rank=8, dropout=0.0, alpha=1.0):
+    def _apply_lora(module):
+        if type(module) in layer_types and hasattr(module, 'weight'):
+            fan_out, fan_in = module.weight.shape
+            parametrize.register_parametrization(module, 'weight', LoraLinear(fan_in, fan_out, rank, dropout, alpha))
+    model.apply(_apply_lora)
+
+
+def merge_lora(model):
+    def _merge_lora(module):
+        if type(module) in (nn.Linear, nn.Embedding) and hasattr(module, 'parametrizations'):
+            parametrize.remove_parametrizations(module, 'weight', leave_parametrized=True)
+    model.apply(_merge_lora)
+
+
+def tie_lora_weights(src, trg):
+    """Tie the LoRA weights between two modules. Can be useful for tying embeddings to the final classifier."""
+    if hasattr(src, 'parametrizations') and hasattr(trg, 'parametrizations'):
+        trg.parametrizations.weight[0].lora_a = src.parametrizations.weight[0].lora_a
+        trg.parametrizations.weight[0].lora_b = src.parametrizations.weight[0].lora_b
