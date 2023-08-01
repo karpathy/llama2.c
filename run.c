@@ -235,10 +235,10 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // apply RoPE rotation to the q and k vectors for each head
         // rotate q and k by the freq_cis_real and freq_cis_imag
-        float _Complex* q_c = (float _Complex*)s->q;
-        float _Complex* k_c = (float _Complex*)s->k;
+        float complex* q_c = (float complex*)s->q;
+        float complex* k_c = (float complex*)s->k;
         for (int i = 0; i < p->n_heads * head_size / 2; i++) {
-            float _Complex f = freq_cis_real_row[i] + freq_cis_imag_row[i] * I;
+            float complex f = freq_cis_real_row[i % (head_size / 2)] + freq_cis_imag_row[i % (head_size / 2)] * I;
             q_c[i] *= f;
             k_c[i] *= f;
         }
