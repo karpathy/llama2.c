@@ -483,7 +483,7 @@ int main(int argc, char *argv[]) {
     TransformerWeights weights;
     int fd = 0;         // file descriptor for memory mapping
     float* data = NULL; // memory mapped data pointer
-    long file_size;     // size of the checkpoint file in bytes
+    ssize_t file_size;     // size of the checkpoint file in bytes
     {
         FILE *file = fopen(checkpoint, "rb");
         if (!file) { printf("Couldn't open file %s\n", checkpoint); return 1; }
