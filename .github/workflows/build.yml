@@ -94,3 +94,31 @@ jobs:
         id: build_msvc
         run: |
           .\build_msvc.bat
+
+  windows-latest-mingw:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    strategy:
+      matrix:
+        include:
+          - { sys: mingw64, env: x86_64 }
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v3
+
+      - uses: msys2/setup-msys2@v2
+        id: setup-msys2
+        with:
+          msystem: ${{ matrix.sys }}
+          install: mingw-w64-${{matrix.env}}-gcc make
+
+      - name: Build ${{ matrix.sys }} ${{ matrix.env }}
+        id: build_mingw
+        run: |
+          make win64
