@@ -204,6 +204,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @leloykun: a C++ port of this project
 - [llama2.js](https://github.com/epicure/llama2.js) by @epicure: a JavaScript port of this project
 - [llama2.zig](https://github.com/cgbur/llama2.zig) by @cgbur: A Zig port of this project
+- [llama2.jl](https://github.com/juvi21/llama2.jl) by @juvi21: a Julia port of this project
 - [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @trholding: Standalone, Bootable & Portable Binary Llama 2
 - [llama2.rs](https://github.com/leo-du/llama2.rs) by @leo-du: A Rust port of this project
 - [llama2.scala](https://github.com/jrudolph/llama2.scala) by @jrudolph: a Scala port of this project
