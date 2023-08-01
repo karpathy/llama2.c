@@ -376,8 +376,8 @@ class Transformer(nn.Module):
         serialize(self.norm.weight)
         # note: no need to write final classifier weights due to weight sharing
         # freqs_cis
-        serialize(self.freqs_cis.real[:p.max_seq_len])
-        serialize(self.freqs_cis.imag[:p.max_seq_len])
+        serialize(self.freqs_cos[:p.max_seq_len])
+        serialize(self.freqs_sin[:p.max_seq_len])
 
         # write to binary file
         f.close()
