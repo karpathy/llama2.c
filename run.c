@@ -132,11 +132,11 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
     w->rms_ffn_weight = ptr;
     ptr += p->n_layers * p->dim;
     w->w1 = ptr;
-    ptr += p->n_layers * p->dim * p->hidden_dim;
+    ptr += (unsigned int)p->n_layers * p->dim * p->hidden_dim;
     w->w2 = ptr;
-    ptr += p->n_layers * p->hidden_dim * p->dim;
+    ptr += (unsigned int)p->n_layers * p->hidden_dim * p->dim;
     w->w3 = ptr;
-    ptr += p->n_layers * p->dim * p->hidden_dim;
+    ptr += (unsigned int)p->n_layers * p->dim * p->hidden_dim;
     w->rms_final_weight = ptr;
     ptr += p->dim;
     w->freq_cis_real = ptr;
@@ -222,7 +222,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
 
     // forward all the layers
-    for(int l = 0; l < p->n_layers; l++) {
+    for(unsigned int l = 0; l < (unsigned int)p->n_layers; l++) {
 
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
