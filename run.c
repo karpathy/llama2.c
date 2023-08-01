@@ -195,9 +195,10 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
     int i;
-    #pragma omp parallel for private(i)
+    #pragma omp parallel for private(i)   
     for (i = 0; i < d; i++) {
         float val = 0.0f;
+        #pragma omp simd reduction(+:val)
         for (int j = 0; j < n; j++) {
             val += w[i * n + j] * x[j];
         }
@@ -577,11 +578,13 @@ int main(int argc, char *argv[]) {
         pos++;
         // init our timer here because the first iteration is slow due to memmap
         if (start == 0) { start = time_in_ms(); }
+        if (token == 1) break;
     }
+    // fflush(stdout);
 
     // report achieved tok/s
     long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", (steps-1) / (double)(end-start)*1000);
+    fprintf(stderr,"\nTokens: %d tok/s: %f\n", pos,(pos-1) / (double)(end-start)*1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
