@@ -144,6 +144,8 @@ The fastest throughput I saw so far on my MacBook Air (M1) so far is with `make 
 
 You can also experiment with replacing `gcc` with `clang`.
 
+If compiling with gcc, try experimenting with `-funroll-all-loops`, see PR [#183](https://github.com/karpathy/llama2.c/pull/183)
+
 ### OpenMP
 Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention, allowing the work in the loops to be split up over multiple processors.
 You'll need to install the OpenMP library and the clang compiler first (e.g. `apt install clang libomp-dev` on ubuntu). I was not able to get improvements from OpenMP on my MacBook, though. Then you can compile with `make runomp`, which does:
@@ -200,9 +202,15 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - [llama2.go](https://github.com/haormj/llama2.go) by @haormj: a Go port of this project
 - [llama2.go](https://github.com/saracen/llama2.go) by @saracen: a Go port of this project
 - [llama2.c-android](https://github.com/Manuel030/llama2.c-android): by @Manuel030: adds Android binaries of this project
+- [llama2.c-android-wrapper](https://github.com/celikin/llama2.c-android-wrapper): by @celikin: added JNI wrapper, PoC
 - [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @leloykun: a C++ port of this project
 - [llama2.js](https://github.com/epicure/llama2.js) by @epicure: a JavaScript port of this project
 - [llama2.zig](https://github.com/cgbur/llama2.zig) by @cgbur: A Zig port of this project
+- [llama2.zig](https://github.com/vodkaslime/llama2.zig) by @vodkaslime: a Zig port of this project
+- [llama2.jl](https://github.com/juvi21/llama2.jl) by @juvi21: a Julia port of this project
+- [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @trholding: Standalone, Bootable & Portable Binary Llama 2
+- [llama2.rs](https://github.com/leo-du/llama2.rs) by @leo-du: A Rust port of this project
+- [llama2.scala](https://github.com/jrudolph/llama2.scala) by @jrudolph: a Scala port of this project
 
 ## unsorted todos
 

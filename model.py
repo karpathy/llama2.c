@@ -40,9 +40,9 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
-    return freqs_cis
-
+    freqs_cos = torch.cos(freqs)  # real part
+    freqs_sin = torch.sin(freqs)  # imaginary part
+    return freqs_cos, freqs_sin
 
 def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     ndim = x.ndim
@@ -51,17 +51,31 @@ def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
     return freqs_cis.view(*shape)
 
-
 def apply_rotary_emb(
     xq: torch.Tensor,
     xk: torch.Tensor,
-    freqs_cis: torch.Tensor,
+    freqs_cos: torch.Tensor,
+    freqs_sin: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
-    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
-    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
-    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
-    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+
+    # reshape xq and xk to match the complex representation
+    xq_r, xq_i = xq.float().reshape(*xq.shape[:-1], -1, 2).unbind(-1)
+    xk_r, xk_i = xk.float().reshape(*xk.shape[:-1], -1, 2).unbind(-1)
+    
+    # reshape freqs_cos and freqs_sin for broadcasting
+    freqs_cos = reshape_for_broadcast(freqs_cos, xq_r)
+    freqs_sin = reshape_for_broadcast(freqs_sin, xq_r)
+
+    # apply rotation using real numbers
+    xq_out_r = xq_r * freqs_cos - xq_i * freqs_sin
+    xq_out_i = xq_r * freqs_sin + xq_i * freqs_cos
+    xk_out_r = xk_r * freqs_cos - xk_i * freqs_sin
+    xk_out_i = xk_r * freqs_sin + xk_i * freqs_cos
+
+    # flatten last two dimensions
+    xq_out = torch.stack([xq_out_r, xq_out_i], dim=-1).flatten(3)
+    xk_out = torch.stack([xk_out_r, xk_out_i], dim=-1).flatten(3)
+
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -103,7 +117,8 @@ class Attention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        freqs_cis: torch.Tensor,
+        freqs_cos: torch.Tensor,
+        freqs_sin: torch.Tensor,
     ):
         bsz, seqlen, _ = x.shape
 
@@ -114,7 +129,7 @@ class Attention(nn.Module):
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
 
         # RoPE relative positional embeddings
-        xq, xk = apply_rotary_emb(xq, xk, freqs_cis)
+        xq, xk = apply_rotary_emb(xq, xk, freqs_cos, freqs_sin)
 
         # grouped multiquery attention: expand out keys and values
         xk = repeat_kv(xk, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
@@ -176,8 +191,8 @@ class TransformerBlock(nn.Module):
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
 
-    def forward(self, x, freqs_cis):
-        h = x + self.attention.forward(self.attention_norm(x), freqs_cis)
+    def forward(self, x, freqs_cos, freqs_sin):
+        h = x + self.attention.forward(self.attention_norm(x), freqs_cos, freqs_sin)
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         return out
 
@@ -201,8 +216,9 @@ class Transformer(nn.Module):
         self.tok_embeddings.weight = self.output.weight # https://paperswithcode.com/method/weight-tying
 
         # some useful precompute for the RoPE relative positional embeddings. TODO why * 2 here? confuse
-        freqs_cis = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len * 2)
-        self.register_buffer("freqs_cis", freqs_cis, persistent=False)
+        freqs_cos, freqs_sin = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len * 2)
+        self.register_buffer("freqs_cos", freqs_cos, persistent=False)
+        self.register_buffer("freqs_sin", freqs_sin, persistent=False)
         
         # init all weights
         self.apply(self._init_weights)
@@ -223,10 +239,11 @@ class Transformer(nn.Module):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         h = self.dropout(h)
-        freqs_cis = self.freqs_cis[:seqlen]
+        freqs_cos = self.freqs_cos[:seqlen]
+        freqs_sin = self.freqs_sin[:seqlen]
 
         for layer in self.layers:
-            h = layer(h, freqs_cis)
+            h = layer(h, freqs_cos, freqs_sin)
         h = self.norm(h)
 
         if targets is not None:
@@ -359,8 +376,8 @@ class Transformer(nn.Module):
         serialize(self.norm.weight)
         # note: no need to write final classifier weights due to weight sharing
         # freqs_cis
-        serialize(self.freqs_cis.real[:p.max_seq_len])
-        serialize(self.freqs_cis.imag[:p.max_seq_len])
+        serialize(self.freqs_cos[:p.max_seq_len])
+        serialize(self.freqs_sin[:p.max_seq_len])
 
         # write to binary file
         f.close()
