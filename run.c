@@ -446,10 +446,10 @@ int sample_top_p(float* probs, int n, float topp) {
         accum += probs_sort[p].value;
     }
 
-    float r = random_f32();
+    float r = random_f32() * accum;
     float cdf = 0.0f;
     for (int i = 0; i < p + 1; i++) {
-        cdf += probs_sort[i].value/accum;
+        cdf += probs_sort[i].value;
         if (r < cdf) {
             return probs_sort[i].index;
         }
