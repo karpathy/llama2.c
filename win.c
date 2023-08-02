@@ -6,7 +6,7 @@
 #define FILE_MAP_EXECUTE    0x0020
 #endif /* FILE_MAP_EXECUTE */
 
-static int __map_mman_error(const DWORD err, const int deferr)
+static int __map_mman_error(const uint32_t err, const int deferr)
 {
     if (err == 0)
         return 0;
@@ -14,9 +14,9 @@ static int __map_mman_error(const DWORD err, const int deferr)
     return err;
 }
 
-static DWORD __map_mmap_prot_page(const int prot)
+static uint32_t __map_mmap_prot_page(const int prot)
 {
-    DWORD protect = 0;
+    uint32_t protect = 0;
     
     if (prot == PROT_NONE)
         return protect;
@@ -35,9 +35,9 @@ static DWORD __map_mmap_prot_page(const int prot)
     return protect;
 }
 
-static DWORD __map_mmap_prot_file(const int prot)
+static uint32_t __map_mmap_prot_file(const int prot)
 {
-    DWORD desiredAccess = 0;
+    uint32_t desiredAccess = 0;
     
     if (prot == PROT_NONE)
         return desiredAccess;
@@ -62,15 +62,15 @@ void* mmap(void *addr, size_t len, int prot, int flags, int fildes, ssize_t off)
 #pragma warning(disable: 4293)
 #endif
 
-    const DWORD dwFileOffsetLow = (DWORD)(off & 0xFFFFFFFFL);
-    const DWORD dwFileOffsetHigh = (DWORD)((off >> 32) & 0xFFFFFFFFL);
-    const DWORD protect = __map_mmap_prot_page(prot);
-    const DWORD desiredAccess = __map_mmap_prot_file(prot);
+    const uint32_t dwFileOffsetLow = (uint32_t)(off & 0xFFFFFFFFL);
+    const uint32_t dwFileOffsetHigh = (uint32_t)((off >> 32) & 0xFFFFFFFFL);
+    const uint32_t protect = __map_mmap_prot_page(prot);
+    const uint32_t desiredAccess = __map_mmap_prot_file(prot);
 
     const ssize_t maxSize = off + (ssize_t)len;
 
-    const DWORD dwMaxSizeLow = (DWORD)(maxSize & 0xFFFFFFFFL);
-    const DWORD dwMaxSizeHigh = (DWORD)((maxSize >> 32) & 0xFFFFFFFFL);
+    const uint32_t dwMaxSizeLow = (uint32_t)(maxSize & 0xFFFFFFFFL);
+    const uint32_t dwMaxSizeHigh = (uint32_t)((maxSize >> 32) & 0xFFFFFFFFL);
 
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -130,8 +130,8 @@ int munmap(void *addr, size_t len)
 
 int mprotect(void *addr, size_t len, int prot)
 {
-    DWORD newProtect = __map_mmap_prot_page(prot);
-    DWORD oldProtect = 0;
+    uint32_t newProtect = __map_mmap_prot_page(prot);
+    uint32_t oldProtect = 0;
     
     if (VirtualProtect(addr, len, newProtect, &oldProtect))
         return 0;
@@ -173,7 +173,7 @@ int munlock(const void *addr, size_t len)
 
 // Portable clock_gettime function for Windows
 int clock_gettime(int clk_id, struct timespec *tp) {
-    DWORD ticks = GetTickCount();
+    uint32_t ticks = GetTickCount();
     tp->tv_sec = ticks / 1000;
     tp->tv_nsec = (ticks % 1000) * 1000000;
     return 0;
