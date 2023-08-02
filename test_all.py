@@ -19,7 +19,7 @@ def test_argmax_inference():
 
     # run C version
     model_path = os.path.join(test_ckpt_dir, "model.bin")
-    command = ["./run", model_path, "0.0"]
+    command = ["./run", "-cp", model_path, "-temp", "0.0"]
     proc = subprocess.Popen(command, stdout=subprocess.PIPE)
     c_tokens = []
     for line in proc.stdout:
