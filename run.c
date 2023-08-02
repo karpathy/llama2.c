@@ -448,13 +448,13 @@ int sample_top_p(float* probs, int n, float topp) {
 
     float r = random_f32() * accum;
     float cdf = 0.0f;
-    for (int i = 0; i < p + 1; i++) {
+    for (int i = 0; i < p; i++) {
         cdf += probs_sort[i].value;
         if (r < cdf) {
             return probs_sort[i].index;
         }
     }
-    return n - 1; // in case of rounding errors
+    return probs_sort[p-1].index; // in case of rounding errors
 }
 
 int argmax(float* v, int n) {
