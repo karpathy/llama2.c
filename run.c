@@ -548,8 +548,7 @@ int main(int argc, char *argv[]) {
     int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     int pos = 0;     // position in the sequence
     int bufferflush = 1; // buffer flush after token counter 
-    char outbuff[4096]; // used for output buffering              
-    memset( outbuff, '\0', sizeof( outbuff )); // clear buffer area
+    static char outbuff[4096]; // used for output buffering              
     printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
     setvbuf(stdout, outbuff, _IOFBF, 4096); // setup output buffering
     while (pos < steps) {
@@ -578,7 +577,7 @@ int main(int argc, char *argv[]) {
         // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
         char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
         printf("%s", token_str);
-        if (bufferflush==pos) { fflush(stdout); bufferflush+=buffertokens; } // flush after every n tokens
+        if (bufferflush==pos && strlen(outbuff)<=4096) { fflush(stdout); bufferflush+=buffertokens; } // flush after every n tokens
 
         // advance forward
         token = next;
