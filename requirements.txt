@@ -6,3 +6,7 @@ tiktoken==0.3.3
 torch==2.0.1
 tqdm==4.64.1
 wandb==0.15.5
+fastapi==0.88.0
+sse-starlette==1.6.1
+starlette==0.22.0
+uvicorn==0.20.0

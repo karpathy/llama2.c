@@ -64,13 +64,3 @@ async def run(request : Request):
     return EventSourceResponse(generate)
 
 
-if __name__ == "__main__":
-    """
-    curl http://localhost:8000/v1/complete/stream/ \
-    -X GET \
-    -d '{"model.bin" : "stories15M.bin", "temperature" : 1.0, "tokens" : 100, "input" : "Hello world"}' \
-    -H 'Content-Type: text/event-stream'
-    """
-    
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)

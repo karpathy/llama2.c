@@ -112,6 +112,20 @@ You can now run it simply as
 ./run stories15M.bin
 ```
 
+You can also run a simple server sent event(sse) that will stream the output of the ./run command to the client. This is useful for streaming the output to a web browser.
+
+start the server
+```bash
+uvicorn server:app
+```
+
+```bash
+curl http://localhost:8000/v1/complete/stream/ \
+    -X GET \
+    -d '{"model.bin" : "stories15M.bin", "temperature" : 1.0, "tokens" : 100, "input" : "Hello world"}' \
+    -H 'Content-Type: text/event-stream'
+```
+
 Watch the tokens stream by, fun! We can also run the PyTorch inference script for a comparison. Download one of the models again from huggingface hub and point the `sample.py` script at it:
 
 ```bash
