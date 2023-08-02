@@ -195,14 +195,17 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
     int i;
-    #pragma omp parallel for private(i)
+    #pragma omp target data map(to:x[0:n]) map(from:xout[0:d])
+    #pragma omp target teams distribute
     for (i = 0; i < d; i++) {
         float val = 0.0f;
+        #pragma parallel for reduction(+:val) 
         for (int j = 0; j < n; j++) {
             val += w[i * n + j] * x[j];
         }
         xout[i] = val;
     }
+    
 }
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
@@ -221,6 +224,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
     float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
 
+    //tmp files to read the current W being multiplied. Directly passing w->k .. doesn't work due to no support for virtual address offloading
+    
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
 
@@ -544,6 +549,11 @@ int main(int argc, char *argv[]) {
     int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     int pos = 0;     // position in the sequence
     printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
+    int size_qkvO = config.dim*config.dim*config.n_layers;
+    int size_ffn = config.hidden_dim*config.dim*config.n_layers;
+    int size_cls = config.dim*config.vocab_size;
+
+    #pragma omp target data map(to:weights.wq[0:size_qkvO],weights.wk[0:size_qkvO],weights.wv[0:size_qkvO],weights.wo[0:size_qkvO],weights.w1[0:size_ffn],weights.w3[0:size_ffn],weights.w2[0:size_ffn],weights.wcls[0:size_cls])
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
