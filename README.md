@@ -211,12 +211,12 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @trholding: Standalone, Bootable & Portable Binary Llama 2
 - [llama2.rs](https://github.com/leo-du/llama2.rs) by @leo-du: A Rust port of this project
 - [llama2.scala](https://github.com/jrudolph/llama2.scala) by @jrudolph: a Scala port of this project
+- [llama2.c-emscripten](https://github.com/gohai/llama2.c-emscripten) by @gohai: Emscripten (JavaScript) port, based on @ggerganov initial prototype
 
 ## unsorted todos
 
 - support Llama 2 7B Chat model and tune run.c to Chat UI/UX
 - speed up 7B Llama 2 models sufficiently to work at interactive rates on Apple Silicon MacBooks
-- possibly include emscripten / web backend (as seen in @gg PR)
 - currently the project only runs in fp32, how easy would it be to different precisions?
 - look into quantization and what would be involved
 - todo multiquery support? doesn't seem as useful for smaller models that run on CPU (?)
