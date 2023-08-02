@@ -548,10 +548,10 @@ int main(int argc, char *argv[]) {
     int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     int pos = 0;     // position in the sequence
     int bufferflush = 1; // buffer flush after token counter 
-    char outbuff[2048]; // used for output buffering              
+    char outbuff[4096]; // used for output buffering              
     memset( outbuff, '\0', sizeof( outbuff )); // clear buffer area
     printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
-    setvbuf(stdout, outbuff, _IOFBF, 2048); // setup output buffering
+    setvbuf(stdout, outbuff, _IOFBF, 4096); // setup output buffering
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
