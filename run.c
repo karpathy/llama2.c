@@ -456,8 +456,8 @@ void usage_help(){
     printf("                     e.g. -temp <float>\n");
     printf("-step [Optional]   : number of steps\n");
     printf("                     e.g. -step <int>\n");
-    printf("-prompt [Optional] : Prompt message\n");
-    printf("                     e.g. -prompt <prompt>\n");
+    printf("-prompt [Optional] : Prompt <message>\n");
+    printf("                     e.g. -prompt \"<string>\"\n");
     printf("=================================================\n");
 }
 // ----------------------------------------------------------------------------
