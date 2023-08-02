@@ -205,7 +205,6 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
         }
         xout[i] = val;
     }
-    
 }
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
@@ -603,3 +602,5 @@ int main(int argc, char *argv[]) {
     if (fd != -1) close(fd);
     return 0;
 }
+
+Why multiply by `head_size/2`?  Because there are `head_size/2` learnable param for each position. We now have our $\theta$ that we will use 
