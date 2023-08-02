@@ -540,11 +540,11 @@ int main(int argc, char *argv[]) {
 
     // start the main loop
     long start = 0;  // used to time our code, only initialized after first iteration
-    int next;        // will store the next token in the sequence
-    int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
-    int pos = 0;     // position in the sequence
     printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
-    while (pos < steps) {
+    for(int pos = 0, token = 1, next; pos < steps; token = next, pos++) {
+        //next: will store the next token in the sequence
+        //token = 1: init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
+        //pos: position in the sequence
 
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
@@ -572,9 +572,6 @@ int main(int argc, char *argv[]) {
         printf("%s", token_str);
         fflush(stdout);
 
-        // advance forward
-        token = next;
-        pos++;
         // init our timer here because the first iteration is slow due to memmap
         if (start == 0) { start = time_in_ms(); }
     }
