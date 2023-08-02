@@ -429,7 +429,6 @@ typedef struct {
 int compare_indexed_float(const void* a, const void* b) {
     IndexedFloat* indexed_a = (IndexedFloat*)a;
     IndexedFloat* indexed_b = (IndexedFloat*)b;
-    // sorting in descending order
     return (indexed_b->value > indexed_a->value) ? 1 : ((indexed_b->value < indexed_a->value) ? -1 : 0);
 }
 
@@ -439,31 +438,22 @@ int sample_top_p(float* probs, int n, float topp) {
         probs_sort[i].value = probs[i];
         probs_sort[i].index = i;
     }
-
     qsort(probs_sort, n, sizeof(IndexedFloat), compare_indexed_float);
 
-    // Calculate cumulative probabilities
-    float cum_probs[n];
-    cum_probs[0] = probs_sort[0].value;
-    int p = 1;
-    for (; cum_probs[p-1]<=topp && p < n; p++) {
-        cum_probs[p] = cum_probs[p - 1] + probs_sort[p].value;
+    float accum = 0.f;
+    int p = 0;
+    for (; accum<=topp && p < n; p++) {
+        accum += probs_sort[p].value;
     }
 
-    for (int i = 0; i < p; i++) {
-        probs_sort[i].value /= cum_probs[p-1];
-    }
-
-    // Sample next token based on the modified probability distribution
     float r = random_f32();
-    float cum_prob = 0.0;
-    for (int i = 0; i < p; i++) {
-        cum_prob += probs_sort[i].value;
-        if (cum_prob > r) {
+    float cdf = 0.0f;
+    for (int i = 0; i < p + 1; i++) {
+        cdf += probs_sort[i].value/accum;
+        if (r < cdf) {
             return probs_sort[i].index;
         }
     }
-
     return n - 1; // in case of rounding errors
 }
 
@@ -489,7 +479,7 @@ int main(int argc, char *argv[]) {
     int steps = 256;          // max number of steps to run for, 0: use seq_len
     float top_p = 0.9f;
     char *prompt = NULL;      // prompt string
-    int EOS_ID = 2;
+
     // 'checkpoint' is necessary arg
     if (argc < 2) {
         printf("Usage: %s <checkpoint_file> [temperature] [steps] [topp] [prompt]\n", argv[0]);
@@ -612,16 +602,13 @@ int main(int argc, char *argv[]) {
         // advance forward
         token = next;
         pos++;
-        if (prompt != NULL && next == EOS_ID){
-            break;
-        }
         // init our timer here because the first iteration is slow due to memmap
         if (start == 0) { start = time_in_ms(); }
     }
 
     // report achieved tok/s
     long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", pos / (double)(end-start)*1000);
+    printf("\nachieved tok/s: %f\n", (steps-1) / (double)(end-start)*1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
