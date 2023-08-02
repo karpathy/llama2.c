@@ -446,33 +446,68 @@ int argmax(float* v, int n) {
     }
     return max_i;
 }
+
+void usage_help(){
+    //executable usage help message
+    printf("=================================================\n");
+    printf("-cp [Required]     : checkpoint filename string\n");
+    printf("                     e.g. -cp out/model.bin\n");
+    printf("-temp [Optional]   : temperature\n");
+    printf("                     e.g. -temp <float>\n");
+    printf("-step [Optional]   : number of steps\n");
+    printf("                     e.g. -step <int>\n");
+    printf("-prompt [Optional] : Prompt message\n");
+    printf("                     e.g. -prompt <prompt>\n");
+    printf("=================================================\n");
+}
 // ----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
 
-    // poor man's C argparse
     char *checkpoint = NULL;  // e.g. out/model.bin
     float temperature = 0.9f; // e.g. 1.0, or 0.0
     int steps = 256;          // max number of steps to run for, 0: use seq_len
     char *prompt = NULL;      // prompt string
+    int required_arguments = 0; //only 1 argument is required, increase this number if more args become "required"
+
+    for (int ii=1; ii < argc; ++ii) {
+        if (strcmp(argv[ii], "-cp") == 0) {
+            if (ii+1 == argc) {
+                printf("Invalid command line argument\n");
+                usage_help();
+                return 1;
+            }
+            checkpoint = argv[++ii];
+            required_arguments++;
+        } else if (strcmp(argv[ii], "-temp") == 0) {
+            if (ii+1 == argc) {
+                printf("Invalid command line argument\n");
+                usage_help();
+                return 1;
+            }
+            temperature = atof(argv[++ii]);
+        } else if (strcmp(argv[ii], "-step") == 0) {
+            if (ii+1 == argc) {
+                printf("Invalid command line argument\n");
+                usage_help();
+                return 1;
+            }
+            steps = atoi(argv[++ii]);
+        } else if (strcmp(argv[ii], "-prompt") == 0) {
+            if (ii+1 == argc) {
+                printf("Invalid command line argument\n");
+                usage_help();
+                return 1;
+            }
+            prompt = argv[++ii];
+        } 
+    }
 
     // 'checkpoint' is necessary arg
-    if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps] [prompt]\n", argv[0]);
+    if (required_arguments < 1) {
+        printf("Missing required command line argument(s)\n");
+        usage_help();
         return 1;
-    }
-    if (argc >= 2) {
-        checkpoint = argv[1];
-    }
-    if (argc >= 3) {
-        // optional temperature. 0.0 = (deterministic) argmax sampling. 1.0 = baseline
-        temperature = atof(argv[2]);
-    }
-    if (argc >= 4) {
-        steps = atoi(argv[3]);
-    }
-    if (argc >= 5) {
-        prompt = argv[4];
     }
 
     // seed rng with time. if you want deterministic behavior use temperature 0.0
