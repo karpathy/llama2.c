@@ -79,9 +79,9 @@ __global__ void mat_vec_kernel(half* output, const half* __restrict__ input, con
     if (index >= d)
         return;
 
-    input  = input  + blockIdx.y * input_stride;
-    weight = weight + blockIdx.y * weight_stride + index * weight_row_stride;
-    output = output + blockIdx.y * output_stride;
+    input  += blockIdx.y * input_stride;
+    weight += blockIdx.y * weight_stride + index * weight_row_stride;
+    output += blockIdx.y * output_stride;
 
     float sum = 0;
 
@@ -115,9 +115,9 @@ __global__ void mat_vec_kernel_simple(half* output, const half* __restrict__ inp
     if (index >= d)
         return;
 
-    input  = input  + blockIdx.y * input_stride;
-    weight = weight + blockIdx.y * weight_stride + index * weight_row_stride;
-    output = output + blockIdx.y * output_stride;
+    input  += blockIdx.y * input_stride;
+    weight += blockIdx.y * weight_stride + index * weight_row_stride;
+    output += blockIdx.y * output_stride;
 
     float sum = 0;
     for (int i = 0; i < numSerialElements; i++) {
@@ -140,9 +140,9 @@ __global__ void vec_mat_kernel(half* output, const half* __restrict__ input, con
     int N, int K, int elementsPerThread,
     int input_stride, int weight_stride, int output_stride, int weight_row_stride) {
 
-    input  = input  + blockIdx.y * input_stride;
-    weight = weight + blockIdx.y * weight_stride;
-    output = output + blockIdx.y * output_stride;
+    input  += blockIdx.y * input_stride;
+    weight += blockIdx.y * weight_stride;
+    output += blockIdx.y * output_stride;
 
     int start_n = blockIdx.x * 32;
     int i = start_n + threadIdx.y;
