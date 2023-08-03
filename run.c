@@ -455,7 +455,7 @@ int main(int argc, char *argv[]) {
     float temperature = 0.9f; // e.g. 1.0, or 0.0
     int steps = 256;          // max number of steps to run for, 0: use seq_len
     char *prompt = NULL;      // prompt string
-    int buffertokens = 1;     // output token buffer size
+    int buffertokens = 1;     // number of tokens to buffer before flushing to screen
 
     // 'checkpoint' is necessary arg
     if (argc < 2) {
@@ -547,10 +547,15 @@ int main(int argc, char *argv[]) {
     int next;        // will store the next token in the sequence
     int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     int pos = 0;     // position in the sequence
-    int bufferflush = 1; // buffer flush after token counter 
-    static char outbuff[4096]; // used for output buffering              
+    int bufferflush = 1; // token counter for flushing buffer
+    char outbuff[config.seq_len * (6 + 2)]; // buffersize is context length * average size of subwords + margin
     printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
-    setvbuf(stdout, outbuff, _IOFBF, 4096); // setup output buffering
+
+    // setvbuf is used to buffer output into outbuff instead of flushing to screen directly
+    if (setvbuf(stdout, outbuff, _IOFBF, sizeof(outbuff)) != 0) {
+    puts("Error: Buffer allocation!"); exit(EXIT_FAILURE);
+    }
+
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
@@ -576,8 +581,10 @@ int main(int argc, char *argv[]) {
 
         // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
         char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
+        
         printf("%s", token_str);
-        if (bufferflush==pos && strlen(outbuff)<=4096) { fflush(stdout); bufferflush+=buffertokens; } // flush after every n tokens
+        // flush output to screen after the defined number of buffertokens have accumulated
+        if (bufferflush==pos) { fflush(stdout); bufferflush+=buffertokens; } 
 
         // advance forward
         token = next;
