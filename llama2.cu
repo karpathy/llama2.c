@@ -16,6 +16,12 @@ Inference for Llama-2 Transformer model in pure Cuda.
 // ----------------------------------------------------------------------------
 // GPU kernels
 
+__global__ void scalar_mul32_kernel(float* arr, float value, int size) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size)
+        arr[i] = arr[i] * value;
+}
+
 __global__ void element_wise_add_kernel(half* dest, half* src, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size)
@@ -250,6 +256,44 @@ __global__ void softmax_kernel(half* __restrict__ arr, int num_heads, int size) 
         arr[h * size + t] = (half) (att[t] / sum);
 }
 
+__global__ void softmax32_kernel(float* __restrict__ x, int size) {
+    using BlockReduce = cub::BlockReduce<float, 1024>;
+    __shared__ typename BlockReduce::TempStorage temp;
+    __shared__ float shared_val;
+
+    int tid = threadIdx.x;
+    int step = blockDim.x;
+
+    // find max value (for numerical stability)
+    float max_val = tid < size ? x[tid] : 0;
+    for (int i = tid + step; i < size; i += step)
+        if (x[i] > max_val)
+            max_val = x[i];
+
+    max_val = BlockReduce(temp).Reduce(max_val, cub::Max());
+    if (threadIdx.x == 0)
+        shared_val = max_val;
+    __syncthreads();
+    max_val = shared_val;
+
+    // exp and sum
+    float sum = 0.0f;
+    for (int i = tid; i < size; i += step) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+
+    sum = BlockReduce(temp).Sum(sum);
+    if (threadIdx.x == 0)
+        shared_val = sum;
+    __syncthreads();
+    sum = shared_val;
+
+    // normalize
+    for (int i = tid; i < size; i += step)
+        x[i] /= sum;
+}
+
 __global__ void silu_element_wise_mul_kernel(half* dest, half* src, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) {
@@ -306,8 +350,8 @@ typedef struct {
     half* hb2; // buffer for hidden dimension in the ffn (hidden_dim,)
     half* q; // query (dim,)
     half* att; // buffer for scores/attention values (n_heads, seq_len)
-    half* logits_gpu; // output logits
-    float* logits_temp; // logits in GPU memory converted to float
+    half* logits_gpu16; // output logits
+    float* logits_gpu32; // logits in GPU memory converted to float
     float* logits; // logits copied CPU side
     // kv cache
     half* key_cache;   // (layer, seq_len, dim)
@@ -322,16 +366,16 @@ void malloc_run_state(RunState* s, Config* p) {
     cudaMalloc((void**)&s->hb2, p->hidden_dim * sizeof(half));
     cudaMalloc((void**)&s->q, p->dim * sizeof(half));
     cudaMalloc((void**)&s->att, p->n_heads * p->dim * sizeof(half));
-    cudaMalloc((void**)&s->logits_gpu, p->vocab_size * sizeof(half));
+    cudaMalloc((void**)&s->logits_gpu16, p->vocab_size * sizeof(half));
     cudaMalloc((void**)&s->key_cache, p->n_layers * p->seq_len * p->dim * sizeof(half));    // potentially huge allocs
     cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * p->dim * sizeof(half));
-    cudaMalloc((void**)&s->logits_temp, p->vocab_size * sizeof(float));
+    cudaMalloc((void**)&s->logits_gpu32, p->vocab_size * sizeof(float));
     s->logits = (float*)malloc(p->vocab_size * sizeof(float));
 
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
         || !s->att || !s->logits || !s->key_cache
-        || !s->value_cache || !s->logits_gpu || !s->logits_temp) {
+        || !s->value_cache || !s->logits_gpu16 || !s->logits_gpu32) {
         printf("malloc failed!\n");
         exit(1);
     }
@@ -345,8 +389,8 @@ void free_run_state(RunState* s) {
     cudaFree(s->hb2);
     cudaFree(s->q);
     cudaFree(s->att);
-    cudaFree(s->logits_gpu);
-    cudaFree(s->logits_temp);
+    cudaFree(s->logits_gpu16);
+    cudaFree(s->logits_gpu32);
     free(s->logits);
     cudaFree(s->key_cache);
     cudaFree(s->value_cache);
@@ -461,26 +505,6 @@ void rmsnorm(half* o, half* x, half* weight, int size) {
     rmsnorm_kernel <<< 1, 1024 >>> (o, x, weight, size, elementsPerThread);
 }
 
-void softmax(float* x, int size) {
-    // find max value (for numerical stability)
-    float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
-        }
-    }
-    // exp and sum
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-    // normalize
-    for (int i = 0; i < size; i++) {
-        x[i] /= sum;
-    }
-}
-
 void matmul(half* xout, half* x, half* w, int n, int d, int batch = 1, int x_stride = 0, int w_stride = 0, int op_stride = 0, int w_row_stride = -1, float alpha = 1.0f) {
     int serialElements = divUp(n, 32);
     int serialLoads = divUp(serialElements, 8);     // we load 8 elements in parallel
@@ -585,11 +609,10 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     rmsnorm(x, x, w->rms_final_weight, dim);
 
     // classifier into logits
-    matmul(s->logits_gpu, x, w->wcls, p->dim, p->vocab_size);
+    matmul(s->logits_gpu16, x, w->wcls, p->dim, p->vocab_size);
 
     // copy logits from GPU->CPU
-    convert_fp16_to_fp32 <<<divUp(p->vocab_size, 256), 256 >>> (s->logits_temp, s->logits_gpu, p->vocab_size);
-    cudaMemcpy(s->logits, s->logits_temp, p->vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
+    convert_fp16_to_fp32 <<<divUp(p->vocab_size, 256), 256 >>> (s->logits_gpu32, s->logits_gpu16, p->vocab_size);
 }
 
 // ----------------------------------------------------------------------------
@@ -805,13 +828,18 @@ int main(int argc, char *argv[]) {
         } else {
             // sample the next token
             if (temperature == 0.0f) {
+                // copy the logits from GPU to the CPU
+                cudaMemcpy(state.logits, state.logits_gpu32, config.vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
                 // greedy argmax sampling: take the token with the highest probability
                 next = argmax(state.logits, config.vocab_size);
             } else {
                 // apply the temperature to the logits
-                for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
+                float inv_temperature = 1.0f / temperature;
+                scalar_mul32_kernel <<< divUp(config.vocab_size, 256), 256 >>> (state.logits_gpu32, inv_temperature, config.vocab_size);
                 // apply softmax to the logits to get the probabilities for next token
-                softmax(state.logits, config.vocab_size);
+                softmax32_kernel <<< 1, 1024 >>> (state.logits_gpu32, config.vocab_size);
+                // copy the logits from GPU to the CPU
+                cudaMemcpy(state.logits, state.logits_gpu32, config.vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
                 // we sample from this distribution to get the next token
                 next = sample(state.logits, config.vocab_size);
             }
