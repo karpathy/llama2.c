@@ -456,23 +456,27 @@ int main(int argc, char *argv[]) {
     int steps = 256;          // max number of steps to run for, 0: use seq_len
     char *prompt = NULL;      // prompt string
 
+    for (int i = 1; i < argc; i++) {
+        switch (argv[i][0]) {
+            case '-':
+                switch (argv[i][1]) {
+                    case 'c': if (i + 1 < argc) { checkpoint = argv[++i]; }             break;
+                    // optional temperature. 0.0 = (deterministic) argmax sampling. 1.0 = baseline
+                    case 't': if (i + 1 < argc) { temperature = atof(argv[++i]); }	break;
+                    case 's': if (i + 1 < argc) { steps = atoi(argv[++i]); }            break;
+                    case 'p': if (i + 1 < argc) { prompt = argv[++i]; }                 break;
+                    default: printf("Invalid option: %s\n", argv[i]); 
+                    exit(EXIT_FAILURE);
+                } break;
+            default:
+            printf("Usage: %s -c <checkpoint_file> -t [temperature] -s [steps] -p [prompt] \n", argv[0]);
+            exit(EXIT_FAILURE);
+        }
+    }
     // 'checkpoint' is necessary arg
-    if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps] [prompt]\n", argv[0]);
-        return 1;
-    }
-    if (argc >= 2) {
-        checkpoint = argv[1];
-    }
-    if (argc >= 3) {
-        // optional temperature. 0.0 = (deterministic) argmax sampling. 1.0 = baseline
-        temperature = atof(argv[2]);
-    }
-    if (argc >= 4) {
-        steps = atoi(argv[3]);
-    }
-    if (argc >= 5) {
-        prompt = argv[4];
+    if (checkpoint == NULL) {
+        printf("Error: checkpoint file (model) not set. \nSet with %s -c <checkpoint_file>\n",argv[0]);
+        exit(EXIT_FAILURE);
     }
 
     // seed rng with time. if you want deterministic behavior use temperature 0.0

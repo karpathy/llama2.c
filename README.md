@@ -20,24 +20,31 @@ Compile and run the C code:
 
 ```bash
 make run
-./run stories15M.bin
+./run -c stories15M.bin
 ```
 
 You'll see the text stream a sample. On my M1 MacBook Air this runs at ~110 tokens/s. See [performance](#performance) or the Makefile for compile flags that can significantly speed this up. We can also try a bit bigger 42M parameter model:
 
 ```bash
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories42M.bin
-./run stories42M.bin
+./run -c stories42M.bin
 ```
 
 This still runs at interactive rates and samples more coherent and diverse stories:
 
 > Once upon a time, there was a little girl named Lily. She loved playing with her toys on top of her bed. One day, she decided to have a tea party with her stuffed animals. She poured some tea into a tiny teapot and put it on top of the teapot. Suddenly, her little brother Max came into the room and wanted to join the tea party too. Lily didn't want to share her tea and she told Max to go away. Max started to cry and Lily felt bad. She decided to yield her tea party to Max and they both shared the teapot. But then, something unexpected happened. The teapot started to shake and wiggle. Lily and Max were scared and didn't know what to do. Suddenly, the teapot started to fly towards the ceiling and landed on the top of the bed. Lily and Max were amazed and they hugged each other. They realized that sharing was much more fun than being selfish. From that day on, they always shared their tea parties and toys.
 
-You can also prompt the model with a prefix (sadly, because this is currently done via positional arguments, you also have to specify temperature 1.0 and 256 steps, before you enter the prompt):
+You can also prompt the model with a prefix:
 
 ```bash
-./run stories42M.bin 1.0 256 "One day, Lily met a Shoggoth"
+./run -c stories42M.bin -p "One day, Lily met a Shoggoth"
+```
+
+You can also specify temperature and steps to limit output, before you enter the prompt:
+
+```bash
+./run -c stories42M.bin -t 1.0 -s 256 -p "One day, Lily met a Shoggoth"
+
 ```
 
 > One day, Lily met a Shoggoth. He was very shy, but was also very generous. Lily said “Hello Shoggy! Can I be your friend?” Shoggy was happy to have a friend and said “Yes, let’s explore the universe together!” So they set off on a journey to explore the universe. As they travelled, Shoggy was happy to explain to Lily about all the wonderful things in the universe. At the end of the day, Lily and Shoggy had gathered lots of wonderful things from the universe, and they both felt very proud. They promised to explore the universe as one big pair and to never stop being generous to each other.
@@ -56,7 +63,7 @@ python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin
 The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reaons (accepting PRs for fix). We can run the model as normal:
 
 ```bash
-./run llama2_7b.bin
+./run -c llama2_7b.bin
 ```
 
 This ran at about 4 tokens/s compiled with [OpenMP](#OpenMP) on 96 threads on my CPU Linux box in the cloud. (On my MacBook Air M1, currently it's closer to 30 seconds per token if you just build with `make runfast`.) Example output:
@@ -109,7 +116,7 @@ make run
 You can now run it simply as
 
 ```bash
-./run stories15M.bin
+./run -c stories15M.bin
 ```
 
 Watch the tokens stream by, fun! We can also run the PyTorch inference script for a comparison. Download one of the models again from huggingface hub and point the `sample.py` script at it:
@@ -157,7 +164,7 @@ clang -Ofast -fopenmp -march=native run.c  -lm  -o run
 When you run inference make sure to use OpenMP flags to set the number of threads, e.g.:
 
 ```bash
-OMP_NUM_THREADS=4 ./run out/model.bin
+OMP_NUM_THREADS=4 ./run -c out/model.bin
 ```
 
 Depending on your system resources you may want to tweak these hyperparameters and use more threads. But more is not always better, usually this is a bit U shaped.
