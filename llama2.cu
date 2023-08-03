@@ -80,7 +80,7 @@ __global__ void mat_vec_kernel(half* output, const half* __restrict__ input, con
         return;
 
     input  = input  + blockIdx.y * input_stride;
-    weight = weight + blockIdx.y * weight_stride;
+    weight = weight + blockIdx.y * weight_stride + index * weight_row_stride;
     output = output + blockIdx.y * output_stride;
 
     float sum = 0;
@@ -90,7 +90,7 @@ __global__ void mat_vec_kernel(half* output, const half* __restrict__ input, con
         if (j < n) {
             half w[8];
             half ip[8];
-            *((uint4 *)(&w)) = *((uint4 *)(&weight[index * weight_row_stride + j]));
+            *((uint4 *)(&w)) = *((uint4 *)(&weight[j]));
             *((uint4 *)(&ip)) = *((uint4 *)(&input[j]));
             for (int el = 0; el < 8; el++)
                 sum += float(w[el]) * float(ip[el]);
@@ -111,19 +111,19 @@ __global__ void mat_vec_kernel_simple(half* output, const half* __restrict__ inp
     int n, int d, int numSerialElements,
     int input_stride, int weight_stride, int output_stride, int weight_row_stride, float alpha) {
 
-    input  = input  + blockIdx.y * input_stride;
-    weight = weight + blockIdx.y * weight_stride;
-    output = output + blockIdx.y * output_stride;
-
     int index = blockIdx.x * blockDim.y + threadIdx.y;
     if (index >= d)
         return;
+
+    input  = input  + blockIdx.y * input_stride;
+    weight = weight + blockIdx.y * weight_stride + index * weight_row_stride;
+    output = output + blockIdx.y * output_stride;
 
     float sum = 0;
     for (int i = 0; i < numSerialElements; i++) {
         int j = i * 32 + threadIdx.x;
         if (j < n)
-            sum += ((float)weight[index * weight_row_stride + j]) * ((float)input[j]);
+            sum += ((float)weight[j]) * ((float)input[j]);
     }
 
     using WarpReduce = cub::WarpReduce<float>;
