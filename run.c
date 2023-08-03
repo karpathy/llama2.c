@@ -548,7 +548,7 @@ int main(int argc, char *argv[]) {
     int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     int pos = 0;     // position in the sequence
     int bufferflush = 1; // token counter for flushing buffer
-    char outbuff[config.seq_len * (6 + 2)]; // buffersize is context length * average size of subwords + margin
+    char outbuff[4096 * (6 + 2)] ; // buffersize is context length * average size of subwords + margin
     printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
 
     // setvbuf is used to buffer output into outbuff instead of flushing to screen directly
