@@ -248,8 +248,9 @@ __global__ void softmax_kernel(half* __restrict__ arr, int num_heads, int size) 
     sum = shared_val;
 
     // normalize and write the result
+    float inv_sum = 1.0f / sum;
     for (int t = tid; t < size; t += step)
-        arr_base[t] = (half) (att[t] / sum);
+        arr_base[t] = (half) (att[t] * inv_sum);
 }
 
 __global__ void silu_element_wise_mul_kernel(half* dest, half* src, int size) {
