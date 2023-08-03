@@ -294,6 +294,38 @@ __global__ void softmax32_kernel(float* __restrict__ x, int size) {
         x[i] /= sum;
 }
 
+__global__ void argmax32_kernel(float* __restrict__ x, int size, int *result) {
+    using BlockReduce = cub::BlockReduce<float, 1024>;
+    __shared__ typename BlockReduce::TempStorage temp;
+    __shared__ float shared_val;
+
+    int tid = threadIdx.x;
+    int step = blockDim.x;
+
+    // find local max value and its position
+    float max_val = tid < size ? x[tid] : 0;
+    int   max_pos = tid < size ? tid : 0;
+    for (int i = tid + step; i < size; i += step) {
+        if (x[i] > max_val) {
+            max_val = x[i];
+            max_pos = i;
+        }
+    }
+
+    // find the global max value
+    float global_max_val;
+    global_max_val = BlockReduce(temp).Reduce(max_val, cub::Max());
+    if (threadIdx.x == 0)
+        shared_val = global_max_val;
+    __syncthreads();
+    global_max_val = shared_val;
+
+    // get its position
+    if (max_val == global_max_val) {
+        *result = max_pos;
+    }
+}
+
 __global__ void silu_element_wise_mul_kernel(half* dest, half* src, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) {
@@ -712,18 +744,26 @@ int sample(float* probabilities, int n) {
     return n - 1; // in case of rounding errors
 }
 
+// return argmax of v in elements 0..n
 int argmax(float* v, int n) {
-    // return argmax of v in elements 0..n
-    int max_i = 0;
-    float max_p = v[0];
-    for (int i = 1; i < n; i++) {
-        if (v[i] > max_p) {
-            max_i = i;
-            max_p = v[i];
-        }
-    }
-    return max_i;
+    int max_pos;
+    int *pmax_pos;
+
+    // allocate memory on the device
+    cudaMalloc((void**)&pmax_pos, sizeof(int));
+
+    // call the kernel
+    argmax32_kernel<<<1,1024>>>(v, n, pmax_pos);
+
+    // copy the result back to host
+    cudaMemcpy(&max_pos, pmax_pos, sizeof(int), cudaMemcpyDeviceToHost);
+
+    // free the allocated memory
+    cudaFree(pmax_pos);
+
+    return max_pos;
 }
+
 // ----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
@@ -828,10 +868,8 @@ int main(int argc, char *argv[]) {
         } else {
             // sample the next token
             if (temperature == 0.0f) {
-                // copy the logits from GPU to the CPU
-                cudaMemcpy(state.logits, state.logits_gpu32, config.vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
                 // greedy argmax sampling: take the token with the highest probability
-                next = argmax(state.logits, config.vocab_size);
+                next = argmax(state.logits_gpu32, config.vocab_size);
             } else {
                 // apply the temperature to the logits
                 float inv_temperature = 1.0f / temperature;
