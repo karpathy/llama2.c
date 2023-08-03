@@ -71,14 +71,17 @@ __global__ void rmsnorm_kernel(half* o, half* x, half* weight, int size, int ele
 // Note that ~95% of total time is spent here, so optimizing this is important
 // 1. One output generated per warp so that we can parallelize the dot product across the warp
 // 2. We load 8 elements at a time for efficiency (assume dimensions to be multiple of 8)
-__global__ void mat_vec_kernel(half* op, const half* ip, const half* wt, int n, int d, int numSerialLoads, 
-    int ip_stride, int w_stride, int op_stride, int w_row_stride, float alpha) {
+__global__ void mat_vec_kernel(half* output, const half* __restrict__ input, const half* __restrict__ weight,
+    int n, int d, int numSerialLoads,
+    int input_stride, int weight_stride, int output_stride, int weight_row_stride, float alpha) {
+
     int index = blockIdx.x * blockDim.y + threadIdx.y;
     if (index >= d)
         return;
-    const half* __restrict__ input = ip + blockIdx.y * ip_stride;
-    const half* __restrict__ weight = wt + blockIdx.y * w_stride;
-    half* output = op + blockIdx.y * op_stride;
+
+    input  = input  + blockIdx.y * input_stride;
+    weight = weight + blockIdx.y * weight_stride;
+    output = output + blockIdx.y * output_stride;
 
     float sum = 0;
 
@@ -87,7 +90,7 @@ __global__ void mat_vec_kernel(half* op, const half* ip, const half* wt, int n, 
         if (j < n) {
             half w[8];
             half ip[8];
-            *((uint4 *)(&w)) = *((uint4 *)(&weight[index * w_row_stride + j]));
+            *((uint4 *)(&w)) = *((uint4 *)(&weight[index * weight_row_stride + j]));
             *((uint4 *)(&ip)) = *((uint4 *)(&input[j]));
             for (int el = 0; el < 8; el++)
                 sum += float(w[el]) * float(ip[el]);
@@ -104,12 +107,13 @@ __global__ void mat_vec_kernel(half* op, const half* ip, const half* wt, int n, 
 }
 
 // Simpler version of the above - to handle non multiple of 8 dimensions too (needed for MHA block)
-__global__ void mat_vec_kernel_simple(half* op, half* ip, half* wt, int n, int d, int numSerialElements,
-    int ip_stride, int w_stride, int op_stride, int w_row_stride, float alpha) {
+__global__ void mat_vec_kernel_simple(half* output, const half* __restrict__ input, const half* __restrict__ weight,
+    int n, int d, int numSerialElements,
+    int input_stride, int weight_stride, int output_stride, int weight_row_stride, float alpha) {
 
-    const half* __restrict__ input = ip + blockIdx.y * ip_stride;
-    const half* __restrict__ weight = wt + blockIdx.y * w_stride;
-    half* output = op + blockIdx.y * op_stride;
+    input  = input  + blockIdx.y * input_stride;
+    weight = weight + blockIdx.y * weight_stride;
+    output = output + blockIdx.y * output_stride;
 
     int index = blockIdx.x * blockDim.y + threadIdx.y;
     if (index >= d)
@@ -119,7 +123,7 @@ __global__ void mat_vec_kernel_simple(half* op, half* ip, half* wt, int n, int d
     for (int i = 0; i < numSerialElements; i++) {
         int j = i * 32 + threadIdx.x;
         if (j < n)
-            sum += ((float)weight[index * w_row_stride + j]) * ((float)input[j]);
+            sum += ((float)weight[index * weight_row_stride + j]) * ((float)input[j]);
     }
 
     using WarpReduce = cub::WarpReduce<float>;
@@ -132,12 +136,13 @@ __global__ void mat_vec_kernel_simple(half* op, half* ip, half* wt, int n, int d
 }
 
 // Here we make use of shared memory to achieve better memory access pattern, and transpose a 32x32 chunk of the matrix on the fly
-__global__ void vec_mat_kernel(half* op, const half* __restrict__ ip, const half* __restrict__ wt, int N, int K, int elementsPerThread,
-    int ip_stride, int w_stride, int op_stride, int w_row_stride) {
+__global__ void vec_mat_kernel(half* output, const half* __restrict__ input, const half* __restrict__ weight,
+    int N, int K, int elementsPerThread,
+    int input_stride, int weight_stride, int output_stride, int weight_row_stride) {
 
-    const half* __restrict__ input = ip + blockIdx.y * ip_stride;
-    const half* __restrict__ weight = wt + blockIdx.y * w_stride;
-    half* output = op + blockIdx.y * op_stride;
+    input  = input  + blockIdx.y * input_stride;
+    weight = weight + blockIdx.y * weight_stride;
+    output = output + blockIdx.y * output_stride;
 
     int start_n = blockIdx.x * 32;
     int i = start_n + threadIdx.y;
@@ -153,7 +158,7 @@ __global__ void vec_mat_kernel(half* op, const half* __restrict__ ip, const half
     // load the first 32x32 fragment
     int n = start_n + threadIdx.x;
     int k = threadIdx.y;
-    int offset = k * w_row_stride + n;
+    int offset = k * weight_row_stride + n;
     loaded_fragment[0][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : 0;
 
     float sum = 0;
@@ -173,7 +178,7 @@ __global__ void vec_mat_kernel(half* op, const half* __restrict__ ip, const half
         buf_i = e & 1;
         n = start_n + threadIdx.x;
         k = start_k + threadIdx.y;
-        int offset = k * w_row_stride + n;
+        int offset = k * weight_row_stride + n;
         loaded_fragment[buf_i][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : 0;
     }
 
