@@ -6,10 +6,10 @@ inference with:
     #include <torch/script.h>
     torch::jit::Module module = torch::jit::load("model.pt")
 
-Note that the model includes the initial parameters and with default ModelArgs the
-serialized model is 59M and gzips down to 55M. If you want to serialize/distribute the
-model parameters separately and the size of the model file you can zero out the
-parameters before saving it and it will gzip down to 780K:
+Note that the serialized model includes the initial parameters and with the default
+ModelArgs the file is 59M and gzips down to 55M. If you want to serialize/distribute
+the model parameters separately and you can zero out the parameters before saving it
+and it will gzip down to 780K:
     for p in model.parameters():
         p.detach().zero_()
 """
