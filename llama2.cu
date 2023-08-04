@@ -159,7 +159,7 @@ __global__ void vec_mat_kernel(half* output, const half* __restrict__ input, con
     int n = start_n + threadIdx.x;
     int k = threadIdx.y;
     int offset = k * weight_row_stride + n;
-    loaded_fragment[0][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : 0;
+    loaded_fragment[0][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : (half)0;
 
     float sum = 0;
     // Loop over the matrix row and vector elements
@@ -179,7 +179,7 @@ __global__ void vec_mat_kernel(half* output, const half* __restrict__ input, con
         n = start_n + threadIdx.x;
         k = start_k + threadIdx.y;
         int offset = k * weight_row_stride + n;
-        loaded_fragment[buf_i][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : 0;
+        loaded_fragment[buf_i][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : (half)0;
     }
 
     using WarpReduce = cub::WarpReduce<float>;
@@ -216,9 +216,11 @@ __global__ void softmax_kernel(half* __restrict__ arr, int num_heads, int size) 
     int tid = threadIdx.x;
     int step = blockDim.x;
 
+    half* __restrict__ arr_base = arr + h * size;
+
     // load input to shared memory
     for (int t = tid; t < size; t += step)
-        att[t] = (float) arr[h * size + t];
+        att[t] = (float) arr_base[t];
     __syncthreads();
 
     using BlockReduce = cub::BlockReduce<float, 1024>;
@@ -251,8 +253,9 @@ __global__ void softmax_kernel(half* __restrict__ arr, int num_heads, int size) 
     sum = shared_val;
 
     // normalize and write the result
+    float inv_sum = 1.0f / sum;
     for (int t = tid; t < size; t += step)
-        arr[h * size + t] = (half) (att[t] / sum);
+        arr_base[t] = (half) (att[t] * inv_sum);
 }
 
 __global__ void silu_element_wise_mul_kernel(half* dest, half* src, int size) {
