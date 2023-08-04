@@ -25,7 +25,7 @@ import torch
 
 from model import ModelArgs, Transformer
 
-# Model args
+# Model args config
 dim = 288
 n_layers = 6
 n_heads = 6
@@ -39,7 +39,7 @@ norm_eps = 1e-5
 model_path = "model.pt"
 zero_params = False
 gzip_output = False
-
+# Allow config overrides
 exec(open("configurator.py").read())
 
 
