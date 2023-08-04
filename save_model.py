@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #!/usr/bin/env python
 """Saves the model as a TorchScript.
 
@@ -14,7 +13,6 @@ parameters before saving it and it will gzip down to 780K:
     for p in model.parameters():
         p.detach().zero_()
 """
-
 import glob
 import os
 import sys
