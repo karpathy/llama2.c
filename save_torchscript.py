@@ -47,7 +47,7 @@ def main() -> None:
     model_args = {k: globals()[k] for k in signature(ModelArgs).parameters}
     model = Transformer(ModelArgs(**model_args))
 
-    # If requested zero params before saving the model. This is usful in
+    # If requested zero params before saving the model. This is useful in
     # conjunction with gzip_output.
     if zero_params:
         for p in model.parameters():
