@@ -2,7 +2,7 @@
 #!/usr/bin/env python
 """Saves the model as a TorchScript.
 
-The resulting file can be loaded in C++ code and then used for training or infrence with:
+The resulting file can be loaded in C++ code and then used for training or inference with:
     #include <torch/script.h>
     torch::jit::Module module = torch::jit::load("model.pt")
 """
