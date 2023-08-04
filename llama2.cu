@@ -154,7 +154,7 @@ __global__ void vec_mat_kernel(half* op, const half* __restrict__ ip, const half
     int n = start_n + threadIdx.x;
     int k = threadIdx.y;
     int offset = k * w_row_stride + n;
-    loaded_fragment[0][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : 0;
+    loaded_fragment[0][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : (half)0;
 
     float sum = 0;
     // Loop over the matrix row and vector elements
@@ -174,7 +174,7 @@ __global__ void vec_mat_kernel(half* op, const half* __restrict__ ip, const half
         n = start_n + threadIdx.x;
         k = start_k + threadIdx.y;
         int offset = k * w_row_stride + n;
-        loaded_fragment[buf_i][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : 0;
+        loaded_fragment[buf_i][threadIdx.y][threadIdx.x] = ((n < N) && (k < K)) ? weight[offset] : (half)0;
     }
 
     using WarpReduce = cub::WarpReduce<float>;
