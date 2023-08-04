@@ -213,6 +213,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - [llama2.scala](https://github.com/jrudolph/llama2.scala) by @jrudolph: a Scala port of this project
 - [llama2.c-emscripten](https://github.com/gohai/llama2.c-emscripten) by @gohai: Emscripten (JavaScript) port, based on @ggerganov's initial prototype
 - [llama2.java](https://github.com/mukel/llama2.java) by @mukel: a Java port of this project
+- [llama2.zig](https://github.com/clebert/llama2.zig) by @clebert: a Zig port of this project
 
 ## unsorted todos
 
