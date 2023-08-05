@@ -93,7 +93,7 @@ void malloc_run_state(RunState* s, Config* p) {
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache 
      || !s->value_cache) {
         printf("malloc failed!\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -354,7 +354,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     for (char *c = text; *c != '\0'; c++) {
         sprintf(str_buffer, "%c", *c);
         int id = str_lookup(str_buffer, vocab, vocab_size);
-        if (id == -1) { printf("not good\n"); exit(1);}
+        if (id == -1) { printf("not good\n"); exit(EXIT_FAILURE); }
         tokens[*n_tokens] = id;
         (*n_tokens)++;
     }
