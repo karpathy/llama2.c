@@ -53,7 +53,7 @@ For this we need to install the python dependencies (`pip install -r requirement
 python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin
 ```
 
-The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reaons (accepting PRs for fix). We can run the model as normal:
+The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reasons (accepting PRs for fix). We can run the model as normal:
 
 ```bash
 ./run llama2_7b.bin
