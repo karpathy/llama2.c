@@ -10,7 +10,19 @@ Please note that this started recently as just a fun weekend project: I took my 
 
 ## feel the magic
 
-Let's just run a baby Llama 2 model in C. You need a model checkpoint. Download this 15M parameter model I trained on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset (~60MB download):
+First, navigate to the folder when you keep your projects and clone this repository to this folder:
+
+```bash
+git clone https://github.com/karpathy/llama2.c.git
+```
+
+Then, open the repository folder:
+
+```bash
+cd llama2.c
+```
+
+Now, let's just run a baby Llama 2 model in C. You need a model checkpoint. Download this 15M parameter model I trained on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset (~60MB download):
 
 ```bash
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
