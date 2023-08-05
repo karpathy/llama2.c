@@ -51,8 +51,8 @@ typedef struct {
     // final rmsnorm
     float* rms_final_weight; // (dim,)
     // freq_cis for RoPE relatively positional embeddings
-    float* freq_cis_real; // (seq_len, dim/2)
-    float* freq_cis_imag; // (seq_len, dim/2)
+    float* freq_cis_real; // (seq_len, head_size/2)
+    float* freq_cis_imag; // (seq_len, head_size/2)
     // (optional) classifier weights for the logits, on the last layer
     float* wcls;
 } TransformerWeights;
@@ -93,7 +93,7 @@ void malloc_run_state(RunState* s, Config* p) {
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache 
      || !s->value_cache) {
         printf("malloc failed!\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -232,24 +232,18 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
         matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
 
-        // apply RoPE rotation to the q and k vectors for each head
-        for (int h = 0; h < p->n_heads; h++) {
-            // get the q and k vectors for this head
-            float* q = s->q + h * head_size;
-            float* k = s->k + h * head_size;
-            // rotate q and k by the freq_cis_real and freq_cis_imag
-            for (int i = 0; i < head_size; i+=2) {
-                float q0 = q[i];
-                float q1 = q[i+1];
-                float k0 = k[i];
-                float k1 = k[i+1];
-                float fcr = freq_cis_real_row[i/2];
-                float fci = freq_cis_imag_row[i/2];
-                q[i]   = q0 * fcr - q1 * fci;
-                q[i+1] = q0 * fci + q1 * fcr;
-                k[i]   = k0 * fcr - k1 * fci;
-                k[i+1] = k0 * fci + k1 * fcr;
-            }
+        // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
+        for (int i = 0; i < dim; i+=2) {
+            float q0 = s->q[i];
+            float q1 = s->q[i+1];
+            float k0 = s->k[i];
+            float k1 = s->k[i+1];
+            float fcr = freq_cis_real_row[(i % head_size) / 2];
+            float fci = freq_cis_imag_row[(i % head_size) / 2];
+            s->q[i]   = q0 * fcr - q1 * fci;
+            s->q[i+1] = q0 * fci + q1 * fcr;
+            s->k[i]   = k0 * fcr - k1 * fci;
+            s->k[i+1] = k0 * fci + k1 * fcr;
         }
 
         // save key,value at this time step (pos) to our kv cache
@@ -360,7 +354,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     for (char *c = text; *c != '\0'; c++) {
         sprintf(str_buffer, "%c", *c);
         int id = str_lookup(str_buffer, vocab, vocab_size);
-        if (id == -1) { printf("not good\n"); exit(1);}
+        if (id == -1) { printf("not good\n"); exit(EXIT_FAILURE); }
         tokens[*n_tokens] = id;
         (*n_tokens)++;
     }
@@ -448,39 +442,43 @@ int argmax(float* v, int n) {
 }
 // ----------------------------------------------------------------------------
 
+void error_usage() {
+    printf("Usage:   run <checkpoint> [options]\n");
+    printf("Example: run model.bin -t 0.9 -n 256 -p \"Once upon a time\"\n");
+    printf("Options:\n");
+    printf("  -t <float>  temperature, default 0.9\n");
+    printf("  -s <int>    random seed, default time(NULL)\n");
+    printf("  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
+    printf("  -b <int>    number of tokens to buffer, default 1. 0 = max_seq_len\n");    
+    printf("  -p <string> prompt string, default none\n");
+    exit(EXIT_FAILURE);
+}
+
 int main(int argc, char *argv[]) {
 
-    // poor man's C argparse
+    // default inits
     char *checkpoint = NULL;  // e.g. out/model.bin
-    float temperature = 0.9f; // e.g. 1.0, or 0.0
-    int steps = 256;          // max number of steps to run for, 0: use seq_len
+    float temperature = 0.9f; // 0.0 = greedy & deterministic, 1.0 = max uncertainty
+    rng_seed = (unsigned int)time(NULL); // seed rng with time by default
+    int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
     int buffertokens = 1;     // number of tokens to buffer before flushing to screen
 
-    // 'checkpoint' is necessary arg
-    if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps] [prompt] [buffer_tokens]\n", argv[0]);
-        return 1;
+    // poor man's C argparse so we can override the defaults above from the command line
+    if (argc >= 2) { checkpoint = argv[1]; } else { error_usage(); }
+    for (int i = 2; i < argc; i+=2) {
+        // do some basic validation
+        if (i + 1 >= argc) { error_usage(); } // must have arg after flag
+        if (argv[i][0] != '-') { error_usage(); } // must start with dash
+        if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
+        // read in the args
+        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
+        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'b') { buffertokens = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'p') { prompt = argv[i + 1]; }
+        else { error_usage(); }
     }
-    if (argc >= 2) {
-        checkpoint = argv[1];
-    }
-    if (argc >= 3) {
-        // optional temperature. 0.0 = (deterministic) argmax sampling. 1.0 = baseline
-        temperature = atof(argv[2]);
-    }
-    if (argc >= 4) {
-        steps = atoi(argv[3]);
-    }
-    if (argc >= 5) {
-        prompt = argv[4];
-    }
-    if (argc >= 6) {
-        buffertokens = atoi(argv[5]);
-    }
-
-    // seed rng with time. if you want deterministic behavior use temperature 0.0
-    rng_seed = (unsigned int)time(NULL);
 
     // read in the model.bin file
     Config config;

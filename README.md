@@ -10,7 +10,19 @@ Please note that this started recently as just a fun weekend project: I took my 
 
 ## feel the magic
 
-Let's just run a baby Llama 2 model in C. You need a model checkpoint. Download this 15M parameter model I trained on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset (~60MB download):
+First, navigate to the folder when you keep your projects and clone this repository to this folder:
+
+```bash
+git clone https://github.com/karpathy/llama2.c.git
+```
+
+Then, open the repository folder:
+
+```bash
+cd llama2.c
+```
+
+Now, let's just run a baby Llama 2 model in C. You need a model checkpoint. Download this 15M parameter model I trained on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset (~60MB download):
 
 ```bash
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
@@ -34,10 +46,10 @@ This still runs at interactive rates and samples more coherent and diverse stori
 
 > Once upon a time, there was a little girl named Lily. She loved playing with her toys on top of her bed. One day, she decided to have a tea party with her stuffed animals. She poured some tea into a tiny teapot and put it on top of the teapot. Suddenly, her little brother Max came into the room and wanted to join the tea party too. Lily didn't want to share her tea and she told Max to go away. Max started to cry and Lily felt bad. She decided to yield her tea party to Max and they both shared the teapot. But then, something unexpected happened. The teapot started to shake and wiggle. Lily and Max were scared and didn't know what to do. Suddenly, the teapot started to fly towards the ceiling and landed on the top of the bed. Lily and Max were amazed and they hugged each other. They realized that sharing was much more fun than being selfish. From that day on, they always shared their tea parties and toys.
 
-You can also prompt the model with a prefix (sadly, because this is currently done via positional arguments, you also have to specify temperature 1.0 and 256 steps, before you enter the prompt):
+You can also prompt the model with a prefix or a number of additional command line arguments, e.g. to sample at temperature 0.8 for 256 steps and with a prompt:
 
 ```bash
-./run stories42M.bin 1.0 256 "One day, Lily met a Shoggoth"
+./run stories42M.bin -t 0.8 -n 256 -p "One day, Lily met a Shoggoth"
 ```
 
 > One day, Lily met a Shoggoth. He was very shy, but was also very generous. Lily said “Hello Shoggy! Can I be your friend?” Shoggy was happy to have a friend and said “Yes, let’s explore the universe together!” So they set off on a journey to explore the universe. As they travelled, Shoggy was happy to explain to Lily about all the wonderful things in the universe. At the end of the day, Lily and Shoggy had gathered lots of wonderful things from the universe, and they both felt very proud. They promised to explore the universe as one big pair and to never stop being generous to each other.
@@ -53,7 +65,7 @@ For this we need to install the python dependencies (`pip install -r requirement
 python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin
 ```
 
-The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reaons (accepting PRs for fix). We can run the model as normal:
+The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reasons (accepting PRs for fix). We can run the model as normal:
 
 ```bash
 ./run llama2_7b.bin
@@ -213,19 +225,18 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - [llama2.scala](https://github.com/jrudolph/llama2.scala) by @jrudolph: a Scala port of this project
 - [llama2.c-emscripten](https://github.com/gohai/llama2.c-emscripten) by @gohai: Emscripten (JavaScript) port, based on @ggerganov's initial prototype
 - [llama2.java](https://github.com/mukel/llama2.java) by @mukel: a Java port of this project
+- [llama2.kt](https://github.com/madroidmaq/llama2.kt) by @madroidmaq: a Kotlin port of this project
+- [llama2.zig](https://github.com/clebert/llama2.zig) by @clebert: a Zig port of this project
 
 ## unsorted todos
 
-- support Llama 2 7B Chat model and tune run.c to Chat UI/UX
+- should calculate freq_cis online in the script run.c instead of loading them
+- support Llama 2 7B Chat models and tune run.c to Chat UI/UX
 - speed up 7B Llama 2 models sufficiently to work at interactive rates on Apple Silicon MacBooks
-- possibly include emscripten / web backend (as seen in @gg PR)
-- currently the project only runs in fp32, how easy would it be to different precisions?
-- look into quantization and what would be involved
-- todo multiquery support? doesn't seem as useful for smaller models that run on CPU (?)
-- todo support inferencing beyond max_seq_len steps, have to think through the kv cache
-- why is MFU so low (~10%) on my A100 40GB for training?
-- weird errors with torch.compile and wandb when using DDP
-- (LoRA) finetuning of Llama 2 models
+- investigate precisions other than just fp32: fp16, and quantization
+- investigate running on other backends, especially GPUs
+- add multiquery support into run.c
+- (LoRA) finetuning and export of Llama 2 models
 - make more better tests to decrease yolo
 
 ## License
