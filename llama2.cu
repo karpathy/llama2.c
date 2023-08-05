@@ -203,12 +203,13 @@ __global__ void RoPERotation_kernel(half* sq, half* sk, half* f_real, half* f_im
     half* k = sk + h * head_size;
 
     int i = threadIdx.x * 2;
+    int j = threadIdx.x;
     float q0 = q[i];
     float q1 = q[i + 1];
     float k0 = k[i];
     float k1 = k[i + 1];
-    float fcr = f_real[i / 2];
-    float fci = f_imag[i / 2];
+    float fcr = f_real[j];
+    float fci = f_imag[j];
     q[i] = q0 * fcr - q1 * fci;
     q[i + 1] = q0 * fci + q1 * fcr;
     k[i] = k0 * fcr - k1 * fci;
