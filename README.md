@@ -237,7 +237,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - Kotlin
   - [llama2.kt](https://github.com/madroidmaq/llama2.kt) by @[madroidmaq](https://github.com/madroidmaq): a Kotlin port of this project
 - Python
-  - [llama2.py](https://github.com/tairov/llama2.py) by @tairov: a simple one file pure Python port of this project with zero dependencies 
+  - [llama2.py](https://github.com/tairov/llama2.py) by @[tairov](https://github.com/tairov): a simple one file pure Python port of this project with zero dependencies 
 - [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @[trholding](https://github.com/trholding): Standalone, Bootable & Portable Binary Llama 2
 
 ## unsorted todos
