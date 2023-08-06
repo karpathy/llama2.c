@@ -10,6 +10,7 @@ $ ./run
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <time.h>
 #include <math.h>
 #include <string.h>
@@ -21,7 +22,7 @@ $ ./run
     #include <sys/mman.h>
 #endif
 // ----------------------------------------------------------------------------
-// Transformer and RunState structs, and related memory management
+// Transformer, RunState and Vocabulary structs, and related memory management
 
 typedef struct {
     int dim; // transformer dimension
@@ -80,6 +81,20 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
+typedef struct {
+    char *str;
+    int id;
+} TokenIndex;
+
+typedef struct {
+    int vocab_size;
+    char **vocab;
+    float *vocab_scores;
+    unsigned int max_token_length;
+    // Sorted vocabulary tokens and their corresponding id for log(vocab_size) lookups.
+    TokenIndex *sorted_vocab;
+} Vocabulary;
+
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     s->x = calloc(p->dim, sizeof(float));
@@ -118,6 +133,24 @@ void free_run_state(RunState* s) {
     free(s->probindex);
     free(s->key_cache);
     free(s->value_cache);
+}
+
+void malloc_vocab(Vocabulary *v, int vocab_size) {
+    v->vocab_size = vocab_size;
+    v->vocab = calloc(v->vocab_size, sizeof(char*));
+    v->vocab_scores = calloc(v->vocab_size, sizeof(float));
+    v->sorted_vocab = calloc(v->vocab_size, sizeof(TokenIndex));
+    if (!v->vocab || !v->vocab_scores || !v->sorted_vocab) {
+        fprintf(stderr, "malloc failed!\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void free_vocab(Vocabulary *v) {
+    for (int i = 0; i < v->vocab_size; i++) { free(v->vocab[i]); }
+    free(v->vocab);
+    free(v->vocab_scores);
+    free(v->sorted_vocab);
 }
 
 // ----------------------------------------------------------------------------
@@ -342,26 +375,52 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 // ----------------------------------------------------------------------------
 // byte pair encoding (BPE) tokenizer, encodes strings into tokens so we can prompt
 
-int str_lookup(char *str, char **vocab, int vocab_size) {
-    // find the first perfect match for str in vocab, return its index or -1 if not found
-    for (int i = 0; i < vocab_size; i++) {
-        if (strcmp(str, vocab[i]) == 0) {
-            return i;
-        }
+int compare_tokens(const void *a, const void *b) {
+    return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
+}
+
+int lookup_token(const char *str, const Vocabulary *v) {
+    int left = 0, right = v->vocab_size - 1;
+    while (left <= right) {
+        int mid = (left + right) / 2;
+        int res = strcmp(str, v->sorted_vocab[mid].str);
+        if (res == 0) { return v->sorted_vocab[mid].id; }
+        else if (res < 0) { right = mid - 1; }
+        else { left = mid + 1; }
     }
     return -1;
 }
 
-void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
+bool build_vocab(const char *filename, Vocabulary *v) {
+    FILE *file = fopen(filename, "rb");
+    if (!file) { fprintf(stderr, "couldn't load %s\n", filename); return false; }
+    if (fread(&v->max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return false; }
+    for (int i = 0; i < v->vocab_size; i++) {
+        if (fread(v->vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); return false;}
+        int len;
+        if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return false; }
+        v->vocab[i] = (char *)malloc(len + 1);
+        if (fread(v->vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); return false; }
+        v->vocab[i][len] = '\0'; // add the string terminating token
+    }
+    fclose(file);
+    for (int i = 0; i < v->vocab_size; i++) {
+        v->sorted_vocab[i].str = v->vocab[i];
+        v->sorted_vocab[i].id = i;
+    }
+    qsort(v->sorted_vocab, v->vocab_size, sizeof(TokenIndex), compare_tokens);
+    return true;
+}
 
+void bpe_encode(char *text, const Vocabulary *v, int *tokens, int *n_tokens) {
     // a temporary buffer to merge two consecutive tokens
-    char* str_buffer = malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
+    char* str_buffer = malloc((v->max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
 
     // first encode every individual byte in the input string
     *n_tokens = 0; // the number of tokens
     for (char *c = text; *c != '\0'; c++) {
         sprintf(str_buffer, "%c", *c);
-        int id = str_lookup(str_buffer, vocab, vocab_size);
+        int id = lookup_token(str_buffer, v);
         if (id == -1) { fprintf(stderr, "not good\n"); exit(EXIT_FAILURE); }
         tokens[*n_tokens] = id;
         (*n_tokens)++;
@@ -375,11 +434,11 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
 
         for (int i=0; i < (*n_tokens-1); i++) {
             // check if we can merge the pair (tokens[i], tokens[i+1])
-            sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i+1]]);
-            int id = str_lookup(str_buffer, vocab, vocab_size);
-            if (id != -1 && vocab_scores[id] > best_score) {
+            sprintf(str_buffer, "%s%s", v->vocab[tokens[i]], v->vocab[tokens[i+1]]);
+            int id = lookup_token(str_buffer, v);
+            if (id != -1 && v->vocab_scores[id] > best_score) {
                 // this merge pair exists in vocab! record its score and position
-                best_score = vocab_scores[id];
+                best_score = v->vocab_scores[id];
                 best_id = id;
                 best_idx = i;
             }
@@ -568,23 +627,9 @@ int main(int argc, char *argv[]) {
     if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
 
     // read in the tokenizer.bin file
-    char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
-    float* vocab_scores = (float*)malloc(config.vocab_size * sizeof(float));
-    unsigned int max_token_length;
-    {
-        FILE *file = fopen("tokenizer.bin", "rb");
-        if (!file) { fprintf(stderr, "couldn't load tokenizer.bin\n"); return 1; }
-        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-        int len;
-        for (int i = 0; i < config.vocab_size; i++) {
-            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1;}
-            if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-            vocab[i] = (char *)malloc(len + 1);
-            if (fread(vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-            vocab[i][len] = '\0'; // add the string terminating token
-        }
-        fclose(file);
-    }
+    Vocabulary v;
+    malloc_vocab(&v, config.vocab_size);
+    if (!build_vocab("tokenizer.bin", &v)) { fprintf(stderr, "couldn't build vocabulary\n"); return 1; }
 
     // create and init the application RunState
     RunState state;
@@ -595,7 +640,7 @@ int main(int argc, char *argv[]) {
     int num_prompt_tokens = 0;
     if (prompt != NULL) {
         prompt_tokens = (int*)malloc(strlen(prompt) * sizeof(int));
-        bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
+        bpe_encode(prompt, &v, prompt_tokens, &num_prompt_tokens);
     }
 
     // start the main loop
@@ -638,7 +683,7 @@ int main(int argc, char *argv[]) {
         if (next == 1) { break; }
 
         // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
-        char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
+        char *token_str = (token == 1 && v.vocab[next][0] == ' ') ? v.vocab[next]+1 : v.vocab[next];
         printf("%s", token_str);
         fflush(stdout);
         token = next;
@@ -656,9 +701,7 @@ int main(int argc, char *argv[]) {
 
     // memory and file handles cleanup
     free_run_state(&state);
-    for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
-    free(vocab);
-    free(vocab_scores);
+    free_vocab(&v);
     if (prompt_tokens != NULL) free(prompt_tokens);
     if (data != MAP_FAILED) munmap(data, file_size);
     if (fd != -1) close(fd);
