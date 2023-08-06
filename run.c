@@ -99,7 +99,7 @@ void malloc_run_state(RunState* s, Config* p) {
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
      || !s->value_cache || !s->probindex) {
-        fprintf(stderr,"malloc failed!\n");
+        fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
     }
 }
@@ -362,7 +362,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     for (char *c = text; *c != '\0'; c++) {
         sprintf(str_buffer, "%c", *c);
         int id = str_lookup(str_buffer, vocab, vocab_size);
-        if (id == -1) { fprintf(stderr,"not good\n"); exit(EXIT_FAILURE); }
+        if (id == -1) { fprintf(stderr, "not good\n"); exit(EXIT_FAILURE); }
         tokens[*n_tokens] = id;
         (*n_tokens)++;
     }
@@ -500,14 +500,14 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
 // int main
 
 void error_usage() {
-    fprintf(stderr,"Usage:   run <checkpoint> [options]\n");
-    fprintf(stderr,"Example: run model.bin -n 256 -i \"Once upon a time\"\n");
-    fprintf(stderr,"Options:\n");
-    fprintf(stderr,"  -t <float>  temperature, default 1.0\n");
-    fprintf(stderr,"  -p <float>  p value in top-p (nucleus) sampling. default 0.9, 0 = off\n");
-    fprintf(stderr,"  -s <int>    random seed, default time(NULL)\n");
-    fprintf(stderr,"  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
-    fprintf(stderr,"  -i <string> input prompt\n");
+    fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
+    fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
+    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9, 0 = off\n");
+    fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
+    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
+    fprintf(stderr, "  -i <string> input prompt\n");
     exit(EXIT_FAILURE);
 }
 
@@ -536,7 +536,7 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
         else { error_usage(); }
     }
-    if(rng_seed == 0) { fprintf(stderr,"Cannot use seed=0 because of the rng alg used\n"); return 1; }
+    if(rng_seed == 0) { fprintf(stderr, "Cannot use seed=0 because of the rng alg used\n"); return 1; }
 
     // read in the model.bin file
     Config config;
@@ -546,7 +546,7 @@ int main(int argc, char *argv[]) {
     ssize_t file_size;     // size of the checkpoint file in bytes
     {
         FILE *file = fopen(checkpoint, "rb");
-        if (!file) { fprintf(stderr,"Couldn't open file %s\n", checkpoint); return 1; }
+        if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); return 1; }
         // read in the config header
         if (fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
         // negative vocab size is hacky way of signaling unshared weights. bit yikes.
@@ -558,9 +558,9 @@ int main(int argc, char *argv[]) {
         fclose(file);
         // memory map the Transformer weights into the data pointer
         fd = open(checkpoint, O_RDONLY); // open in read only mode
-        if (fd == -1) { fprintf(stderr,"open failed!\n"); return 1; }
+        if (fd == -1) { fprintf(stderr, "open failed!\n"); return 1; }
         data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-        if (data == MAP_FAILED) { fprintf(stderr,"mmap failed!\n"); return 1; }
+        if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
     }
@@ -573,14 +573,14 @@ int main(int argc, char *argv[]) {
     unsigned int max_token_length;
     {
         FILE *file = fopen("tokenizer.bin", "rb");
-        if (!file) { fprintf(stderr,"couldn't load tokenizer.bin\n"); return 1; }
-        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr,"failed read\n"); return 1; }
+        if (!file) { fprintf(stderr, "couldn't load tokenizer.bin\n"); return 1; }
+        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
         int len;
         for (int i = 0; i < config.vocab_size; i++) {
-            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr,"failed read\n"); return 1;}
-            if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr,"failed read\n"); return 1; }
+            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1;}
+            if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
             vocab[i] = (char *)malloc(len + 1);
-            if (fread(vocab[i], len, 1, file) != 1) { fprintf(stderr,"failed read\n"); return 1; }
+            if (fread(vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
             vocab[i][len] = '\0'; // add the string terminating token
         }
         fclose(file);
@@ -647,7 +647,7 @@ int main(int argc, char *argv[]) {
 
     // report achieved tok/s
     long end = time_in_ms();
-    fprintf(stderr,"\nachieved tok/s: %f\n", (steps-1) / (double)(end-start)*1000);
+    fprintf(stderr, "\nachieved tok/s: %f\n", (steps-1) / (double)(end-start)*1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
