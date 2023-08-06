@@ -10,6 +10,7 @@ $ ./run
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <time.h>
 #include <math.h>
 #include <string.h>
@@ -506,7 +507,8 @@ void error_usage() {
     fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
     fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9, 0 = off\n");
     fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
-    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
+    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len. overrides -a\n");
+    fprintf(stderr, "  -a <int>    number of additional steps to run for after the input prompt, default unset. overrides -n\n");
     fprintf(stderr, "  -i <string> input prompt\n");
     exit(EXIT_FAILURE);
 }
@@ -519,6 +521,7 @@ int main(int argc, char *argv[]) {
     float topp = 0.9f;        // top-p in nucleus sampling
     rng_seed = (unsigned int)time(NULL); // seed rng with time by default
     int steps = 256;          // number of steps to run for
+    bool prompt_included_in_steps = true; // whether tokens from the prompt are included in the # steps.
     char *prompt = NULL;      // prompt string
 
     // poor man's C argparse so we can override the defaults above from the command line
@@ -533,6 +536,7 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
         else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
         else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'a') { steps = atoi(argv[i + 1]); prompt_included_in_steps = false; }
         else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
         else { error_usage(); }
     }
@@ -564,8 +568,6 @@ int main(int argc, char *argv[]) {
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
     }
-    // right now we cannot run for more than config.seq_len steps
-    if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
 
     // read in the tokenizer.bin file
     char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
@@ -597,6 +599,10 @@ int main(int argc, char *argv[]) {
         prompt_tokens = (int*)malloc(strlen(prompt) * sizeof(int));
         bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
     }
+    if (!prompt_included_in_steps) { steps += num_prompt_tokens; }
+
+    // right now we cannot run for more than config.seq_len steps
+    if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
 
     // start the main loop
     long start = 0;  // used to time our code, only initialized after first iteration
