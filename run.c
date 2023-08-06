@@ -536,6 +536,7 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
         else { error_usage(); }
     }
+    if(rng_seed == 0) { printf("Cannot use seed=0 because of the rng alg used\n"); return 1; }
 
     // read in the model.bin file
     Config config;
