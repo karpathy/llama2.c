@@ -45,6 +45,10 @@ rungnu:
 runompgnu:
 	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm  -o run
 
+.PHONY: runblas
+runblas: run.c
+	$(CC) -DOPENBLAS -march=native -Ofast -o run run.c -lm -lpthread  -lopenblas
+
 .PHONY: clean
 clean:
 	rm -f run

@@ -199,6 +199,22 @@ void softmax(float* x, int size) {
     }
 }
 
+
+#ifdef OPENBLAS
+#include "cblas.h"
+
+void matmul(float* xout, float* x, float* w, int n, int d) {
+    // Use the cblas_sgemv function from the BLAS library
+    // cblas_sgemv computes y = alpha*A*x + beta*y
+    // In our case, A is the matrix w, x is the vector x, and y is the output vector xout
+    
+    float alpha = 1.0f;  // Scalar to multiply with A*x
+    float beta = 0.0f;   // Scalar to multiply with y (we want the initial value of y to have no effect)
+    
+    cblas_sgemv(CblasRowMajor, CblasNoTrans, d, n, alpha, w, n, x, 1, beta, xout, 1);
+}
+#else
+
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
@@ -212,6 +228,7 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
         xout[i] = val;
     }
 }
+#endif
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
 
