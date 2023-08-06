@@ -495,6 +495,15 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     return probindex[last_idx].index; // in case of rounding errors
 }
 
+void clamp_logits(float* logits, int last_token, char** vocab, int vocab_size) {
+    char* last = vocab[last_token];
+    size_t len = strlen(last);
+    for (int i = 0; i < vocab_size; i++) {
+        if (strncmp(last, vocab[i], len) != 0) {
+            logits[i] = -1e10;
+        }
+    }
+}
 
 // ----------------------------------------------------------------------------
 // int main
@@ -593,9 +602,12 @@ int main(int argc, char *argv[]) {
     // process the prompt, if any
     int *prompt_tokens = NULL;
     int num_prompt_tokens = 0;
+    int last_token = 0;
     if (prompt != NULL) {
         prompt_tokens = (int*)malloc(strlen(prompt) * sizeof(int));
         bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
+        last_token = prompt_tokens[num_prompt_tokens - 1];
+        num_prompt_tokens--; // strip last token from prompt
     }
 
     // start the main loop
@@ -613,6 +625,9 @@ int main(int argc, char *argv[]) {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos];
         } else {
+            // token healing, clamp tokens that do not start with the prompt's last token
+            if (prompt != NULL && pos == num_prompt_tokens)
+                clamp_logits(state.logits, last_token, vocab, config.vocab_size);
             // sample the next token
             if (temperature == 0.0f) {
                 // greedy argmax sampling: take the token with the highest probability
