@@ -49,12 +49,12 @@ This still runs at interactive rates and samples more coherent and diverse stori
 You can also prompt the model with a prefix or a number of additional command line arguments, e.g. to sample at temperature 0.8 for 256 steps and with a prompt:
 
 ```bash
-./run stories42M.bin -t 0.8 -n 256 -p "One day, Lily met a Shoggoth"
+./run stories42M.bin -t 0.8 -n 256 -i "One day, Lily met a Shoggoth"
 ```
 
 > One day, Lily met a Shoggoth. He was very shy, but was also very generous. Lily said “Hello Shoggy! Can I be your friend?” Shoggy was happy to have a friend and said “Yes, let’s explore the universe together!” So they set off on a journey to explore the universe. As they travelled, Shoggy was happy to explain to Lily about all the wonderful things in the universe. At the end of the day, Lily and Shoggy had gathered lots of wonderful things from the universe, and they both felt very proud. They promised to explore the universe as one big pair and to never stop being generous to each other.
 
-There is also an even better 110M param model available, see [models](#models).
+There is also an even better 110M param model available, see [models](#models). Quick note on sampling, the recommendation for good results is to use `-t 1.0 -p 0.9`, i.e. top-p sampling at 0.9 with temperature 1.0 (this is the default). To control the diversity of samples use either the temperature (i.e. vary `-t` between 0 and 1 and keep top-p off with `-p 0`) or the top-p value (i.e. vary `-p` between 0 and 1 and keep `-t 1`), but not both. Nice explainers on LLM sampling strategies include [this](https://peterchng.com/blog/2023/05/02/token-selection-strategies-top-k-top-p-and-temperature/), [this](https://docs.cohere.com/docs/controlling-generation-with-top-k-top-p) or [this](https://huggingface.co/blog/how-to-generate).
 
 ## Meta's Llama 2 models
 
@@ -152,7 +152,7 @@ To get a much better performance, try to compile with `make runfast`. This turns
 
 Try `-march=native` to compile the program to use the architecture of the machine you're compiling on rather than a more generic CPU. This may enable additional optimizations and hardware-specific tuning such as improved vector instructions/width.
 
-The fastest throughput I saw so far on my MacBook Air (M1) so far is with `make runfast`. 
+The fastest throughput I saw so far on my MacBook Air (M1) so far is with `make runfast`.
 
 You can also experiment with replacing `gcc` with `clang`.
 
