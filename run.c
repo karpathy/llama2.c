@@ -632,6 +632,8 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
+        
+        if (next == 1) break; // Exit if text generation restarted with a BOS
 
         // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
         char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
@@ -647,7 +649,7 @@ int main(int argc, char *argv[]) {
 
     // report achieved tok/s
     long end = time_in_ms();
-    printf("\nachieved tok/s: %f\n", (steps-1) / (double)(end-start)*1000);
+    printf("\nachieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
 
     // memory and file handles cleanup
     free_run_state(&state);
