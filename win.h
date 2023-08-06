@@ -4,8 +4,9 @@
 #define WIN32_LEAN_AND_MEAN      // Exclude rarely-used stuff from Windows headers
 #include <windows.h>
 #include <time.h>
+#include <stdint.h>
 
-#define ssize_t __int64
+#define ssize_t int64_t
 #define ftell _ftelli64
 
 // Below code is originally from mman-win32

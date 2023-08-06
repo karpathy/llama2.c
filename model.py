@@ -49,7 +49,7 @@ def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     assert 0 <= 1 < ndim
     assert freqs_cis.shape == (x.shape[1], x.shape[-1])
     shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
-    return freqs_cis.view(*shape)
+    return freqs_cis.view(shape)
 
 def apply_rotary_emb(
     xq: torch.Tensor,
@@ -59,9 +59,9 @@ def apply_rotary_emb(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
 
     # reshape xq and xk to match the complex representation
-    xq_r, xq_i = xq.float().reshape(*xq.shape[:-1], -1, 2).unbind(-1)
-    xk_r, xk_i = xk.float().reshape(*xk.shape[:-1], -1, 2).unbind(-1)
-    
+    xq_r, xq_i = xq.float().reshape(xq.shape[:-1] + (-1, 2)).unbind(-1)
+    xk_r, xk_i = xk.float().reshape(xk.shape[:-1] + (-1, 2)).unbind(-1)
+
     # reshape freqs_cos and freqs_sin for broadcasting
     freqs_cos = reshape_for_broadcast(freqs_cos, xq_r)
     freqs_sin = reshape_for_broadcast(freqs_sin, xq_r)
@@ -142,10 +142,11 @@ class Attention(nn.Module):
 
         # flash implementation
         if self.flash:
-            output = torch.nn.functional.scaled_dot_product_attention(xq, xk, xv, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            output = torch.nn.functional.scaled_dot_product_attention(xq, xk, xv, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
         else:
             # manual implementation
             scores = torch.matmul(xq, xk.transpose(2, 3)) / math.sqrt(self.head_dim)
+            assert hasattr(self, 'mask')
             scores = scores + self.mask[:, :, :seqlen, :seqlen]   # (bs, n_local_heads, seqlen, cache_len + seqlen)
             scores = F.softmax(scores.float(), dim=-1).type_as(xq)
             scores = self.attn_dropout(scores)
@@ -153,7 +154,7 @@ class Attention(nn.Module):
 
         # restore time as batch dimension and concat heads
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
-        
+
         # final projection into the residual stream
         output = self.wo(output)
         output = self.resid_dropout(output)
@@ -169,7 +170,7 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
         self.dropout = nn.Dropout(dropout)
-    
+
     def forward(self, x):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
@@ -198,6 +199,8 @@ class TransformerBlock(nn.Module):
 
 
 class Transformer(nn.Module):
+    last_loss: Optional[torch.Tensor]
+
     def __init__(self, params: ModelArgs):
         super().__init__()
         self.params = params
@@ -215,17 +218,20 @@ class Transformer(nn.Module):
         # share the unembedding parameters with the embedding parameters
         self.tok_embeddings.weight = self.output.weight # https://paperswithcode.com/method/weight-tying
 
-        # some useful precompute for the RoPE relative positional embeddings. TODO why * 2 here? confuse
-        freqs_cos, freqs_sin = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len * 2)
+        # some useful precompute for the RoPE relative positional embeddings
+        freqs_cos, freqs_sin = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
-        
+
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
         for pn, p in self.named_parameters():
             if pn.endswith('w3.weight') or pn.endswith('wo.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * params.n_layers))
+
+        # Initialize attribute for the loss of the last forward call. This will be set if the forward is called with a targets tensor.
+        self.last_loss = None
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -235,7 +241,7 @@ class Transformer(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, tokens, targets=None):
+    def forward(self, tokens: torch.Tensor, targets: Optional[torch.Tensor] = None) -> torch.Tensor:
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         h = self.dropout(h)
@@ -249,13 +255,13 @@ class Transformer(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.output(h)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            self.last_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
             # inference-time mini-optimization: only forward the output on the very last position
             logits = self.output(h[:, [-1], :]) # note: using list [-1] to preserve the time dim
-            loss = None
+            self.last_loss = None
 
-        return logits, loss
+        return logits
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
         # start with all of the candidate parameters
@@ -298,7 +304,7 @@ class Transformer(nn.Module):
         flops_promised = 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
         mfu = flops_achieved / flops_promised
         return mfu
-    
+
     @torch.inference_mode()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
         """
@@ -328,7 +334,7 @@ class Transformer(nn.Module):
                 idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
-            
+
         return idx
 
     def export(self, filepath='model.bin'):
@@ -344,13 +350,13 @@ class Transformer(nn.Module):
         hidden_dim = self.layers[0].feed_forward.w1.weight.shape[0]
         p = self.params
         n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
-        header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads, 
+        header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
                                        n_kv_heads, p.vocab_size, p.max_seq_len)
         f.write(header)
 
         # next write out the embedding weights
         serialize(self.tok_embeddings.weight)
-        
+
         # now all the layers
         # attention weights
         for layer in self.layers:

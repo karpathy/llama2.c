@@ -51,8 +51,8 @@ typedef struct {
     // final rmsnorm
     float* rms_final_weight; // (dim,)
     // freq_cis for RoPE relatively positional embeddings
-    float* freq_cis_real; // (seq_len, dim/2)
-    float* freq_cis_imag; // (seq_len, dim/2)
+    float* freq_cis_real; // (seq_len, head_size/2)
+    float* freq_cis_imag; // (seq_len, head_size/2)
     // (optional) classifier weights for the logits, on the last layer
     float* wcls;
 } TransformerWeights;
@@ -89,11 +89,11 @@ void malloc_run_state(RunState* s, Config* p) {
     s->key_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
     s->value_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
     // ensure all mallocs went fine
-    if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q 
-     || !s->k || !s->v || !s->att || !s->logits || !s->key_cache 
+    if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
+     || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
      || !s->value_cache) {
         printf("malloc failed!\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -232,24 +232,18 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
         matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
 
-        // apply RoPE rotation to the q and k vectors for each head
-        for (int h = 0; h < p->n_heads; h++) {
-            // get the q and k vectors for this head
-            float* q = s->q + h * head_size;
-            float* k = s->k + h * head_size;
-            // rotate q and k by the freq_cis_real and freq_cis_imag
-            for (int i = 0; i < head_size; i+=2) {
-                float q0 = q[i];
-                float q1 = q[i+1];
-                float k0 = k[i];
-                float k1 = k[i+1];
-                float fcr = freq_cis_real_row[i/2];
-                float fci = freq_cis_imag_row[i/2];
-                q[i]   = q0 * fcr - q1 * fci;
-                q[i+1] = q0 * fci + q1 * fcr;
-                k[i]   = k0 * fcr - k1 * fci;
-                k[i+1] = k0 * fci + k1 * fcr;
-            }
+        // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
+        for (int i = 0; i < dim; i+=2) {
+            float q0 = s->q[i];
+            float q1 = s->q[i+1];
+            float k0 = s->k[i];
+            float k1 = s->k[i+1];
+            float fcr = freq_cis_real_row[(i % head_size) / 2];
+            float fci = freq_cis_imag_row[(i % head_size) / 2];
+            s->q[i]   = q0 * fcr - q1 * fci;
+            s->q[i+1] = q0 * fci + q1 * fcr;
+            s->k[i]   = k0 * fcr - k1 * fci;
+            s->k[i+1] = k0 * fci + k1 * fcr;
         }
 
         // save key,value at this time step (pos) to our kv cache
@@ -258,7 +252,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         float* value_cache_row = s->value_cache + loff + pos * dim;
         memcpy(key_cache_row, s->k, dim*sizeof(*key_cache_row));
         memcpy(value_cache_row, s->v, dim*sizeof(*value_cache_row));
-        
+
         // multihead attention. iterate over all heads
         int h;
         #pragma omp parallel for private(h)
@@ -312,7 +306,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         // first calculate self.w1(x) and self.w3(x)
         matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
-        
+
         // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         for (int i = 0; i < hidden_dim; i++) {
             s->hb[i] = s->hb[i] * (1.0f / (1.0f + expf(-s->hb[i])));
@@ -329,7 +323,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         // residual connection
         accum(x, s->xb, dim);
     }
-    
+
     // final rmsnorm
     rmsnorm(x, x, w->rms_final_weight, dim);
 
@@ -351,7 +345,7 @@ int str_lookup(char *str, char **vocab, int vocab_size) {
 }
 
 void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
-    
+
     // a temporary buffer to merge two consecutive tokens
     char* str_buffer = malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
 
@@ -360,7 +354,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     for (char *c = text; *c != '\0'; c++) {
         sprintf(str_buffer, "%c", *c);
         int id = str_lookup(str_buffer, vocab, vocab_size);
-        if (id == -1) { printf("not good\n"); exit(1);}
+        if (id == -1) { printf("not good\n"); exit(EXIT_FAILURE); }
         tokens[*n_tokens] = id;
         (*n_tokens)++;
     }
@@ -471,39 +465,44 @@ int argmax(float* v, int n) {
 }
 // ----------------------------------------------------------------------------
 
+void error_usage() {
+    printf("Usage:   run <checkpoint> [options]\n");
+    printf("Example: run model.bin -t 0.9 -n 256 -p \"Once upon a time\"\n");
+    printf("Options:\n");
+    printf("  -t <float>  temperature, default 0.9\n");
+    printf("  -s <int>    random seed, default time(NULL)\n");
+    printf("  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
+    printf("  -p <string> prompt string, default none\n");
+    printf("  -d <float>  top-p sampling, default 0.9\n");
+    exit(EXIT_FAILURE);
+}
+
 int main(int argc, char *argv[]) {
 
-    // poor man's C argparse
+    // default inits
     char *checkpoint = NULL;  // e.g. out/model.bin
-    float temperature = 0.9f; // e.g. 1.0, or 0.0
-    int steps = 256;          // max number of steps to run for, 0: use seq_len
-    float top_p = 0.9f;
+
+    float temperature = 0.9f; // 0.0 = greedy & deterministic, 1.0 = max uncertainty
+    rng_seed = (unsigned int)time(NULL); // seed rng with time by default
+    int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
-
-    // 'checkpoint' is necessary arg
-    if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps] [topp] [prompt]\n", argv[0]);
-        return 1;
+    float top_p = 0.9;      // top-p sampling, control the diversity of the generated tokens
+    
+    // poor man's C argparse so we can override the defaults above from the command line
+    if (argc >= 2) { checkpoint = argv[1]; } else { error_usage(); }
+    for (int i = 2; i < argc; i+=2) {
+        // do some basic validation
+        if (i + 1 >= argc) { error_usage(); } // must have arg after flag
+        if (argv[i][0] != '-') { error_usage(); } // must start with dash
+        if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
+        // read in the args
+        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
+        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'p') { prompt = argv[i + 1]; }
+        else if (argv[i][1] == 'd') { top_p = atof(argv[i + 1]); }
+        else { error_usage(); }
     }
-    if (argc >= 2) {
-        checkpoint = argv[1];
-    }
-    if (argc >= 3) {
-        // optional temperature. 0.0 = (deterministic) argmax sampling. 1.0 = baseline
-        temperature = atof(argv[2]);
-    }
-    if (argc >= 4) {
-        steps = atoi(argv[3]);
-    }
-    if (argc >= 5) {
-        top_p = atof(argv[4]);
-    }
-    if (argc >= 6) {
-        prompt = argv[5];
-    }
-
-    // seed rng with time. if you want deterministic behavior use temperature 0.0
-    rng_seed = (unsigned int)time(NULL);
 
     // read in the model.bin file
     Config config;
@@ -561,7 +560,7 @@ int main(int argc, char *argv[]) {
     int *prompt_tokens = NULL;
     int num_prompt_tokens = 0;
     if (prompt != NULL) {
-        prompt_tokens = (int*)malloc(config.seq_len * sizeof(int));
+        prompt_tokens = (int*)malloc(strlen(prompt) * sizeof(int));
         bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
     }
 
