@@ -208,25 +208,36 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## notable forks
 
-- [llama2.rs](https://github.com/gaxler/llama2.rs) by @gaxler: a Rust port of this project
-- [go-llama2](https://github.com/tmc/go-llama2) by @tmc: a Go port of this project
-- [llama2.go](https://github.com/nikolaydubina/llama2.go) by @nikolaydubina: a Go port of this project
-- [llama2.go](https://github.com/haormj/llama2.go) by @haormj: a Go port of this project
-- [llama2.go](https://github.com/saracen/llama2.go) by @saracen: a Go port of this project
-- [llama2.c-android](https://github.com/Manuel030/llama2.c-android): by @Manuel030: adds Android binaries of this project
-- [llama2.c-android-wrapper](https://github.com/celikin/llama2.c-android-wrapper): by @celikin: added JNI wrapper, PoC
-- [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @leloykun: a C++ port of this project
-- [llama2.js](https://github.com/epicure/llama2.js) by @epicure: a JavaScript port of this project
-- [llama2.zig](https://github.com/cgbur/llama2.zig) by @cgbur: A Zig port of this project
-- [llama2.zig](https://github.com/vodkaslime/llama2.zig) by @vodkaslime: a Zig port of this project
-- [llama2.jl](https://github.com/juvi21/llama2.jl) by @juvi21: a Julia port of this project
-- [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @trholding: Standalone, Bootable & Portable Binary Llama 2
-- [llama2.rs](https://github.com/leo-du/llama2.rs) by @leo-du: A Rust port of this project
-- [llama2.scala](https://github.com/jrudolph/llama2.scala) by @jrudolph: a Scala port of this project
-- [llama2.c-emscripten](https://github.com/gohai/llama2.c-emscripten) by @gohai: Emscripten (JavaScript) port, based on @ggerganov's initial prototype
-- [llama2.java](https://github.com/mukel/llama2.java) by @mukel: a Java port of this project
-- [llama2.kt](https://github.com/madroidmaq/llama2.kt) by @madroidmaq: a Kotlin port of this project
-- [llama2.zig](https://github.com/clebert/llama2.zig) by @clebert: a Zig port of this project
+- Rust
+  - [llama2.rs](https://github.com/gaxler/llama2.rs) by @[gaxler](https://github.com/gaxler): a Rust port of this project
+  - [llama2.rs](https://github.com/leo-du/llama2.rs) by @[leo-du](https://github.com/leo-du): A Rust port of this project
+- Go
+  - [go-llama2](https://github.com/tmc/go-llama2) by @[tmc](https://github.com/tmc): a Go port of this project
+  - [llama2.go](https://github.com/nikolaydubina/llama2.go) by @[nikolaydubina](https://github.com/nikolaydubina): a Go port of this project
+  - [llama2.go](https://github.com/haormj/llama2.go) by @[haormj](https://github.com/haormj): a Go port of this project
+  - [llama2.go](https://github.com/saracen/llama2.go) by @[saracen](https://github.com/saracen): a Go port of this project
+- Android
+  - [llama2.c-android](https://github.com/Manuel030/llama2.c-android): by @[Manuel030](https://github.com/Manuel030): adds Android binaries of this project
+  - [llama2.c-android-wrapper](https://github.com/celikin/llama2.c-android-wrapper): by @[celikin](https://github.com/celikin): added JNI wrapper, PoC
+- C++
+  - [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @[leloykun](https://github.com/leloykun): a C++ port of this project
+- JavaScript
+  - [llama2.js](https://github.com/epicure/llama2.js) by @[epicure](https://github.com/epicure): a JavaScript port of this project
+  - [llama2.c-emscripten](https://github.com/gohai/llama2.c-emscripten) by @[gohai](https://github.com/gohai): Emscripten (JavaScript) port, based on @ggerganov's initial prototype
+- Zig
+  - [llama2.zig](https://github.com/cgbur/llama2.zig) by @[cgbur](https://github.com/cgbur): A Zig port of this project
+  - [llama2.zig](https://github.com/vodkaslime/llama2.zig) by @[vodkaslime](https://github.com/vodkaslime): a Zig port of this project
+  - [llama2.zig](https://github.com/clebert/llama2.zig) by @[clebert](https://github.com/clebert): a Zig port of this project
+- Julia
+  - [llama2.jl](https://github.com/juvi21/llama2.jl) by @[juvi21](https://github.com/juvi21): a Julia port of this project
+- Scala
+  - [llama2.scala](https://github.com/jrudolph/llama2.scala) by @[jrudolph](https://github.com/jrudolph): a Scala port of this project
+- Java
+  - [llama2.java](https://github.com/mukel/llama2.java) by @[mukel](https://github.com/mukel): a Java port of this project
+- Kotlin
+  - [llama2.kt](https://github.com/madroidmaq/llama2.kt) by @[madroidmaq](https://github.com/madroidmaq): a Kotlin port of this project
+- [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @[trholding](https://github.com/trholding): Standalone, Bootable & Portable Binary Llama 2
+
 
 ## unsorted todos
 
