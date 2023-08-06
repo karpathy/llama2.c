@@ -508,6 +508,7 @@ void error_usage() {
     fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
     fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
     fprintf(stderr, "  -i <string> input prompt\n");
+    fprintf(stderr, "  -S <int>    number of tokens to buffer for stream output, default 0, 0 = buffer till newline\n");
     exit(EXIT_FAILURE);
 }
 
@@ -520,6 +521,7 @@ int main(int argc, char *argv[]) {
     rng_seed = (unsigned int)time(NULL); // seed rng with time by default
     int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
+    int stream = 0;           // number of tokens to buffer for output
 
     // poor man's C argparse so we can override the defaults above from the command line
     if (argc >= 2) { checkpoint = argv[1]; } else { error_usage(); }
@@ -534,6 +536,7 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
         else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
         else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
+        else if (argv[i][1] == 'S') { stream = atoi(argv[i + 1]); }
         else { error_usage(); }
     }
     if(rng_seed == 0) { fprintf(stderr, "Cannot use seed=0 because of the rng alg used\n"); return 1; }
@@ -640,7 +643,7 @@ int main(int argc, char *argv[]) {
         // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
         char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
         printf("%s", token_str);
-        fflush(stdout);
+        if (stream) { fflush(stdout); }
         token = next;
 
         // init the timer here because the first iteration can be slower
