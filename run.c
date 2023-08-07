@@ -21,10 +21,7 @@ $ ./run
     #include <sys/mman.h>
 #endif
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
+#include <errno.h>
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
@@ -100,12 +97,13 @@ void malloc_run_state(RunState* s, Config* p) {
     s->probindex = calloc(p->vocab_size, sizeof(ProbIndex));
     s->key_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
     s->value_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
+
+    errno = 0;
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
      || !s->value_cache || !s->probindex) {
-        fprintf(stderr, "malloc failed!\n");
-        exit(EXIT_FAILURE);
+        errno = ENOMEM; 
     }
 }
 
@@ -500,6 +498,175 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     return probindex[last_idx].index; // in case of rounding errors
 }
 
+// ----------------------------------------------------------------------------
+// API 
+
+typedef struct {
+    Config config;
+    TransformerWeights weights;
+    int fd;              // file descriptor for memory mapping
+    float* data;         // memory mapped data pointer
+    ssize_t file_size;   // size of the checkpoint file in bytes
+    char** vocab;
+    float* vocab_scores;
+    unsigned int max_token_length;
+    RunState state;
+} llm_t;
+
+void llmFree(llm_t *llm)
+{
+    if (llm != NULL) {
+        // memory and file handles cleanup
+        free_run_state(&(llm->state));
+        
+        if (llm->vocab) {
+          for (int i = 0; i < llm->config.vocab_size; i++) { free(llm->vocab[i]); }
+          free(llm->vocab);
+        }
+        free(llm->vocab_scores);
+    
+        if (llm->data != MAP_FAILED) munmap(llm->data, llm->file_size);
+        if (llm->fd != -1) close(llm->fd);
+    }
+}
+
+llm_t *llmNew(char *checkpoint)
+{
+    llm_t *llm;
+
+    llm = calloc(1,sizeof(llm_t));
+
+    if (llm == NULL) {errno = ENOMEM; return NULL;};
+
+    // read in the model.bin file
+    llm->fd = -1;            // file descriptor for memory mapping
+    llm->data = MAP_FAILED;  // memory mapped data pointer
+
+    {
+        FILE *file = fopen(checkpoint, "rb");
+        if (!file) { errno = ENOENT; goto err_return; }
+        // read in the config header
+        if (fread(&(llm->config), sizeof(Config), 1, file) != 1) { errno = EIO; goto err_return; }
+        // negative vocab size is hacky way of signaling unshared weights. bit yikes.
+        int shared_weights = llm->config.vocab_size > 0 ? 1 : 0;
+        llm->config.vocab_size = abs(llm->config.vocab_size);
+        // figure out the file size
+        fseek(file, 0, SEEK_END); // move file pointer to end of file
+        llm->file_size = ftell(file); // get the file size, in bytes
+        fclose(file);
+        // memory map the Transformer weights into the data pointer
+        llm->fd = open(checkpoint, O_RDONLY); // open in read only mode
+        if (llm->fd == -1) { errno = ENOENT; goto err_return; }
+        llm->data = mmap(NULL, llm->file_size, PROT_READ, MAP_PRIVATE, llm->fd, 0);
+        if (llm->data == MAP_FAILED) { errno = EFAULT ; goto err_return; }
+        float* weights_ptr = llm->data + sizeof(Config)/sizeof(float);
+        checkpoint_init_weights(&(llm->weights), &(llm->config), weights_ptr, shared_weights);
+    }
+
+    // read in the tokenizer.bin file
+    llm->vocab = (char**)malloc(llm->config.vocab_size * sizeof(char*));
+    if (llm->vocab == NULL) { errno = ENOMEM; goto err_return; }
+
+    llm->vocab_scores = (float*)malloc(llm->config.vocab_size * sizeof(float));
+    if (llm->vocab_scores == NULL) { errno = ENOMEM; goto err_return; }
+
+    {
+        FILE *file = fopen("tokenizer.bin", "rb");
+        if (!file) { errno = EACCES; goto err_return; }
+        if (fread(&(llm->max_token_length), sizeof(int), 1, file) != 1) { errno = EIO; goto err_return; }
+        int len;
+        for (int i = 0; i < llm->config.vocab_size; i++) {
+            if (fread(llm->vocab_scores + i, sizeof(float), 1, file) != 1) { errno = EIO; goto err_return; }
+            if (fread(&len, sizeof(int), 1, file) != 1) { errno = EIO; goto err_return;  }
+            llm->vocab[i] = (char *)malloc(len + 1);
+            if (llm->vocab[i] == NULL) {errno = ENOMEM; goto err_return;  }
+            if (fread(llm->vocab[i], len, 1, file) != 1) { errno = EIO; goto err_return;  }
+            llm->vocab[i][len] = '\0'; // add the string terminating token
+        }
+        fclose(file);
+    }
+
+    // create and init the application RunState
+    malloc_run_state(&(llm->state), &(llm->config));
+    if (errno) goto err_return;
+    return llm;
+
+err_return: // cleanup
+    llmFree(llm);
+    return NULL;
+}
+
+void llmGenerate(llm_t *llm, FILE *outfile, char *prompt, float temperature, int steps, float topp)
+{
+
+    // process the prompt, if any
+    int *prompt_tokens = NULL;
+    int num_prompt_tokens = 0;
+
+    if (prompt != NULL) {
+        prompt_tokens = (int*)malloc(strlen(prompt) * sizeof(int));
+        bpe_encode(prompt, llm->vocab, llm->vocab_scores, llm->config.vocab_size, llm->max_token_length, prompt_tokens, &num_prompt_tokens);
+    }
+
+    // start the main loop
+    long start = 0;  // used to time our code, only initialized after first iteration
+    int next;        // will store the next token in the sequence
+    int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
+    int pos = 0;     // position in the sequence
+    while (pos < steps) {
+
+        // forward the transformer to get logits for the next token
+        transformer(token, pos, &(llm->config), &(llm->state), &(llm->weights));
+
+        // advance the state state machine
+        if(pos < num_prompt_tokens) {
+            // if we are still processing the input prompt, force the next prompt token
+            next = prompt_tokens[pos];
+        } else {
+            // sample the next token
+            if (temperature == 0.0f) {
+                // greedy argmax sampling: take the token with the highest probability
+                next = argmax(llm->state.logits, llm->config.vocab_size);
+            } else {
+                // apply the temperature to the logits
+                for (int q=0; q<llm->config.vocab_size; q++) { llm->state.logits[q] /= temperature; }
+                // apply softmax to the logits to get the probabilities for next token
+                softmax(llm->state.logits, llm->config.vocab_size);
+                // we sample from this distribution to get the next token
+                if (topp <= 0) {
+                    // simply sample from the predicted probability distribution
+                    next = sample(llm->state.logits, llm->config.vocab_size);
+                } else {
+                    // top-p (nucleus) sampling, clamping the least likely tokens to zero
+                    next = sample_topp(llm->state.logits, llm->config.vocab_size, topp, llm->state.probindex);
+                }
+            }
+        }
+        pos++;
+
+        // data-dependent terminating condition: the BOS (1) token delimits sequences
+        if (next == 1) { break; }
+
+        // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
+        char *token_str = (token == 1 && llm->vocab[next][0] == ' ') ? llm->vocab[next]+1 : llm->vocab[next];
+        fprintf(outfile,"%s", token_str);
+        fflush(outfile);
+        token = next;
+
+        // init the timer here because the first iteration can be slower
+        if (start == 0) { start = time_in_ms(); }
+    }
+    fprintf(outfile,"\n");
+
+    // report achieved tok/s (pos-1 because the timer starts after first iteration)
+    if (pos > 1) {
+        long end = time_in_ms();
+        fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
+    }
+    if (prompt_tokens != NULL) free(prompt_tokens);
+
+}
+
 
 // ----------------------------------------------------------------------------
 // int main
@@ -543,129 +710,25 @@ int main(int argc, char *argv[]) {
     }
     if(rng_seed == 0) { fprintf(stderr, "Cannot use seed=0 because of the rng alg used\n"); return 1; }
 
-    // read in the model.bin file
-    Config config;
-    TransformerWeights weights;
-    int fd = 0;         // file descriptor for memory mapping
-    float* data = NULL; // memory mapped data pointer
-    ssize_t file_size;     // size of the checkpoint file in bytes
-    {
-        FILE *file = fopen(checkpoint, "rb");
-        if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); return 1; }
-        // read in the config header
-        if (fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
-        // negative vocab size is hacky way of signaling unshared weights. bit yikes.
-        int shared_weights = config.vocab_size > 0 ? 1 : 0;
-        config.vocab_size = abs(config.vocab_size);
-        // figure out the file size
-        fseek(file, 0, SEEK_END); // move file pointer to end of file
-        file_size = ftell(file); // get the file size, in bytes
-        fclose(file);
-        // memory map the Transformer weights into the data pointer
-        fd = open(checkpoint, O_RDONLY); // open in read only mode
-        if (fd == -1) { fprintf(stderr, "open failed!\n"); return 1; }
-        data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-        if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
-        float* weights_ptr = data + sizeof(Config)/sizeof(float);
-        checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
+    llm_t *llm = llmNew(checkpoint);
+
+    if (llm == NULL) {
+        switch(errno) {
+           case ENOENT:  fprintf(stderr, "Couldn't open file %s\n", checkpoint); break;
+           case EIO:     fprintf(stderr, "I/O Error\n"); break;
+           case EFAULT:  fprintf(stderr, "mmap() failed!\n"); break;
+           case EACCES:  fprintf(stderr, "Couldn't load tokenizer.bin\n"); break;
+           case ENOMEM:  fprintf(stderr, "Not enough memory\n"); break;
+           default:      fprintf(stderr, "Couldn't load LLM model\n"); break;
+        }
+        exit(1);
     }
+
     // right now we cannot run for more than config.seq_len steps
-    if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
+    if (steps <= 0 || steps > llm->config.seq_len) { steps = llm->config.seq_len; }
 
-    // read in the tokenizer.bin file
-    char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
-    float* vocab_scores = (float*)malloc(config.vocab_size * sizeof(float));
-    unsigned int max_token_length;
-    {
-        FILE *file = fopen("tokenizer.bin", "rb");
-        if (!file) { fprintf(stderr, "couldn't load tokenizer.bin\n"); return 1; }
-        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-        int len;
-        for (int i = 0; i < config.vocab_size; i++) {
-            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1;}
-            if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-            vocab[i] = (char *)malloc(len + 1);
-            if (fread(vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-            vocab[i][len] = '\0'; // add the string terminating token
-        }
-        fclose(file);
-    }
-
-    // create and init the application RunState
-    RunState state;
-    malloc_run_state(&state, &config);
-
-    // process the prompt, if any
-    int *prompt_tokens = NULL;
-    int num_prompt_tokens = 0;
-    if (prompt != NULL) {
-        prompt_tokens = (int*)malloc(strlen(prompt) * sizeof(int));
-        bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
-    }
-
-    // start the main loop
-    long start = 0;  // used to time our code, only initialized after first iteration
-    int next;        // will store the next token in the sequence
-    int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
-    int pos = 0;     // position in the sequence
-    while (pos < steps) {
-
-        // forward the transformer to get logits for the next token
-        transformer(token, pos, &config, &state, &weights);
-
-        // advance the state state machine
-        if(pos < num_prompt_tokens) {
-            // if we are still processing the input prompt, force the next prompt token
-            next = prompt_tokens[pos];
-        } else {
-            // sample the next token
-            if (temperature == 0.0f) {
-                // greedy argmax sampling: take the token with the highest probability
-                next = argmax(state.logits, config.vocab_size);
-            } else {
-                // apply the temperature to the logits
-                for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
-                // apply softmax to the logits to get the probabilities for next token
-                softmax(state.logits, config.vocab_size);
-                // we sample from this distribution to get the next token
-                if (topp <= 0) {
-                    // simply sample from the predicted probability distribution
-                    next = sample(state.logits, config.vocab_size);
-                } else {
-                    // top-p (nucleus) sampling, clamping the least likely tokens to zero
-                    next = sample_topp(state.logits, config.vocab_size, topp, state.probindex);
-                }
-            }
-        }
-        pos++;
-
-        // data-dependent terminating condition: the BOS (1) token delimits sequences
-        if (next == 1) { break; }
-
-        // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
-        char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
-        printf("%s", token_str);
-        fflush(stdout);
-        token = next;
-
-        // init the timer here because the first iteration can be slower
-        if (start == 0) { start = time_in_ms(); }
-    }
-    printf("\n");
-
-    // report achieved tok/s (pos-1 because the timer starts after first iteration)
-    if (pos > 1) {
-        long end = time_in_ms();
-        fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
-    }
-
-    // memory and file handles cleanup
-    free_run_state(&state);
-    for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
-    free(vocab);
-    free(vocab_scores);
-    if (prompt_tokens != NULL) free(prompt_tokens);
-    if (data != MAP_FAILED) munmap(data, file_size);
-    if (fd != -1) close(fd);
+    llmGenerate(llm, stdout, prompt, temperature, steps, topp);
+    
+    llmFree(llm);
     return 0;
 }
