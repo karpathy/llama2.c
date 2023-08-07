@@ -252,6 +252,10 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - (LoRA) finetuning and export of Llama 2 models
 - make more better tests to decrease yolo
 
+## run.c inference architecture
+
+![](assets/llama2.svg)
+
 ## License
 
 MIT
