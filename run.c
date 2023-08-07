@@ -412,6 +412,11 @@ bool build_vocab(const char *filename, Vocabulary *v) {
     return true;
 }
 
+int lookup_merge(int token1, int token2, char *str_buffer, const Vocabulary *v) {
+    sprintf(str_buffer, "%s%s", v->vocab[token1], v->vocab[token2]);
+    return lookup_token(str_buffer, v);
+}
+
 void bpe_encode(char *text, const Vocabulary *v, int *tokens, int *n_tokens) {
     // a temporary buffer to merge two consecutive tokens
     char* str_buffer = malloc((v->max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
@@ -426,6 +431,11 @@ void bpe_encode(char *text, const Vocabulary *v, int *tokens, int *n_tokens) {
         (*n_tokens)++;
     }
 
+    int *possible_merges = calloc(*n_tokens - 1, sizeof(int));
+    for (int i = 0; i < (*n_tokens - 1); i++) {
+        possible_merges[i] = lookup_merge(tokens[i], tokens[i+1], str_buffer, v);
+    }
+
     // merge the best consecutive pair each iteration, according the scores in vocab_scores
     while (1) {
         float best_score = -1e10;
@@ -434,8 +444,7 @@ void bpe_encode(char *text, const Vocabulary *v, int *tokens, int *n_tokens) {
 
         for (int i=0; i < (*n_tokens-1); i++) {
             // check if we can merge the pair (tokens[i], tokens[i+1])
-            sprintf(str_buffer, "%s%s", v->vocab[tokens[i]], v->vocab[tokens[i+1]]);
-            int id = lookup_token(str_buffer, v);
+            int id = possible_merges[i];
             if (id != -1 && v->vocab_scores[id] > best_score) {
                 // this merge pair exists in vocab! record its score and position
                 best_score = v->vocab_scores[id];
@@ -453,8 +462,12 @@ void bpe_encode(char *text, const Vocabulary *v, int *tokens, int *n_tokens) {
         // delete token at position best_idx+1, shift the entire sequence back 1
         for (int i = best_idx+1; i < (*n_tokens-1); i++) {
             tokens[i] = tokens[i+1];
+            possible_merges[i] = possible_merges[i+1];
         }
         (*n_tokens)--; // token length decreased
+        // update possible merge pairs on the left and right of the merged pair
+        if (best_idx < (*n_tokens-1)) { possible_merges[best_idx]   = lookup_merge(tokens[best_idx],   tokens[best_idx+1], str_buffer, v); }
+        if (best_idx > 0)             { possible_merges[best_idx-1] = lookup_merge(tokens[best_idx-1], tokens[best_idx],   str_buffer, v); }
     }
 
     free(str_buffer);
