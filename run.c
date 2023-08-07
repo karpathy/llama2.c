@@ -608,6 +608,9 @@ void llmGenerate(llm_t *llm, FILE *outfile, char *prompt, float temperature, int
         bpe_encode(prompt, llm->vocab, llm->vocab_scores, llm->config.vocab_size, llm->max_token_length, prompt_tokens, &num_prompt_tokens);
     }
 
+    // right now we cannot run for more than config.seq_len steps
+    if (steps <= 0 || steps > llm->config.seq_len) { steps = llm->config.seq_len; }
+
     // start the main loop
     long start = 0;  // used to time our code, only initialized after first iteration
     int next;        // will store the next token in the sequence
@@ -723,9 +726,6 @@ int main(int argc, char *argv[]) {
         }
         exit(1);
     }
-
-    // right now we cannot run for more than config.seq_len steps
-    if (steps <= 0 || steps > llm->config.seq_len) { steps = llm->config.seq_len; }
 
     llmGenerate(llm, stdout, prompt, temperature, steps, topp);
     
