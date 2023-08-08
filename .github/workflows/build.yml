@@ -3,17 +3,19 @@ name: Continuous Integration
 on:
   push:
     branches:
-      - master
-    paths: ['.github/workflows/**', '**/Makefile', '**/*.c', '**/*.h']
+      - master, 
+    paths: ['.github/workflows/**', '**/Makefile', '**/*.c', '**/*.h', '**/*.py']
   pull_request:
     types: [opened, synchronize, reopened]
-    paths: ['**/Makefile', '**/*.c', '**/*.h']
+    paths: ['**/Makefile', '**/*.c', '**/*.h', '**/*.py']
+  #for manual trigger
+  workflow_dispatch:  
 
 env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
 jobs:
-  # check basic builds to avoid breaking changes
+  # check basic builds to avoid breaking changes, generate a randomized model and compare the output on different platforms
   ubuntu-focal-make:
     runs-on: ubuntu-20.04
 
@@ -33,13 +35,42 @@ jobs:
         run: |
           make
 
+      - name: Set up Python 10
+        uses: actions/setup-python@v4.7.0
+        with:
+          python-version: '3.10.11'
+          cache: 'pip'
+      
+      - name: Verify Python version
+        run: python --version
+        
+      - run: pip install -r requirements.txt
+      
+      - name: generate ramdomized model
+        run: python train.py --init_from=randomized_model --out_dir=out
+      
+      - name: Sample the randomized model
+        run: |
+          ./run out/randomized_model.bin -t 1.0 -p 0.9 -s 40 -n 256 -i "I feel weired today"  > out/sample.txt
+          cat out/sample.txt
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3.1.2
+        with:
+          name: ubuntu-output
+          path: out/sample.txt          
+
       - name: Build runfast
         id: make_build_runfast
         run: |
           make runfast
 
   macOS-latest-make:
+    needs: ubuntu-focal-make
     runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Clone
@@ -67,10 +98,49 @@ jobs:
         run: |
           make run CC=clang
 
+      - name: Set up Python 10
+        uses: actions/setup-python@v4.7.0
+        with:
+          python-version: '3.10.11'
+          cache: 'pip'
+  
+      - name: Verify Python version
+        run: python --version
+
+      - name: install python dependencies
+        run: pip install -r requirements.txt
+
+      - name: generate ramdomized model
+        run: python train.py --init_from=randomized_model --out_dir=out      
+
+      - name: Sample the randomized model
+        shell: bash 
+        run: |
+          ./run out/randomized_model.bin -t 1.0 -p 0.9 -s 40 -n 256  -i "I feel weired today" > out/sample.txt          
+          cat out/sample.txt
+
+      - name: Download Ubuntu output
+        uses: actions/download-artifact@v3.0.2
+        with:
+          name: ubuntu-output
+          path: ubuntu-output/
+
+      - name: inspect the two samples
+        shell: bash      
+        run: |
+          cat out/sample.txt
+          cat ubuntu-output/sample.txt
+
+      - name: Compare outputs 
+        shell: bash
+        run: diff -q out/sample.txt ubuntu-output/sample.txt           
+        
   windows-latest-make:
+    needs: ubuntu-focal-make
     runs-on: windows-latest
 
     strategy:
+      fail-fast: false
       matrix:
         arch:
           - amd64
@@ -95,7 +165,55 @@ jobs:
         run: |
           .\build_msvc.bat
 
+      - name: Set up Python 10
+        if: matrix.arch != 'amd64_arm64'
+        uses: actions/setup-python@v4.7.0
+        with:
+          python-version: '3.10.11'
+          cache: 'pip'
+        
+      - name: Verify Python version
+        if: matrix.arch != 'amd64_arm64'
+        run: python --version
+
+      - name: install python dependencies 
+        if: matrix.arch != 'amd64_arm64'
+        run: pip install -r requirements.txt
+        
+      - name: generate ramdomized model
+        if: matrix.arch != 'amd64_arm64'
+        run: python train.py --init_from=randomized_model --out_dir=out
+
+      - name: Sample the randomized model
+        if: matrix.arch != 'amd64_arm64'
+        run: |
+          .\run.exe out\randomized_model.bin -t 1.0 -p 0.9 -s 40 -n 256  -i "I feel weired today" | Out-File -FilePath out\sample.txt          
+
+      - name: Download Ubuntu output
+        if: matrix.arch != 'amd64_arm64'
+        uses: actions/download-artifact@v3.0.2
+        with:
+          name: ubuntu-output
+          path: ubuntu-output/    
+      
+      - name: inspect the two samples
+        if: matrix.arch != 'amd64_arm64'
+        run: |
+          Get-Content out\sample.txt
+          Get-Content ubuntu-output\sample.txt
+          
+      - name: Compare outputs
+        if: matrix.arch != 'amd64_arm64'
+        shell: powershell
+        run: |
+          $diff = Compare-Object -ReferenceObject (Get-Content -Path out/sample.txt -Encoding UTF8) -DifferenceObject (Get-Content -Path ubuntu-output/sample.txt -Encoding UTF8)
+          if ($diff) {
+            Write-Output "Files are not identical."
+            Write-Output $diff
+              exit 1
+          }
   windows-latest-mingw:
+    needs: ubuntu-focal-make    
     runs-on: windows-latest
 
     defaults:
@@ -122,3 +240,48 @@ jobs:
         id: build_mingw
         run: |
           make win64
+        
+      - name: Set up Python 10        
+        uses: actions/setup-python@v4.7.0
+        with:
+          python-version: '3.10.11'
+          cache: 'pip'
+        
+      - name: Verify Python version
+        shell: powershell
+        run: python --version
+
+      - name: install python dependencies 
+        shell: powershell
+        run: pip install -r requirements.txt
+        
+      - name: generate ramdomized model
+        shell: powershell
+        run: python train.py --init_from=randomized_model --out_dir=out
+
+      - name: Sample the randomized model
+        shell: powershell
+        run: |
+          .\run.exe out\randomized_model.bin -t 1.0 -p 0.9 -s 40 -n 256 -i "I feel weired today" | Out-File -FilePath out\sample.txt          
+                  
+      - name: Download Ubuntu output        
+        uses: actions/download-artifact@v3.0.2
+        with:
+          name: ubuntu-output
+          path: ubuntu-output/    
+      
+      - name: inspect the two samples
+        shell: powershell
+        run: |
+          Get-Content out\sample.txt
+          Get-Content ubuntu-output\sample.txt
+          
+      - name: Compare outputs
+        shell: powershell
+        run: |
+          $diff = Compare-Object -ReferenceObject (Get-Content -Path out/sample.txt -Encoding UTF8) -DifferenceObject (Get-Content -Path ubuntu-output/sample.txt -Encoding UTF8)
+          if ($diff) {
+            Write-Output "Files are not identical."
+            Write-Output $diff
+              exit 1
+          }  
