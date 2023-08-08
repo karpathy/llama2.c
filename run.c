@@ -213,6 +213,13 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     }
 }
 
+void complexmul(float* a, float* b, float c, float d) {
+    // (a+ib)(c+id) -> (ac-bd) + i(ad+bd)
+    float a0 = *a;
+    *a = *a * c - *b * d;
+    *b = a0 * d + *b * c;
+}
+
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
 
     // a few convenience variables
@@ -226,8 +233,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     memcpy(x, content_row, dim*sizeof(*x));
 
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
-    float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
+    float* fr = w->freq_cis_real + pos * head_size / 2;
+    float* fi = w->freq_cis_imag + pos * head_size / 2;
 
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
@@ -242,16 +249,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
         for (int i = 0; i < dim; i+=2) {
-            float q0 = s->q[i];
-            float q1 = s->q[i+1];
-            float k0 = s->k[i];
-            float k1 = s->k[i+1];
-            float fcr = freq_cis_real_row[(i % head_size) / 2];
-            float fci = freq_cis_imag_row[(i % head_size) / 2];
-            s->q[i]   = q0 * fcr - q1 * fci;
-            s->q[i+1] = q0 * fci + q1 * fcr;
-            s->k[i]   = k0 * fcr - k1 * fci;
-            s->k[i+1] = k0 * fci + k1 * fcr;
+            int k = (i % head_size) / 2;
+            complexmul(s->q+i, s->q+i+1, fr[k], fi[k]);
+            complexmul(s->k+i, s->k+i+1, fr[k], fi[k]);
         }
 
         // save key,value at this time step (pos) to our kv cache
