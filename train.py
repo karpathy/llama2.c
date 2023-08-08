@@ -66,7 +66,7 @@ grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 decay_lr = True  # whether to decay the learning rate
 warmup_iters = 1000  # how many steps to warm up for
 # system
-device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
+device = "cpu"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = "bfloat16"  # float32|bfloat16|float16
 compile = True  # use PyTorch 2.0 to compile the model to be faster
 # -----------------------------------------------------------------------------
@@ -175,6 +175,20 @@ elif init_from == "resume":
     model.load_state_dict(state_dict)
     iter_num = checkpoint["iter_num"]
     best_val_loss = checkpoint["best_val_loss"]
+elif init_from == "randomized_model":
+    #init a model with random weights for CI test
+    gptconf = ModelArgs(**model_args)
+    model = Transformer(gptconf)
+    state_dict = model.state_dict()    
+    state_dict = model.state_dict()    
+    torch.manual_seed(40)    
+    #radnomize the weights
+    for name in state_dict:
+        state_dict[name] = torch.rand_like(state_dict[name])
+    # Load the randomized state_dict back into the model
+    model.load_state_dict(state_dict)        
+    model.export(os.path.join(out_dir, "randomized_model.bin"))
+    exit(0)
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
