@@ -187,7 +187,7 @@ jobs:
       - name: Sample the randomized model
         if: matrix.arch != 'amd64_arm64'
         run: |
-          .\run.exe out\randomized_model.bin -t 1.0 -p 0.9 -s 40 -n 256  -i "I feel weired today" | Out-File -FilePath out\sample.txt          
+          .\run.exe out\randomized_model.bin -t 1.0 -p 0.9 -s 40 -n 256  -i "I feel weired today" | Out-File -FilePath out\sample.txt -Encoding UTF8         
 
       - name: Download Ubuntu output
         if: matrix.arch != 'amd64_arm64'
@@ -199,8 +199,8 @@ jobs:
       - name: inspect the two samples
         if: matrix.arch != 'amd64_arm64'
         run: |
-          Get-Content out\sample.txt
-          Get-Content ubuntu-output\sample.txt
+          Get-Content -Path out\sample.txt -Encoding UTF8
+          Get-Content -Path ubuntu-output\sample.txt -Encoding UTF8
           
       - name: Compare outputs
         if: matrix.arch != 'amd64_arm64'
@@ -262,7 +262,7 @@ jobs:
       - name: Sample the randomized model
         shell: powershell
         run: |
-          .\run.exe out\randomized_model.bin -t 1.0 -p 0.9 -s 40 -n 256 -i "I feel weired today" | Out-File -FilePath out\sample.txt          
+          .\run.exe out\randomized_model.bin -t 1.0 -p 0.9 -s 40 -n 256 -i "I feel weired today" | Out-File -FilePath out\sample.txt -Encoding UTF8
                   
       - name: Download Ubuntu output        
         uses: actions/download-artifact@v3.0.2
@@ -273,8 +273,8 @@ jobs:
       - name: inspect the two samples
         shell: powershell
         run: |
-          Get-Content out\sample.txt
-          Get-Content ubuntu-output\sample.txt
+          Get-Content -Path out\sample.txt -Encoding UTF8
+          Get-Content -Path ubuntu-output\sample.txt -Encoding UTF8
           
       - name: Compare outputs
         shell: powershell
