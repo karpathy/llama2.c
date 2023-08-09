@@ -241,14 +241,15 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## unsorted todos
 
-- should calculate freq_cis online in the script run.c instead of loading them
-- support Llama 2 7B Chat models and tune run.c to Chat UI/UX
-- speed up 7B Llama 2 models sufficiently to work at interactive rates on Apple Silicon MacBooks
-- investigate precisions other than just fp32: fp16, and quantization
-- investigate running on other backends, especially GPUs
 - add multiquery support into run.c
+- add custom bpe training code and the ability to train a smaller vocabulary (32K is to much)
+- should calculate freq_cis online in the script run.c instead of loading them
+- int4/8 quantization
+- export the model in a more sensible output format with a proper header, etc.
+- train a tiny Llama test model (committed to repo) and use it as reference in unit tests
+- support Llama 2 7B Chat models and tune run.c to Chat UI/UX
+- llama2.cu investigate and merge
 - (LoRA) finetuning and export of Llama 2 models
-- make more better tests to decrease yolo
 
 ## License
 
