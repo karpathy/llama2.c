@@ -517,7 +517,7 @@ int main(int argc, char *argv[]) {
     char *checkpoint = NULL;  // e.g. out/model.bin
     float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 0.9f;        // top-p in nucleus sampling
-    rng_seed = (unsigned int)time(NULL); // seed rng with time by default
+    rng_seed = 0; // seed rng with time by default
     int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
 
@@ -536,7 +536,7 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
         else { error_usage(); }
     }
-    if(rng_seed == 0) { fprintf(stderr, "Cannot use seed=0 because of the rng alg used\n"); return 1; }
+    if(rng_seed == 0) { rng_seed =  (unsigned int)time(NULL);}
 
     // read in the model.bin file
     Config config;
