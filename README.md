@@ -10,6 +10,8 @@ Please note that this started recently as just a fun weekend project: I took my 
 
 ## feel the magic
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/karpathy/llama2.c/blob/master/run.ipynb)
+
 First, navigate to the folder when you keep your projects and clone this repository to this folder:
 
 ```bash
