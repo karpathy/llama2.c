@@ -181,21 +181,18 @@ void plotHistogram(int* histogram, float min, float max, char* name){
     char set_output[150];
     sprintf(png_file_name, "%s%s%s", "pngs/", name, ".png");
     sprintf(set_output, "%s%s%s", "set output '", png_file_name, "\n");
-    //printf(">>>>>>>>>> %s", png_file_name);
 
     char title[150];
-    //sprintf(title, "%s %s %s %.2f %s %.2f %s","set title", png_file_name,"Histogram (Min: ", min, ", Max: ", max, ")'\n");
     sprintf(title, "%s%s%s%.4f%s%.4f%s","set title '[ ", name," ] Histogram (Min: ", min, ", Max: ", max, ")'\n");
 
     FILE* gp = popen("gnuplot", "w");
     fprintf(gp, "set terminal png\n");                 // Set terminal to PNG format
-    //fprintf(gp, "set output 'histogram_plot.png'\n"); // Specify output file name
     fprintf(gp, set_output); // Specify output file name
-    fprintf(gp, "set style data histogram\n");
-    fprintf(gp, "set xlabel 'Bins'\n");
-    //fprintf(gp, "set title 'Histogram (Min: %.2f, Max: %.2f)'\n", min, max);
+    //fprintf(gp, "set style data histogram\n");
+    //fprintf(gp, "set xlabel 'Bins'\n");
     fprintf(gp, title);
-    fprintf(gp, "plot '-' using 2:xticlabels(1) title 'Frequency'\n");
+    //fprintf(gp, "plot '-' using 2:xticlabels(1) title 'Frequency'\n");
+    fprintf(gp, "plot '-' with boxes\n");
     for (int i = 0; i < HISTOGRAM_BUCKETS; ++i) {
         fprintf(gp, "%d %d\n", i, histogram[i]);
     }
