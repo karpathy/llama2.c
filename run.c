@@ -236,9 +236,17 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
-        matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
+        #pragma omp parallel sections
+        {
+            #pragma omp section
+            matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
+
+            #pragma omp section
+            matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
+
+            #pragma omp section
+            matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
+        }
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
         for (int i = 0; i < dim; i+=2) {
