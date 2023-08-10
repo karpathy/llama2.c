@@ -32,6 +32,15 @@ runfast: run.c
 runomp: run.c
 	$(CC) -Ofast -fopenmp -march=native run.c  -lm  -o run
 
+# compile with AVX2 intrinsics enabled
+.PHONY: runavx2
+runavx2: run.c
+	$(CC) -Ofast -march=native -mavx2 -DLLAMAC_AVX2 -o run run.c -lm
+
+.PHONY: runompavx2
+ runompavx2: run.c
+	$(CC) -Ofast -fopenmp -march=native -mavx2 -DLLAMAC_AVX2 run.c  -lm  -o run
+
 .PHONY: win64
 win64:
 	x86_64-w64-mingw32-gcc -Ofast -D_WIN32 -o run.exe -I. run.c win.c
