@@ -465,34 +465,37 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     // tokens that exceed probability topp. This way we never sample tokens that
     // have very low probabilities and are less likely to go "off the rails".
 
-    int max_index = 0;
-    const float min_probability = 0.001f;
+    int last_idx = 0;
+    int max_idx = 0;
+    const float min_probability = 1e-5;
     // quicksort indices in descending order of probabilities
     for (int i = 0; i < n; i++) {
         if (probabilities[i] > min_probability) {
-          probindex[max_index].index = i;
-          probindex[max_index].prob = probabilities[i];
-          max_index++;
+          probindex[max_idx].index = i;
+          probindex[max_idx].prob = probabilities[i];
+          max_idx++;
         }
     }
-    qsort(probindex, max_index, sizeof(ProbIndex), compare);
-
-    // truncate the list where cumulative probability exceeds topp
-    float cumulative_prob = 0.0f;
-    int last_idx = 0;
-    for (int i = 0; i < max_index; i++) {
-        cumulative_prob += probindex[i].prob;
-        last_idx = i; // In case the sum up to max_index is less than topp, use up to max_index
-        if (cumulative_prob > topp)  break; // we've exceeded topp by including last_idx
-    }
-
-    // sample from the truncated list
-    float r = random_f32() * cumulative_prob;
-    float cdf = 0.0f;
-    for (int i = 0; i <= last_idx; i++) {
-        cdf += probindex[i].prob;
-        if (r < cdf) {
-            return probindex[i].index;
+    // fprintf(stderr, "max_idx: %d\n",max_idx);
+    if (max_idx > 1) {
+        qsort(probindex, max_idx, sizeof(ProbIndex), compare);
+    
+        // truncate the list where cumulative probability exceeds topp
+        float cumulative_prob = 0.0f;
+        for (int i = 0; i < max_idx; i++) {
+            cumulative_prob += probindex[i].prob;
+            last_idx = i; // In case the sum up to max_idx is less than topp, use up to max_idx
+            if (cumulative_prob > topp)  break; // we've exceeded topp by including last_idx
+        }
+    
+        // sample from the truncated list
+        float r = random_f32() * cumulative_prob;
+        float cdf = 0.0f;
+        for (int i = 0; i <= last_idx; i++) {
+            cdf += probindex[i].prob;
+            if (r < cdf) {
+                return probindex[i].index;
+            }
         }
     }
     return probindex[last_idx].index; // in case of rounding errors
