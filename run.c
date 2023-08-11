@@ -213,6 +213,39 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     }
 }
 
+#ifdef _OPENMP
+/**
+ * When OpenMP is enabled, this macro performs N matrix-vector multiplications
+ * by calling 'matmul' N times. This mimicks the previous behavior. In testing,
+ * it was found that for large models, OpenMP performance with fused matmul was
+ * slightly lower, so it is disabled for now.
+ */
+#define MATMUL_FUSED(N, OUTS, X, WS, n, d) { \
+    for (int i = 0; i < N; ++i) { \
+        matmul(OUTS[i], X, WS[i], n, d); \
+    } \
+}
+#else
+/**
+ * In single threaded mode, this macro executes N matrix-vector multiplications
+ * using the same X vector. This improves cache locality by using X more than
+ * once after it is loaded into cache.
+ */
+#define MATMUL_FUSED(N, OUTS, X, WS, n, d) { \
+    for (int i = 0; i < d; ++i) { \
+        float val[N] = {0}; \
+        for (int col = 0; col < n; ++col) { \
+            for (int j = 0; j < N; ++j) { \
+                val[j] += WS[j][i * n + col] * X[col]; \
+            } \
+        } \
+        for (int j = 0; j < N; ++j) { \
+            OUTS[j][i] = val[j]; \
+        } \
+    } \
+}
+#endif
+
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
 
     // a few convenience variables
@@ -235,10 +268,11 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
-        // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
-        matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
+        // qkv matmuls for this position, here we use fused matmul as an
+        // optimization, but doing one matmul per q, k, v is also valid
+        float *outs[] = {s->q, s->k, s->v};
+        float *ws[] = {w->wq + l*dim*dim, w->wk + l*dim*dim, w->wv + l*dim*dim};
+        MATMUL_FUSED(3, outs, s->xb, ws, dim, dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
         for (int i = 0; i < dim; i+=2) {
@@ -312,8 +346,10 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
-        matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+        // fused matmuls as an optimization
+        float *outs2[] = {s->hb, s->hb2};
+        float *ws2[] = {w->w1 + l*dim*hidden_dim, w->w3 + l*dim*hidden_dim};
+        MATMUL_FUSED(2, outs2, s->xb, ws2, dim, hidden_dim);
 
         // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         for (int i = 0; i < hidden_dim; i++) {
