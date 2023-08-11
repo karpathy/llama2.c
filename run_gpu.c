@@ -165,14 +165,17 @@ static const char* shader_rmsnorm_squares_and_sum =
 static const char* shader_softmax_exp_and_sum =
     "#version 320 es\n"
     "uniform int insize;\n"
-    "uniform float max_val;\n"
     "layout(local_size_x = 1) in;\n"
 
     "layout(binding = 0) readonly buffer Input0{\n"
     "    float data[];\n"
     "} a;\n"
 
-    "layout(binding = 1) writeonly buffer Output0{\n"
+    "layout(binding = 1) readonly buffer Input1{\n"
+    "    float data[];\n"
+    "} maxVal_arr;\n"
+
+    "layout(binding = 2) writeonly buffer Output0{\n"
     "    float data[];\n"
     "} b;\n"
 
@@ -180,6 +183,7 @@ static const char* shader_softmax_exp_and_sum =
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    int i0 = idx*2;\n"
     "    int i1 = i0+1;\n"
+    "    float max_val = maxVal_arr.data[0];\n"
     "    b.data[idx]  = exp(a.data[i0] - max_val);\n"
     "    if(i1 < insize){\n"
     "       b.data[idx] += exp(a.data[i1] - max_val);\n"
@@ -188,19 +192,22 @@ static const char* shader_softmax_exp_and_sum =
 
 static const char* shader_softmax_normalize =
     "#version 320 es\n"
-    "uniform int insize;\n"
-    "uniform float max_val;\n"
     "layout(local_size_x = 1) in;\n"
 
     "layout(binding = 0) readonly buffer Input0{\n"
     "    float data[];\n"
     "} sum_arr;\n"
 
-    "layout(binding = 1) buffer Input1{\n"
+    "layout(binding = 1) readonly buffer Input1{\n"
+    "    float data[];\n"
+    "} maxVal_arr;\n"
+
+    "layout(binding = 2) buffer Input2{\n"
     "    float data[];\n"
     "} x;\n"
 
     "void main(){\n"
+    "    float max_val = maxVal_arr.data[0];\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    x.data[idx] = x.data[idx]/sum_arr.data[0];\n"
     "}";
@@ -403,6 +410,7 @@ typedef struct {
     GLuint value_cache_len;
     GLuint mulBuffer_1;  // mulBuffer 1
     GLuint mulBuffer_2;  // mulBuffer 2
+    GLuint mulBuffer_3;  // mulBuffer 2
     GLuint mulBuffer_len;
 } RunState;
 
@@ -585,6 +593,7 @@ void malloc_run_state(RunState* s, Config* p) {
     }
     create_GPU_buffer(s->mulBuffer_1, s->mulBuffer_len, GL_DYNAMIC_DRAW);
     create_GPU_buffer(s->mulBuffer_2, s->mulBuffer_len, GL_DYNAMIC_DRAW);
+    create_GPU_buffer(s->mulBuffer_3, s->mulBuffer_len, GL_DYNAMIC_DRAW);
 }
 
 void free_run_state(RunState* s) {
@@ -603,6 +612,7 @@ void free_run_state(RunState* s) {
     glDeleteBuffers(1, &s->value_cache);
     glDeleteBuffers(1, &s->mulBuffer_1);
     glDeleteBuffers(1, &s->mulBuffer_2);
+    glDeleteBuffers(1, &s->mulBuffer_3);
 }
 
 void upload_weights(TransformerWeights_local* local, TransformerWeights_gpu* remote, Config* p) {
@@ -762,41 +772,122 @@ void rmsnorm(GPUProgram* prog, RunState* state, GLuint o, GLuint x, GLuint weigh
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 
-void softmax(float* x, int size) {
+void softmax(GPUProgram* prog, RunState* state, GLuint x, int size) {
     // find max value (for numerical stability)
-    float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
+    int currentStepSize = 0;
+    int nextStepSize = size;
+
+    GLuint currentBuffer = state->mulBuffer_1;
+    GLuint nextBuffer = state->mulBuffer_2;
+    GLuint resBuffer_max;
+    GLuint resBuffer_sum;
+    GLuint tmp;
+    do{
+        //swap current and next
+        tmp = currentBuffer;
+        currentBuffer = nextBuffer;
+        nextBuffer = tmp;
+
+        currentStepSize = nextStepSize;
+        nextStepSize = currentStepSize / 2;
+        if (currentStepSize % 2 == 1) {
+            nextStepSize += 1;
         }
-    }
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
+        glUseProgram(prog->shader_max);
+        int insize = glGetUniformLocation(prog->shader_max, "insize");
+        glUniform1i(insize, currentStepSize);
+        glDispatchCompute(nextStepSize, 1, 1);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        GPU_CHECK();
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+    }while(nextStepSize!=1);
+    resBuffer_max = nextBuffer;
+
     // exp and sum
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
+    currentStepSize = size;
+    nextStepSize = currentStepSize / 2;
+
+    nextBuffer = state->mulBuffer_3;
+
+    if (currentStepSize % 2 == 1) {
+        nextStepSize += 1;
     }
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, resBuffer_max);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, nextBuffer);
+    glUseProgram(prog->shader_softmax_exp_and_sum);
+    int insize = glGetUniformLocation(prog->shader_softmax_exp_and_sum, "insize");
+    glUniform1i(insize, currentStepSize);
+    glDispatchCompute(nextStepSize, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    GPU_CHECK();
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+    while (nextStepSize != 1) {
+        //swap current and next
+        tmp = currentBuffer;
+        currentBuffer = nextBuffer;
+        nextBuffer = tmp;
+
+        currentStepSize = nextStepSize;
+        nextStepSize = currentStepSize / 2;
+        if (currentStepSize % 2 == 1) {
+            nextStepSize += 1;
+        }
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
+        glUseProgram(prog->shader_sum);
+        int insize = glGetUniformLocation(prog->shader_sum, "insize");
+        glUniform1i(insize, currentStepSize);
+        glDispatchCompute(nextStepSize, 1, 1);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        GPU_CHECK();
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    }
+    resBuffer_sum = nextBuffer;
+
     // normalize
-    for (int i = 0; i < size; i++) {
-        x[i] /= sum;
-    }
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, resBuffer_sum);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, resBuffer_max);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, x);
+    glUseProgram(prog->shader_softmax_normalize);
+    glDispatchCompute(size, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    GPU_CHECK();
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 
-void matmul(float* xout, float* x, float* w, int n, int d) {
+void matmul(GPUProgram *prog, RunState *state, GLuint xout, GLuint x, GLuint w, int n, int d, int x_offset, int w_offset) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
-    int i;
-#pragma omp parallel for private(i)
-    for (i = 0; i < d; i++) {
-        float val = 0.0f;
-        for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
-        }
-        xout[i] = val;
-    }
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, w);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, xout);
+    glUseProgram(prog->shader_matmul);
+
+    int n_gpu = glGetUniformLocation(prog->shader_matmul, "n");
+    glUniform1i(n_gpu, n);
+
+    int x_offset_gpu = glGetUniformLocation(prog->shader_matmul, "x_offset");
+    glUniform1i(x_offset_gpu, x_offset);
+
+    int w_offset_gpu = glGetUniformLocation(prog->shader_matmul, "w_offset");
+    glUniform1i(w_offset_gpu, w_offset);
+
+    glDispatchCompute(d, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    GPU_CHECK();
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 
-void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
+void transformer(int token, int pos, Config* p, GPUProgram *prog, RunState* s, TransformerWeights_gpu* w) {
     // a few convenience variables
     float* x = s->x;
     int dim = p->dim;
@@ -808,6 +899,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     memcpy(x, content_row, dim * sizeof(*x));
 
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
+    int freq_cis_idx_delta = pos * head_size / 2;
     float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
     float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
 
