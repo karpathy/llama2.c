@@ -57,31 +57,6 @@ typedef struct {
     float* wcls;
 } TransformerWeights;
 
-
-typedef struct {
-    // token embedding table
-    int8_t* token_embedding_table;    // (vocab_size, dim)
-    // weights for rmsnorms
-    int8_t* rms_att_weight; // (layer, dim) rmsnorm weights
-    int8_t* rms_ffn_weight; // (layer, dim)
-    // weights for matmuls
-    int8_t* wq; // (layer, dim, dim)
-    int8_t* wk; // (layer, dim, dim)
-    int8_t* wv; // (layer, dim, dim)
-    int8_t* wo; // (layer, dim, dim)
-    // weights for ffn
-    int8_t* w1; // (layer, hidden_dim, dim)
-    int8_t* w2; // (layer, dim, hidden_dim)
-    int8_t* w3; // (layer, hidden_dim, dim)
-    // final rmsnorm
-    int8_t* rms_final_weight; // (dim,)
-    // freq_cis for RoPE relatively positional embeddings
-    int8_t* freq_cis_real; // (seq_len, dim/2)
-    int8_t* freq_cis_imag; // (seq_len, dim/2)
-    // (optional) classifier weights for the logits, on the last layer
-    int8_t* wcls;
-} TransformerWeightsInt8;
-
 // ----------------------------------------------------------------------------
 // initialization: read from checkpoint
 
