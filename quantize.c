@@ -144,7 +144,7 @@ float get_max_vals(float *ptr, int size){
     float max = -INFINITY;
 
     for (int i = 0; i < size; i++){
-        if (ptr[i] > max) max = ptr[i];
+        if (fabs(ptr[i]) > max) max = ptr[i];
     }
     return max; 
  
