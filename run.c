@@ -466,11 +466,29 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     // have very low probabilities and are less likely to go "off the rails".
 
     // quicksort indices in descending order of probabilities
+    // We filter low probabilities to accelerate the qsort flow. This is done by moving the relevant
+    // entries to the top of the list, then running qsort on a trimmed list
+    unsigned int cur_filtered_index = 0;
+    float threshold = (1-topp)/n;
+    // Note: the theshold above assures that any value below it does not belong to topp.
+    // Using a higher threshold is also a valid approach, but then we also need to accumulate
+    // the probabilities and assure that the values we included are indeed sum to > topp, and if not
+    // fallback to the original behavior. 
+    float cumulative_filtered_prob = 0.0f;
     for (int i = 0; i < n; i++) {
+        if (probabilities[i] > threshold){
+            ProbIndex t;
+            t = probindex[cur_filtered_index];
+            probindex[i] = probindex[cur_filtered_index];
+            probindex[cur_filtered_index] = t;
+            cur_filtered_index++;
+            cumulative_filtered_prob += probabilities[i];
+        }
         probindex[i].index = i;
         probindex[i].prob = probabilities[i];
     }
-    qsort(probindex, n, sizeof(ProbIndex), compare);
+
+    qsort(probindex, cumulative_filtered_prob>topp?cur_filtered_index:n, sizeof(ProbIndex), compare);
 
     // truncate the list where cumulative probability exceeds topp
     float cumulative_prob = 0.0f;
