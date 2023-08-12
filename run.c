@@ -467,7 +467,7 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
 
     int last_idx = 0;
     int max_idx = 0;
-    const float min_probability = 1e-5;
+    const float min_probability = (1-topp)/(n-1);
     // quicksort indices in descending order of probabilities
     for (int i = 0; i < n; i++) {
         if (probabilities[i] > min_probability) {
