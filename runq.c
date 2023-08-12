@@ -145,11 +145,10 @@ void free_run_state(RunState* s) {
 }
 
 // ----------------------------------------------------------------------------
-void dequant_ints(int8_t* ptr, float* out_ptr, int size, float max){
-    float x_dequant;
+void dequant_ints(int8_t* input, float* output, int size, float max){
+    float scale = max / 127.0;
     for(int i = 0; i < size; i++){
-        x_dequant = (max/127) * ptr[i];
-        out_ptr[i] = x_dequant;
+        output[i] = scale * input[i];
     }
 };
 
