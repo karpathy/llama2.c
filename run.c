@@ -476,16 +476,16 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     // fallback to the original behavior. 
     float cumulative_filtered_prob = 0.0f;
     for (int i = 0; i < n; i++) {
+        probindex[i].index = i;
+        probindex[i].prob = probabilities[i];
         if (probabilities[i] > threshold){
             ProbIndex t;
-            t = probindex[cur_filtered_index];
+            t = probindex[i];
             probindex[i] = probindex[cur_filtered_index];
             probindex[cur_filtered_index] = t;
             cur_filtered_index++;
             cumulative_filtered_prob += probabilities[i];
         }
-        probindex[i].index = i;
-        probindex[i].prob = probabilities[i];
     }
 
     qsort(probindex, cumulative_filtered_prob>topp?cur_filtered_index:n, sizeof(ProbIndex), compare);
