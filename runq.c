@@ -34,52 +34,36 @@ typedef struct {
 } Config;
 
 typedef struct {
+    float base;
+    float scale;
+    int8_t weights[];
+} q8data;
+
+#define quant_size(n_layers,size) (n_layers * (4 + 4 + size))
+
+typedef struct {
     // token embedding table
     float* token_embedding_table;    // (vocab_size, dim)
     // weights for rmsnorms
-    float* rms_att_weight; // (layer, dim) rmsnorm weights
-    float* rms_ffn_weight; // (layer, dim)
+    int8_t* rms_att_weight; // (layer, dim) rmsnorm weights
+    int8_t* rms_ffn_weight; // (layer, dim)
     // weights for matmuls
-    float* wq; // (layer, dim, dim)
-    float* wk; // (layer, dim, dim)
-    float* wv; // (layer, dim, dim)
-    float* wo; // (layer, dim, dim)
+    int8_t* wq; // (layer, dim, dim)
+    int8_t* wk; // (layer, dim, dim)
+    int8_t* wv; // (layer, dim, dim)
+    int8_t* wo; // (layer, dim, dim)
     // weights for ffn
-    float* w1; // (layer, hidden_dim, dim)
-    float* w2; // (layer, dim, hidden_dim)
-    float* w3; // (layer, hidden_dim, dim)
+    int8_t* w1; // (layer, hidden_dim, dim)
+    int8_t* w2; // (layer, dim, hidden_dim)
+    int8_t* w3; // (layer, hidden_dim, dim)
     // final rmsnorm
-    float* rms_final_weight; // (dim,)
+    int8_t* rms_final_weight; // (dim,)
     // freq_cis for RoPE relatively positional embeddings
     float* freq_cis_real; // (seq_len, head_size/2)
     float* freq_cis_imag; // (seq_len, head_size/2)
     // (optional) classifier weights for the logits, on the last layer
-    float* wcls;
+    int8_t* wcls;
 } TransformerWeights;
-
-void malloc_weights(TransformerWeights* w, Config* p) {
-    // we calloc instead of malloc to keep valgrind happy
-    w->token_embedding_table = calloc(p->vocab_size * p->dim, sizeof(float));
-    w->rms_att_weight = calloc(p->n_layers * p->dim, sizeof(float));
-    w->rms_ffn_weight = calloc(p->n_layers * p->dim, sizeof(float));
-    w->wq = calloc(p->n_layers * p->dim * p->dim, sizeof(float));
-    w->wk = calloc(p->n_layers * p->dim * p->dim, sizeof(float));
-    w->wv = calloc(p->n_layers * p->dim * p->dim, sizeof(float));
-    w->wo = calloc(p->n_layers * p->dim * p->dim, sizeof(float));
-    w->w1 = calloc(p->n_layers * p->hidden_dim * p->dim, sizeof(float));
-    w->w2 = calloc(p->n_layers * p->dim * p->hidden_dim, sizeof(float));
-    w->w3 = calloc(p->n_layers * p->hidden_dim * p->dim, sizeof(float));
-    w->rms_final_weight = calloc(p->dim, sizeof(float));
-    w->freq_cis_real = calloc(p->seq_len * p->dim / 2, sizeof(float));
-    w->freq_cis_imag = calloc(p->seq_len * p->dim / 2, sizeof(float));
-    // ensure all mallocs went fine
-    if (!w->token_embedding_table || !w->rms_att_weight || !w->rms_ffn_weight 
-     || !w->wq || !w->wk || !w->wv || !w->wo || !w->w1 || !w->w2 || !w->w3 || 
-        !w->rms_final_weight || !w->freq_cis_real || !w->freq_cis_imag) {
-        printf("malloc failed!\n");
-        exit(1);
-    }
-}
 
 typedef struct {
     float prob;
@@ -145,47 +129,41 @@ void free_run_state(RunState* s) {
 }
 
 // ----------------------------------------------------------------------------
-void dequant_ints(int8_t* input, float* output, int size, float max){
-    float scale = max / 127.0;
-    for(int i = 0; i < size; i++){
-        output[i] = scale * input[i];
-    }
-};
+// initialization: read from checkpoint
 
-void checkpoint_init_weights(TransformerWeights *w, Config* p, int8_t* f, int shared_weights, float* max_vals) {
-    int8_t* ptr = f;
-    dequant_ints(ptr, w->token_embedding_table, p->vocab_size * p->dim, max_vals[0]);
-    ptr +=  p->vocab_size * p->dim;
-    dequant_ints(ptr, w->rms_att_weight, p->n_layers * p->dim, max_vals[1]);
-    ptr +=  p->n_layers * p->dim;
-    dequant_ints(ptr, w->wq, p->n_layers * p->dim * p->dim, max_vals[2]);
-    ptr += p->n_layers * p->dim * p->dim;
-    dequant_ints(ptr, w->wk, p->n_layers * p->dim * p->dim, max_vals[3]);
-    ptr += p->n_layers * p->dim * p->dim;
-    dequant_ints(ptr, w->wv, p->n_layers * p->dim * p->dim, max_vals[4]);
-    ptr += p->n_layers * p->dim * p->dim; 
-    dequant_ints(ptr, w->wo, p->n_layers * p->dim * p->dim, max_vals[5]);
-    ptr += p->n_layers * p->dim * p->dim;
-    
-    dequant_ints(ptr, w->rms_ffn_weight, p->n_layers * p->dim, max_vals[6]);
-    ptr += p->n_layers * p->dim;
-
-    dequant_ints(ptr, w->w1, p->n_layers * p->dim * p->hidden_dim, max_vals[7]);
-    ptr += p->n_layers * p->dim * p->hidden_dim;
-    dequant_ints(ptr, w->w2, p->n_layers * p->hidden_dim * p->dim, max_vals[8]);
-    ptr += p->n_layers * p->hidden_dim * p->dim;
-    dequant_ints(ptr, w->w3, p->n_layers * p->dim * p->hidden_dim, max_vals[9]);
-    ptr += p->n_layers * p->dim * p->hidden_dim;
-
-    dequant_ints(ptr, w->rms_final_weight, p->dim, max_vals[10]);
-    ptr += p->dim; 
-
+void checkpoint_init_weights(TransformerWeights *w, Config* p, int8_t* ptr, int shared_weights) {
     int head_size = p->dim / p->n_heads;
-    dequant_ints(ptr, w->freq_cis_real, p->seq_len * head_size / 2, max_vals[11]);
-    ptr += p->seq_len * head_size / 2;
 
-    dequant_ints(ptr, w->freq_cis_imag, p->seq_len * head_size / 2, max_vals[12]);
-    w->wcls = w->token_embedding_table;
+    w->token_embedding_table = (float*) ptr;
+    ptr += p->vocab_size * p->dim * sizeof(float);
+
+    w->rms_att_weight = ptr;
+    ptr += quant_size(p->n_layers, p->dim);
+    w->wq = ptr;
+    ptr += quant_size(p->n_layers, p->dim * p->dim);
+    w->wk = ptr;
+    ptr += quant_size(p->n_layers, p->dim * p->dim);
+    w->wv = ptr;
+    ptr += quant_size(p->n_layers, p->dim * p->dim);
+    w->wo = ptr;
+    ptr += quant_size(p->n_layers, p->dim * p->dim);
+    w->rms_ffn_weight = ptr;
+    ptr += quant_size(p->n_layers, p->dim);
+    w->w1 = ptr;
+    ptr += quant_size(p->n_layers, p->dim * p->hidden_dim);
+    w->w2 = ptr;
+    ptr += quant_size(p->n_layers, p->hidden_dim * p->dim);
+    w->w3 = ptr;
+    ptr += quant_size(p->n_layers, p->dim * p->hidden_dim);
+    w->rms_final_weight = ptr;
+    ptr += quant_size(1, p->dim);
+
+    w->freq_cis_real = (float*) ptr;
+    ptr += p->seq_len * head_size / 2 * sizeof(float);
+    w->freq_cis_imag = (float*) ptr;
+    ptr += p->seq_len * head_size / 2 * sizeof(float);
+
+    w->wcls = shared_weights ? (int8_t*) w->token_embedding_table : ptr;
 }
 
 // ----------------------------------------------------------------------------
@@ -197,7 +175,7 @@ void accum(float *a, float *b, int size) {
     }
 }
 
-void rmsnorm(float* o, float* x, float* weight, int size) {
+void rmsnorm(float* o, float* x, int8_t *wptr, int l, int size) {
     // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
@@ -207,8 +185,12 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     ss += 1e-5f;
     ss = 1.0f / sqrtf(ss);
     // normalize and scale
+    q8data* q8 = (q8data*) wptr + quant_size(l, size);
+    float base = q8->base;
+    float scale = q8->scale;
+    int8_t *qweight = q8->weights;
     for (int j = 0; j < size; j++) {
-        o[j] = weight[j] * (ss * x[j]);
+        o[j] = (base + scale * qweight[j]) * (ss * x[j]);
     }
 }
 
@@ -232,15 +214,22 @@ void softmax(float* x, int size) {
     }
 }
 
-void matmul(float* xout, float* x, float* w, int n, int d) {
+void matmul(float* xout, float* x, int8_t *wptr, int l, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
+    q8data* q8 = (q8data*) wptr + quant_size(l, n * d);
+    float base = q8->base;
+    float scale = q8->scale;
+    int8_t *qweight = q8->weights;
     int i;
     #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
         float val = 0.0f;
         for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
+            // dequantize the weight
+            float weight = base + scale * qweight[i * n + j];
+            // multiply and accumulate
+            val += weight * x[j];
         }
         xout[i] = val;
     }
@@ -266,12 +255,12 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     for(int l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
-        rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+        rmsnorm(s->xb, x, w->rms_att_weight, l, dim);
 
         // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
-        matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
+        matmul(s->q, s->xb, w->wq, l, dim, dim);
+        matmul(s->k, s->xb, w->wk, l, dim, dim);
+        matmul(s->v, s->xb, w->wv, l, dim, dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
         for (int i = 0; i < dim; i+=2) {
@@ -335,18 +324,18 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         }
 
         // final matmul to get the output of the attention
-        matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
+        matmul(s->xb2, s->xb, w->wo, l, dim, dim);
 
         // residual connection back into x
         accum(x, s->xb2, dim);
 
         // ffn rmsnorm
-        rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
+        rmsnorm(s->xb, x, w->rms_ffn_weight, l, dim);
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
-        matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+        matmul(s->hb, s->xb, w->w1, l, dim, hidden_dim);
+        matmul(s->hb2, s->xb, w->w3, l, dim, hidden_dim);
 
         // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         for (int i = 0; i < hidden_dim; i++) {
@@ -359,17 +348,17 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         }
 
         // final matmul to get the output of the ffn
-        matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
+        matmul(s->xb, s->hb, w->w2, l, hidden_dim, dim);
 
         // residual connection
         accum(x, s->xb, dim);
     }
 
     // final rmsnorm
-    rmsnorm(x, x, w->rms_final_weight, dim);
+    rmsnorm(x, x, w->rms_final_weight, 0, dim);
 
     // classifier into logits
-    matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
+    matmul(s->logits, x, w->wcls, 0, p->dim, p->vocab_size);
 }
 
 // ----------------------------------------------------------------------------
@@ -544,17 +533,6 @@ void error_usage() {
     exit(EXIT_FAILURE);
 }
 
-int calculate_num_elements(Config *p){
-    int head_size = p->dim / p->n_heads;
-    return p->vocab_size * p->dim + 
-           p->n_layers * p->dim +
-           4 * p->n_layers * p->dim * p->dim +
-           p->n_layers * p->dim +
-           3 * p->n_layers * p->dim * p->hidden_dim + 
-           p->dim +
-           p->seq_len * head_size;
-}
-
 int main(int argc, char *argv[]) {
 
     // default inits
@@ -585,28 +563,28 @@ int main(int argc, char *argv[]) {
     // read in the model.bin file
     Config config;
     TransformerWeights weights;
-    int fd = 0;         // file descriptor for memory mapping
-    int8_t* data = NULL; // memory mapped data pointer
+    int fd = 0;            // file descriptor for memory mapping
+    int8_t* data = NULL;   // memory mapped data pointer
     ssize_t file_size;     // size of the checkpoint file in bytes
     {
         FILE *file = fopen(checkpoint, "rb");
         if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); return 1; }
         // read in the config header
         if (fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
-        float max_vals[13];
-        //if (fread(max_vals, sizeof(float), 13, file) != 1) {return 1; };
-        fread(max_vals, sizeof(float), 13, file);
-        // printf("Maxs:\n");
-        // for (int i = 0; i < 13; ++i) printf("%f\n", max_vals[i]);
         // negative vocab size is hacky way of signaling unshared weights. bit yikes.
         int shared_weights = config.vocab_size > 0 ? 1 : 0;
         config.vocab_size = abs(config.vocab_size);
-        int elements = calculate_num_elements(&config);
-        int8_t *weight_ptr = calloc(elements, sizeof(int8_t));
-        fread(weight_ptr, sizeof(int8_t), elements, file);
+        // figure out the file size
+        fseek(file, 0, SEEK_END); // move file pointer to end of file
+        file_size = ftell(file); // get the file size, in bytes
         fclose(file);
-        malloc_weights(&weights, &config);
-        checkpoint_init_weights(&weights, &config, weight_ptr, shared_weights, max_vals);
+        // memory map the Transformer weights into the data pointer
+        fd = open(checkpoint, O_RDONLY); // open in read only mode
+        if (fd == -1) { fprintf(stderr, "open failed!\n"); return 1; }
+        data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
+        int8_t* weights_ptr = data + sizeof(Config);
+        checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
     }
     // right now we cannot run for more than config.seq_len steps
     if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
