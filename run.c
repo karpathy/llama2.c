@@ -510,7 +510,7 @@ void error_usage() {
     fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
-    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9, 0 = off\n");
+    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 1.0 (=off)\n");
     fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
     fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
     fprintf(stderr, "  -i <string> input prompt\n");
@@ -522,7 +522,7 @@ int main(int argc, char *argv[]) {
     // default inits
     char *checkpoint = NULL;  // e.g. out/model.bin
     float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-    float topp = 0.9f;        // top-p in nucleus sampling
+    float topp = 1.0f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
     rng_seed = 0; // seed rng with time by default
     int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
@@ -629,7 +629,7 @@ int main(int argc, char *argv[]) {
                 // apply softmax to the logits to get the probabilities for next token
                 softmax(state.logits, config.vocab_size);
                 // we sample from this distribution to get the next token
-                if (topp <= 0) {
+                if (topp <= 0 || topp >= 1) {
                     // simply sample from the predicted probability distribution
                     next = sample(state.logits, config.vocab_size);
                 } else {
