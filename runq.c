@@ -43,7 +43,7 @@ typedef struct {
 
 typedef struct {
     // token embedding table
-    float* token_embedding_table;    // (vocab_size, dim)
+    uint8_t* token_embedding_table; // (vocab_size, dim)
     // weights for rmsnorms
     uint8_t* rms_att_weight; // (layer, dim) rmsnorm weights
     uint8_t* rms_ffn_weight; // (layer, dim)
@@ -134,8 +134,8 @@ void free_run_state(RunState* s) {
 void checkpoint_init_weights(TransformerWeights *w, Config* p, uint8_t* ptr, int shared_weights) {
     int head_size = p->dim / p->n_heads;
 
-    w->token_embedding_table = (float*) ptr;
-    ptr += p->vocab_size * p->dim * sizeof(float);
+    w->token_embedding_table = ptr;
+    ptr += quant_size(1, p->vocab_size * p->dim);
 
     w->rms_att_weight = ptr;
     ptr += quant_size(p->n_layers, p->dim);
@@ -167,8 +167,7 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, uint8_t* ptr, int
     w->freq_cis_imag = (float*) ptr;
     ptr += p->seq_len * head_size / 2 * sizeof(float);
 
-    //w->wcls = shared_weights ? w->token_embedding_table : ptr;
-    w->wcls = ptr;
+    w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
 // ----------------------------------------------------------------------------
@@ -240,6 +239,17 @@ void matmul(float* xout, float* x, uint8_t *wptr, int l, int n, int d) {
     }
 }
 
+void dequantize_token(float* x, uint8_t* wptr, int token, int dim) {
+    q8data* q8 = (q8data*) wptr;
+    float base = q8->base;
+    float scale = q8->scale;
+    uint8_t *qweight = q8->weights;
+    int row = token * dim;
+    for (int i = 0; i < dim; i++) {
+        x[i] = base + scale * qweight[row + i];
+    }
+}
+
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
 
     // a few convenience variables
@@ -249,8 +259,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     int head_size = dim / p->n_heads;
 
     // copy the token embedding into x
-    float* content_row = &(w->token_embedding_table[token * dim]);
-    memcpy(x, content_row, dim*sizeof(*x));
+    dequantize_token(x, w->token_embedding_table, token, dim);
 
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
     float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;

@@ -167,7 +167,7 @@ int convert_weights_q8(TransformerWeights *w, Config *p){
     // write quantized weights
     int head_size = p->dim / p->n_heads;
 
-    write_weights(file, w->token_embedding_table, 1, p->vocab_size * p->dim);
+    quantize_weights(file, w->token_embedding_table, 1, p->vocab_size * p->dim, "token_embedding_table");
 
     quantize_weights(file, w->rms_att_weight, p->n_layers, p->dim, "rms_att_weight");
 
@@ -187,7 +187,7 @@ int convert_weights_q8(TransformerWeights *w, Config *p){
     write_weights(file, w->freq_cis_real, 1, p->seq_len * head_size / 2);
     write_weights(file, w->freq_cis_imag, 1, p->seq_len * head_size / 2);
 
-    quantize_weights(file, w->token_embedding_table, 1, p->vocab_size * p->dim, "wcls");
+    //quantize_weights(file, w->token_embedding_table, 1, p->vocab_size * p->dim, "wcls");
 
     fclose(file);
     return 0;
