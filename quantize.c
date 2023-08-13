@@ -114,7 +114,10 @@ void get_max_vals(float *ptr, int size, float* pmin, float* pmax){
     *pmax = max;
 }
 
-void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size) {
+void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size, char *name) {
+
+    puts("------------------------");
+    printf("%s layer_size=%d\n", name, layer_size);
 
     // for each layer
     for (int l = 0; l < n_layers; l++) {
@@ -124,6 +127,7 @@ void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size) 
       get_max_vals(weights, layer_size, &min, &max);
       // compute the scale factor
       float scale = (max - min) / 255;
+      printf("l=%d min=%f max=%f scale=%f\n", l, min, max, scale);
       // save min value and scale factor to file
       fwrite(&min, sizeof(float), 1, file);
       fwrite(&scale, sizeof(float), 1, file);
@@ -165,20 +169,20 @@ int convert_weights_q8(TransformerWeights *w, Config *p){
 
     write_weights(file, w->token_embedding_table, 1, p->vocab_size * p->dim);
 
-    quantize_weights(file, w->rms_att_weight, p->n_layers, p->dim);
+    quantize_weights(file, w->rms_att_weight, p->n_layers, p->dim, "rms_att_weight");
 
-    quantize_weights(file, w->wq, p->n_layers, p->dim * p->dim);
-    quantize_weights(file, w->wk, p->n_layers, p->dim * p->dim);
-    quantize_weights(file, w->wv, p->n_layers, p->dim * p->dim);
-    quantize_weights(file, w->wo, p->n_layers, p->dim * p->dim);
+    quantize_weights(file, w->wq, p->n_layers, p->dim * p->dim, "wq");
+    quantize_weights(file, w->wk, p->n_layers, p->dim * p->dim, "wk");
+    quantize_weights(file, w->wv, p->n_layers, p->dim * p->dim, "wv");
+    quantize_weights(file, w->wo, p->n_layers, p->dim * p->dim, "wo");
 
-    quantize_weights(file, w->rms_ffn_weight, p->n_layers, p->dim);
+    quantize_weights(file, w->rms_ffn_weight, p->n_layers, p->dim, "rms_ffn_weight");
     
-    quantize_weights(file, w->w1, p->n_layers, p->dim * p->hidden_dim);
-    quantize_weights(file, w->w2, p->n_layers, p->hidden_dim * p->dim);
-    quantize_weights(file, w->w3, p->n_layers, p->dim * p->hidden_dim);
+    quantize_weights(file, w->w1, p->n_layers, p->dim * p->hidden_dim, "w1");
+    quantize_weights(file, w->w2, p->n_layers, p->hidden_dim * p->dim, "w2");
+    quantize_weights(file, w->w3, p->n_layers, p->dim * p->hidden_dim, "w3");
 
-    quantize_weights(file, w->rms_final_weight, 1, p->dim);
+    quantize_weights(file, w->rms_final_weight, 1, p->dim, "rms_final_weight");
 
     write_weights(file, w->freq_cis_real, 1, p->seq_len * head_size / 2);
     write_weights(file, w->freq_cis_imag, 1, p->seq_len * head_size / 2);
