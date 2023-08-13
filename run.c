@@ -641,7 +641,7 @@ int main(int argc, char *argv[]) {
     int *prompt_tokens = NULL;
     int num_prompt_tokens = 0;
     if (prompt != NULL) {
-        prompt_tokens = (int*)malloc(strlen(prompt) * sizeof(int));
+        prompt_tokens = (int*)malloc((strlen(prompt)+1) * sizeof(int));
         bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
     }
 
