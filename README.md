@@ -87,7 +87,7 @@ For the sake of examples of smaller, from-scratch models, I trained a small mode
 
 | model | dim | n_layers | n_heads | n_kv_heads | max context length | parameters | val loss | download
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 260K | 64 | 5 | 8 | 4 | 512 | 260K | 1.2968 | [stories260K](https://huggingface.co/karpathy/tinyllamas/tree/main/stories260K)
+| 260K | 64 | 5 | 8 | 4 | 512 | 260K | 1.297 | [stories260K](https://huggingface.co/karpathy/tinyllamas/tree/main/stories260K)
 | OG | 288 | 6 | 6 | 6 | 256 | 15M | 1.072 | [stories15M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin) |
 | 42M| 512 | 8 | 8 | 8 | 1024 | 42M | 0.847 | [stories42M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories42M.bin) |
 | 110M| 768 | 12 | 12 | 12 | 1024 | 110M | 0.760 | [stories110M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories110M.bin) |
