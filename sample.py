@@ -53,7 +53,6 @@ if compile:
     model = torch.compile(model) # requires PyTorch 2.0 (optional)
 
 # load the tokenizer
-assert checkpoint["config"]["dataset"] == "tinystories" # TODO: generalize
 tokenizer_model = get_tokenizer_model_path(vocab_size=gptconf.vocab_size)
 enc = Tokenizer(tokenizer_model=tokenizer_model)
 
