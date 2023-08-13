@@ -28,8 +28,7 @@ from model import Transformer, ModelArgs
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from tinystories import Task
-from tinyshakespeare import ShakespeareTask
+from dataset import Task
 
 # -----------------------------------------------------------------------------
 # I/O
@@ -123,9 +122,9 @@ ctx = (
 )
 
 # task-specific setup
-task = {'tinystories': Task, 'tinyshakespeare': ShakespeareTask}[dataset]
 iter_batches = partial(
-    task.iter_batches,
+    Task.iter_batches,
+    dataset_id=dataset,
     batch_size=batch_size,
     max_seq_len=max_seq_len,
     device=device,
@@ -238,7 +237,7 @@ if wandb_log and master_process:
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 # training loop
-train_batch_iter = iter_batches("train")
+train_batch_iter = iter_batches(split="train")
 X, Y = next(train_batch_iter)  # fetch the very first batch
 t0 = time.time()
 local_iter_num = 0  # number of iterations in the lifetime of this process
