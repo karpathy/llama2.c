@@ -20,6 +20,7 @@ $ ./run
     #include <unistd.h>
     #include <sys/mman.h>
 #endif
+
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
@@ -57,36 +58,13 @@ typedef struct {
     float* wcls;
 } TransformerWeights;
 
-
-typedef struct {
-    // token embedding table
-    int8_t* token_embedding_table;    // (vocab_size, dim)
-    // weights for rmsnorms
-    int8_t* rms_att_weight; // (layer, dim) rmsnorm weights
-    int8_t* rms_ffn_weight; // (layer, dim)
-    // weights for matmuls
-    int8_t* wq; // (layer, dim, dim)
-    int8_t* wk; // (layer, dim, dim)
-    int8_t* wv; // (layer, dim, dim)
-    int8_t* wo; // (layer, dim, dim)
-    // weights for ffn
-    int8_t* w1; // (layer, hidden_dim, dim)
-    int8_t* w2; // (layer, dim, hidden_dim)
-    int8_t* w3; // (layer, hidden_dim, dim)
-    // final rmsnorm
-    int8_t* rms_final_weight; // (dim,)
-    // freq_cis for RoPE relatively positional embeddings
-    int8_t* freq_cis_real; // (seq_len, dim/2)
-    int8_t* freq_cis_imag; // (seq_len, dim/2)
-    // (optional) classifier weights for the logits, on the last layer
-    int8_t* wcls;
-} TransformerWeightsInt8;
-
 // ----------------------------------------------------------------------------
 // initialization: read from checkpoint
 
 void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int shared_weights) {
+    int head_size = p->dim / p->n_heads;
     float* ptr = f;
+
     w->token_embedding_table = ptr;
     ptr += p->vocab_size * p->dim;
 
@@ -95,13 +73,10 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
 
     w->wq = ptr;
     ptr += p->n_layers * p->dim * p->dim;
-
     w->wk = ptr;
     ptr += p->n_layers * p->dim * p->dim;
-
     w->wv = ptr;
     ptr += p->n_layers * p->dim * p->dim;
-
     w->wo = ptr;
     ptr += p->n_layers * p->dim * p->dim;
 
@@ -110,10 +85,8 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
 
     w->w1 = ptr;
     ptr += p->n_layers * p->dim * p->hidden_dim;
-
     w->w2 = ptr;
     ptr += p->n_layers * p->hidden_dim * p->dim;
-
     w->w3 = ptr;
     ptr += p->n_layers * p->dim * p->hidden_dim;
 
@@ -121,39 +94,56 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
     ptr += p->dim;
 
     w->freq_cis_real = ptr;
-    int head_size = p->dim / p->n_heads;
     ptr += p->seq_len * head_size / 2;
-
     w->freq_cis_imag = ptr;
     ptr += p->seq_len * head_size / 2;
+
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
-
-
-void calc_quant_ints(float * ptr, int size, int8_t * out_ptr, float max, int debug){
-
-    int8_t x_quant;
-    for (int i = 0; i < size; i++){
-        x_quant = round(127/max * ptr[i]);
-        out_ptr[i] = x_quant;
-    }
-};
-
-float get_max_vals(float *ptr, int size){
+void get_max_vals(float *ptr, int size, float* pmin, float* pmax){
+    float min = INFINITY;
     float max = -INFINITY;
 
     for (int i = 0; i < size; i++){
-        if (fabs(ptr[i]) > max) max = ptr[i];
+        if (ptr[i] < min) min = ptr[i];
+        if (ptr[i] > max) max = ptr[i];
     }
-    return max; 
- 
-};
 
-int convert_q8(TransformerWeights *w, Config *p, int glob_data_size, int elements){
+    *pmin = min;
+    *pmax = max;
+}
 
-    float max_vals[13];
-    int8_t *quant_weights = calloc(elements, sizeof(int8_t));
+void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size) {
+
+    // for each layer
+    for (int l = 0; l < n_layers; l++) {
+      // get the min and max values for this layer
+      float min;
+      float max;
+      get_max_vals(weights, layer_size, &min, &max);
+      // compute the scale factor
+      float scale = (max - min) / 256;
+      // save min value and scale factor to file
+      fwrite(&min, sizeof(float), 1, file);
+      fwrite(&scale, sizeof(float), 1, file);
+      // quantize the weights from this layer and save to file
+      int8_t qweight;
+      for (int i = 0; i < layer_size; i++){
+          qweight = round((weights[i] - min) / (max - min) * 256);
+          fwrite(&qweight, sizeof(int8_t), 1, file);
+      }
+      // advance to the weights of the next layer
+      weights += layer_size;  // * sizeof(float);
+    }
+
+}
+
+void write_weights(FILE* file, float *weights, int n_layers, int layer_size) {
+    fwrite(weights, sizeof(float), n_layers * layer_size, file);
+}
+
+int convert_weights_q8(TransformerWeights *w, Config *p){
 
     FILE* file = fopen("data.bin", "wb");
     if (file == NULL) {
@@ -161,26 +151,6 @@ int convert_q8(TransformerWeights *w, Config *p, int glob_data_size, int element
         return 1;
     }
 
-    max_vals[0] = get_max_vals(w->token_embedding_table, p->vocab_size * p->dim);
-    max_vals[1] = get_max_vals(w->rms_att_weight, p->n_layers * p->dim);
-    max_vals[2] = get_max_vals(w->wq, p->n_layers * p->dim * p->dim);
-    max_vals[3] = get_max_vals(w->wk, p->n_layers * p->dim * p->dim);
-    max_vals[4] = get_max_vals(w->wv, p->n_layers * p->dim * p->dim);
-    max_vals[5] = get_max_vals(w->wo, p->n_layers * p->dim * p->dim);
-
-    max_vals[6] = get_max_vals(w->rms_ffn_weight, p->n_layers * p->dim);
-    
-    max_vals[7] = get_max_vals(w->w1, p->n_layers * p->dim * p->hidden_dim);
-    max_vals[8] = get_max_vals(w->w2, p->n_layers * p->hidden_dim * p->dim);
-    max_vals[9] = get_max_vals(w->w3, p->n_layers * p->dim * p->hidden_dim);
-    
-    max_vals[10] = get_max_vals(w->rms_final_weight, p->dim);
-
-    int head_size = p->dim / p->n_heads;
-    max_vals[11] = get_max_vals(w->freq_cis_real, p->seq_len * head_size / 2);
-    max_vals[12] = get_max_vals(w->freq_cis_imag, p->seq_len * head_size / 2);
-
-    //for (int i = 0; i < 13; i++) printf("max[%d] = %f\n",i, max_vals[i]);
     // write headers
     fwrite(&p->dim, sizeof(int), 1, file);
     fwrite(&p->hidden_dim, sizeof(int), 1, file);
@@ -190,61 +160,33 @@ int convert_q8(TransformerWeights *w, Config *p, int glob_data_size, int element
     fwrite(&p->vocab_size, sizeof(int), 1, file);
     fwrite(&p->seq_len, sizeof(int), 1, file);
 
-    // // write max values
-    fwrite(max_vals, sizeof(float), 13, file);
+    // write quantized weights
+    int head_size = p->dim / p->n_heads;
 
-    // // write quantized weights
-    int8_t * out_ptr;
-    out_ptr = quant_weights;
-    calc_quant_ints(w->token_embedding_table, p->vocab_size * p->dim, out_ptr, max_vals[0], 0);
-    out_ptr += p->vocab_size * p->dim;
-    calc_quant_ints(w->rms_att_weight, p->n_layers * p->dim, out_ptr,  max_vals[1],0);
-    out_ptr += p->n_layers * p->dim;
-    calc_quant_ints(w->wq, p->n_layers * p->dim * p->dim, out_ptr,  max_vals[2],0);
-    out_ptr += p->n_layers * p->dim * p->dim;
-    calc_quant_ints(w->wk, p->n_layers * p->dim * p->dim, out_ptr,  max_vals[3],0);
-    out_ptr += p->n_layers * p->dim * p->dim;
-    calc_quant_ints(w->wv, p->n_layers * p->dim * p->dim, out_ptr,  max_vals[4],0);
-    out_ptr += p->n_layers * p->dim * p->dim; 
-    calc_quant_ints(w->wo, p->n_layers * p->dim * p->dim, out_ptr,  max_vals[5],0);
-    out_ptr += p->n_layers * p->dim * p->dim;
+    write_weights(file, w->token_embedding_table, 1, p->vocab_size * p->dim);
+
+    quantize_weights(file, w->rms_att_weight, p->n_layers, p->dim);
+
+    quantize_weights(file, w->wq, p->n_layers, p->dim * p->dim);
+    quantize_weights(file, w->wk, p->n_layers, p->dim * p->dim);
+    quantize_weights(file, w->wv, p->n_layers, p->dim * p->dim);
+    quantize_weights(file, w->wo, p->n_layers, p->dim * p->dim);
+
+    quantize_weights(file, w->rms_ffn_weight, p->n_layers, p->dim);
     
-    calc_quant_ints(w->rms_ffn_weight, p->n_layers * p->dim, out_ptr, max_vals[6], 0);
-    out_ptr += p->n_layers * p->dim;
+    quantize_weights(file, w->w1, p->n_layers, p->dim * p->hidden_dim);
+    quantize_weights(file, w->w2, p->n_layers, p->hidden_dim * p->dim);
+    quantize_weights(file, w->w3, p->n_layers, p->dim * p->hidden_dim);
 
-    calc_quant_ints(w->w1, p->n_layers * p->dim * p->hidden_dim, out_ptr,  max_vals[7],0);
-    out_ptr += p->n_layers * p->dim * p->hidden_dim;
-    calc_quant_ints(w->w2, p->n_layers * p->hidden_dim * p->dim, out_ptr,  max_vals[8],0);
-    out_ptr += p->n_layers * p->hidden_dim * p->dim;
-    calc_quant_ints(w->w3, p->n_layers * p->dim * p->hidden_dim, out_ptr,  max_vals[9],0);
-    out_ptr += p->n_layers * p->dim * p->hidden_dim;
+    quantize_weights(file, w->rms_final_weight, 1, p->dim);
 
-    calc_quant_ints(w->rms_final_weight, p->dim, out_ptr,  max_vals[10],0);
-    out_ptr += p->dim; 
-
-    calc_quant_ints(w->freq_cis_real, p->seq_len * head_size / 2, out_ptr,  max_vals[11],0);
-    out_ptr += p->seq_len * head_size / 2;
-
-    calc_quant_ints(w->freq_cis_imag, p->seq_len * head_size / 2, out_ptr,  max_vals[12],1);
-    // out_ptr += p->seq_len * head_size / 2;
-
-    fwrite(quant_weights, sizeof(int8_t), elements, file);
+    write_weights(file, w->freq_cis_real, 1, p->seq_len * head_size / 2);
+    write_weights(file, w->freq_cis_imag, 1, p->seq_len * head_size / 2);
 
     fclose(file);
     return 0;
-};
-
-int calculate_num_elements(Config *p){
-    int head_size = p->dim / p->n_heads;
-    return p->vocab_size * p->dim + 
-           p->n_layers * p->dim +
-           4 * p->n_layers * p->dim * p->dim +
-           p->n_layers * p->dim +
-           3 * p->n_layers * p->dim * p->hidden_dim + 
-           p->dim +
-           p->seq_len * head_size;
-
 }
+
 int main(int argc, char *argv[]) {
 
     // poor man's C argparse
@@ -291,11 +233,8 @@ int main(int argc, char *argv[]) {
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
-        //print_sample_weights(&weights);
 
-        int elements = calculate_num_elements(&config);
-        //printf("total elements = %d\n", elements);
-        int ret = convert_q8(&weights, &config, file_size/sizeof(float), elements);
+        int ret = convert_weights_q8(&weights, &config);
         if (ret == 0) printf("model converted and saved\n");
     }
     
