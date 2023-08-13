@@ -302,7 +302,6 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## unsorted todos
 
-- revive tests; train a tiny Llama test model (committed to repo) and use it as reference in unit tests
 - make it easier to add a new dataset with not too much pain
 - should calculate freq_cis online in the script run.c instead of loading them
 - int4/8 quantization
