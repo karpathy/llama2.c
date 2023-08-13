@@ -185,7 +185,7 @@ void rmsnorm(float* o, float* x, int8_t *wptr, int l, int size) {
     ss += 1e-5f;
     ss = 1.0f / sqrtf(ss);
     // normalize and scale
-    q8data* q8 = (q8data*) wptr + quant_size(l, size);
+    q8data* q8 = (q8data*) (wptr + quant_size(l, size));
     float base = q8->base;
     float scale = q8->scale;
     int8_t *qweight = q8->weights;
@@ -217,7 +217,7 @@ void softmax(float* x, int size) {
 void matmul(float* xout, float* x, int8_t *wptr, int l, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
-    q8data* q8 = (q8data*) wptr + quant_size(l, n * d);
+    q8data* q8 = (q8data*) (wptr + quant_size(l, n * d));
     float base = q8->base;
     float scale = q8->scale;
     int8_t *qweight = q8->weights;
