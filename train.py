@@ -52,6 +52,7 @@ vocab_size = 32000 # the Llama 2 tokenizer has 32K tokens
 dim = 288
 n_layers = 6
 n_heads = 6
+n_kv_heads = 6
 multiple_of = 32
 dropout = 0.0
 # adamw optimizer
@@ -146,7 +147,7 @@ model_args = dict(
     dim=dim,
     n_layers=n_layers,
     n_heads=n_heads,
-    n_kv_heads=n_heads,
+    n_kv_heads=n_kv_heads,
     vocab_size=vocab_size,
     multiple_of=multiple_of,
     max_seq_len=max_seq_len,
