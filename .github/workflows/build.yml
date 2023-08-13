@@ -8,6 +8,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths: ['**/Makefile', '**/*.c', '**/*.h']
+  # for manual triggering
+  workflow_dispatch:
 
 env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
