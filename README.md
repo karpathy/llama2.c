@@ -136,11 +136,7 @@ wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.pt -P ou
 python sample.py --checkpoint=out15M/stories15M.pt
 ```
 
-Which gives the same results. More detailed testing will be done in `test_all.py`. Currently you will need two files to test or sample: both the .bin file, and the .ckpt file inside a directory (see `test_all.py` for details). Sorry this is a bit janky right now, I have to think through running the tests without having to download 200MB of data. But run the tests with pytest:
-
-```bash
-$ pytest
-```
+Which gives the same results.
 
 ## custom tokenizers
 
@@ -226,6 +222,17 @@ Depending on your system resources you may want to tweak these hyperparameters a
 On **Windows**, use `build_msvc.bat` in a Visual Studio Command Prompt to build with msvc, or you can use `make win64` to use mingw compiler toolchain from linux or windows to build the windows target. MSVC build will automatically use openmp and max threads appropriate for your CPU unless you set `OMP_NUM_THREADS` env.
 
 On **Centos 7**, **Amazon Linux 2018** use `rungnu` Makefile target: `make rungnu` or `make runompgnu` to use openmp.
+
+## tests
+
+You can run tests simply with pytest:
+
+```bash
+$ pip install pytest
+$ pytest
+```
+
+This will currently invoke two tests inside `test_all.py`, which forward the model in both C and Python for 200 steps and check the output against a known good expected output. The tests currently run in only a few seconds, but will have to download and cache the stories260K models in a temporary `test` directory (only ~2MB download).
 
 ## ack
 
