@@ -139,6 +139,7 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, int8_t* ptr, int 
 
     w->rms_att_weight = ptr;
     ptr += quant_size(p->n_layers, p->dim);
+
     w->wq = ptr;
     ptr += quant_size(p->n_layers, p->dim * p->dim);
     w->wk = ptr;
@@ -147,14 +148,17 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, int8_t* ptr, int 
     ptr += quant_size(p->n_layers, p->dim * p->dim);
     w->wo = ptr;
     ptr += quant_size(p->n_layers, p->dim * p->dim);
+
     w->rms_ffn_weight = ptr;
     ptr += quant_size(p->n_layers, p->dim);
+
     w->w1 = ptr;
     ptr += quant_size(p->n_layers, p->dim * p->hidden_dim);
     w->w2 = ptr;
     ptr += quant_size(p->n_layers, p->hidden_dim * p->dim);
     w->w3 = ptr;
     ptr += quant_size(p->n_layers, p->dim * p->hidden_dim);
+
     w->rms_final_weight = ptr;
     ptr += quant_size(1, p->dim);
 
@@ -163,7 +167,8 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, int8_t* ptr, int 
     w->freq_cis_imag = (float*) ptr;
     ptr += p->seq_len * head_size / 2 * sizeof(float);
 
-    w->wcls = shared_weights ? (int8_t*) w->token_embedding_table : ptr;
+    //w->wcls = shared_weights ? w->token_embedding_table : ptr;
+    w->wcls = ptr;
 }
 
 // ----------------------------------------------------------------------------

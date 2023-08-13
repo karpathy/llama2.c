@@ -187,6 +187,8 @@ int convert_weights_q8(TransformerWeights *w, Config *p){
     write_weights(file, w->freq_cis_real, 1, p->seq_len * head_size / 2);
     write_weights(file, w->freq_cis_imag, 1, p->seq_len * head_size / 2);
 
+    quantize_weights(file, w->token_embedding_table, 1, p->vocab_size * p->dim, "wcls");
+
     fclose(file);
     return 0;
 }
@@ -220,6 +222,7 @@ int main(int argc, char *argv[]) {
         // negative vocab size is hacky way of signaling unshared weights. bit yikes.
         int shared_weights = config.vocab_size > 0 ? 1 : 0;
         config.vocab_size = abs(config.vocab_size);
+        printf("vocab size = %d  shared_weights=%d\n", config.vocab_size, shared_weights);
 
         // figure out the file size
         fseek(file, 0, SEEK_END); // move file pointer to end of file
