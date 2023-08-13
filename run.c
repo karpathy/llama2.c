@@ -55,6 +55,9 @@ typedef struct {
     float* freq_cis_imag; // (seq_len, head_size/2)
     // (optional) classifier weights for the logits, on the last layer
     float* wcls;
+
+    float* zipped_wqkv;
+    float* zipped_w13;
 } TransformerWeights;
 
 typedef struct {
@@ -155,6 +158,33 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
+float* zip_matrices(int n, int d, int n_layers, int num_matrices, float** matrices){
+    float* zipped = calloc(num_matrices*n*d*n_layers, sizeof(float));
+    for(int l = 0; l < n_layers; l++) {
+        for (int i = 0; i < d; i++) {
+            for (int j = 0; j < n; j++) {
+                for (int k = 0; k < num_matrices; k++){
+                    zipped[num_matrices*(l*n*d + i*n + j)+k] = matrices[k][l*n*d+i*n+j];
+                }
+            }
+        }
+    }
+    return zipped;
+}
+
+void init_zip_matrices(TransformerWeights *w, Config* p){
+    float* wqkv_matrices[3] = {w->wq, w->wk, w->wv};
+    w->zipped_wqkv = zip_matrices(p->dim, p->dim, p->n_layers, 3, wqkv_matrices);
+
+    float* w13_matrices[2] = {w->w1, w->w3};
+    w->zipped_w13 = zip_matrices(p->dim, p->hidden_dim, p->n_layers, 2, w13_matrices);
+}
+
+void free_zip_matrices(TransformerWeights *w){
+    free(w->zipped_wqkv);
+    free(w->zipped_w13);
+}
+
 // ----------------------------------------------------------------------------
 // neural net blocks
 
@@ -213,6 +243,26 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     }
 }
 
+#define DECLARE_MATMUL_MULTIPLE_VECTORS(N) \
+void matmul_##N##_vectors (float** xouts, float* x, float* zipped_w, int n, int d) {\
+    int i;\
+    _Pragma("omp parallel for private(i)")\
+    for (i = 0; i < d; i++) {\
+        float vals[N] = {0};\
+        for (int j = 0; j < n; j++) {\
+            for (int k = 0; k < N; k++){\
+                vals[k] += zipped_w[N*(i * n + j) + k] * x[j];\
+            }\
+        }\
+        for (int k = 0; k < N; k++){\
+            xouts[k][i] = vals[k];\
+        }\
+    }\
+}
+
+DECLARE_MATMUL_MULTIPLE_VECTORS(2)
+DECLARE_MATMUL_MULTIPLE_VECTORS(3)
+
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
 
     // a few convenience variables
@@ -236,9 +286,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l*dim*dim, dim, dim);
-        matmul(s->v, s->xb, w->wv + l*dim*dim, dim, dim);
+        float* qkv_vectors[3] = {s->q, s->k, s->v};
+        matmul_3_vectors(qkv_vectors, s->xb, w->zipped_wqkv + 3*l*dim*dim, dim, dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
         for (int i = 0; i < dim; i+=2) {
@@ -312,8 +361,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
-        matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+        float* hb_vectors[2] = {s->hb, s->hb2};
+        matmul_2_vectors(hb_vectors, s->xb, w->zipped_w13 + 2*l*dim*hidden_dim, dim, hidden_dim);
 
         // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         for (int i = 0; i < hidden_dim; i++) {
@@ -566,6 +615,7 @@ int main(int argc, char *argv[]) {
         if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
+        init_zip_matrices(&weights, &config);
     }
     // right now we cannot run for more than config.seq_len steps
     if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
@@ -658,6 +708,7 @@ int main(int argc, char *argv[]) {
     }
 
     // memory and file handles cleanup
+    free_zip_matrices(&weights);
     free_run_state(&state);
     for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
     free(vocab);
