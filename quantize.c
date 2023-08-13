@@ -101,7 +101,7 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
-void get_max_vals(float *ptr, int size, float* pmin, float* pmax){
+void get_minmax(float *ptr, int size, float* pmin, float* pmax){
     float min = INFINITY;
     float max = -INFINITY;
 
@@ -124,7 +124,7 @@ void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size, 
       // get the min and max values for this layer
       float min;
       float max;
-      get_max_vals(weights, layer_size, &min, &max);
+      get_minmax(weights, layer_size, &min, &max);
       // compute the scale factor
       float scale = (max - min) / 255;
       printf("l=%d min=%f max=%f scale=%f\n", l, min, max, scale);
