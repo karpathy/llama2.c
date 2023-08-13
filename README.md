@@ -86,7 +86,7 @@ base models... ¯\\_(ツ)_/¯. Since we can inference the base model, it should 
 For the sake of examples of smaller, from-scratch models, I trained a small model series on TinyStories. All of these trained in a few hours on my training setup (4X A100 40GB GPUs). The 110M took around 24 hours. I am hosting them on huggingface hub [tinyllamas](https://huggingface.co/karpathy/tinyllamas), both in the original PyTorch .pt, and also in the llama2.c format .bin:
 
 | model | dim | n_layers | n_heads | n_kv_heads | max context length | parameters | val loss | download
-| --- | --- | --- | | --- | --- | --- | --- | --- | --- |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 260K | 64 | 5 | 8 | 4 | 512 | 260K | 1.2968 | [stories260K](https://huggingface.co/karpathy/tinyllamas/tree/main/stories260K)
 | OG | 288 | 6 | 6 | 6 | 256 | 15M | 1.072 | [stories15M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin) |
 | 42M| 512 | 8 | 8 | 8 | 1024 | 42M | 0.847 | [stories42M.bin](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories42M.bin) |
