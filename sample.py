@@ -9,6 +9,8 @@ import tiktoken
 from model import ModelArgs, Transformer
 from tokenizer import Tokenizer
 
+from tinystories import get_tokenizer_model_path
+
 # -----------------------------------------------------------------------------
 out_dir = 'out' # ignored if init_from is not 'resume'
 start = "" # or "<|endoftext|>" or etc. Can also specify a file, use as: "FILE:prompt.txt"
@@ -51,7 +53,9 @@ if compile:
     model = torch.compile(model) # requires PyTorch 2.0 (optional)
 
 # load the tokenizer
-enc = Tokenizer()
+assert checkpoint["config"]["dataset"] == "tinystories" # TODO: generalize
+tokenizer_model = get_tokenizer_model_path(vocab_size=gptconf.vocab_size)
+enc = Tokenizer(tokenizer_model=tokenizer_model)
 
 # encode the beginning of the prompt
 if start.startswith('FILE:'):
