@@ -132,8 +132,7 @@ Watch the tokens stream by, fun! We can also run the PyTorch inference script fo
 
 ```bash
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.pt -P out15M
-mv out15M/stories15M.pt out15M/ckpt.pt # sorry the sample script current assumes this directory structure / filename...
-python sample.py --out_dir=out15M
+python sample.py --checkpoint=out15M/stories15M.pt
 ```
 
 Which gives the same results. More detailed testing will be done in `test_all.py`. Currently you will need two files to test or sample: both the .bin file, and the .ckpt file inside a directory (see `test_all.py` for details). Sorry this is a bit janky right now, I have to think through running the tests without having to download 200MB of data. But run the tests with pytest:
