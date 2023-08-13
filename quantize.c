@@ -123,14 +123,14 @@ void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size) 
       float max;
       get_max_vals(weights, layer_size, &min, &max);
       // compute the scale factor
-      float scale = (max - min) / 256;
+      float scale = (max - min) / 255;
       // save min value and scale factor to file
       fwrite(&min, sizeof(float), 1, file);
       fwrite(&scale, sizeof(float), 1, file);
       // quantize the weights from this layer and save to file
       int8_t qweight;
       for (int i = 0; i < layer_size; i++){
-          qweight = round((weights[i] - min) / (max - min) * 256);
+          qweight = round((weights[i] - min) / (max - min) * 255);
           fwrite(&qweight, sizeof(int8_t), 1, file);
       }
       // advance to the weights of the next layer
