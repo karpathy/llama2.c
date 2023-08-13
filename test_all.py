@@ -42,6 +42,7 @@ expected_stdout = b'Once upon a time, there was a little girl named Lily. She lo
 
 def test_runc():
     """ Forwards a model against a known-good desired outcome in run.c for 200 steps"""
+    attempt_download_files()
 
     model_path = os.path.join(test_ckpt_dir, "stories260K.bin")
     tokenizer_path = os.path.join(test_ckpt_dir, "tok512.bin")
@@ -56,6 +57,7 @@ def test_runc():
 
 def test_python():
     """ Forwards a model against a known-good desired outcome in sample.py for 200 steps"""
+    attempt_download_files()
 
     device = "cpu" # stories260K is small enough to just breeze through it on CPU
     checkpoint = os.path.join(test_ckpt_dir, "stories260K.pt")
