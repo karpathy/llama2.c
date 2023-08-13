@@ -4,7 +4,7 @@
 
 import os
 import struct
-from logging import getLogger
+import argparse
 from typing import List
 
 from sentencepiece import SentencePieceProcessor
@@ -72,5 +72,9 @@ class Tokenizer:
                 f.write(bytes)
 
 if __name__ == "__main__":
-    t = Tokenizer()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--tokenizer-model", type=str, help="optional path to custom tokenizer ")
+    args = parser.parse_args()
+
+    t = Tokenizer(args.tokenizer_model)
     t.export()
