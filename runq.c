@@ -36,7 +36,7 @@ typedef struct {
 typedef struct {
     float base;
     float scale;
-    int8_t weights[];
+    uint8_t weights[];
 } q8data;
 
 #define quant_size(n_layers,size) (n_layers * (4 + 4 + size))
@@ -45,24 +45,24 @@ typedef struct {
     // token embedding table
     float* token_embedding_table;    // (vocab_size, dim)
     // weights for rmsnorms
-    int8_t* rms_att_weight; // (layer, dim) rmsnorm weights
-    int8_t* rms_ffn_weight; // (layer, dim)
+    uint8_t* rms_att_weight; // (layer, dim) rmsnorm weights
+    uint8_t* rms_ffn_weight; // (layer, dim)
     // weights for matmuls
-    int8_t* wq; // (layer, dim, dim)
-    int8_t* wk; // (layer, dim, dim)
-    int8_t* wv; // (layer, dim, dim)
-    int8_t* wo; // (layer, dim, dim)
+    uint8_t* wq; // (layer, dim, dim)
+    uint8_t* wk; // (layer, dim, dim)
+    uint8_t* wv; // (layer, dim, dim)
+    uint8_t* wo; // (layer, dim, dim)
     // weights for ffn
-    int8_t* w1; // (layer, hidden_dim, dim)
-    int8_t* w2; // (layer, dim, hidden_dim)
-    int8_t* w3; // (layer, hidden_dim, dim)
+    uint8_t* w1; // (layer, hidden_dim, dim)
+    uint8_t* w2; // (layer, dim, hidden_dim)
+    uint8_t* w3; // (layer, hidden_dim, dim)
     // final rmsnorm
-    int8_t* rms_final_weight; // (dim,)
+    uint8_t* rms_final_weight; // (dim,)
     // freq_cis for RoPE relatively positional embeddings
     float* freq_cis_real; // (seq_len, head_size/2)
     float* freq_cis_imag; // (seq_len, head_size/2)
     // (optional) classifier weights for the logits, on the last layer
-    int8_t* wcls;
+    uint8_t* wcls;
 } TransformerWeights;
 
 typedef struct {
@@ -131,7 +131,7 @@ void free_run_state(RunState* s) {
 // ----------------------------------------------------------------------------
 // initialization: read from checkpoint
 
-void checkpoint_init_weights(TransformerWeights *w, Config* p, int8_t* ptr, int shared_weights) {
+void checkpoint_init_weights(TransformerWeights *w, Config* p, uint8_t* ptr, int shared_weights) {
     int head_size = p->dim / p->n_heads;
 
     w->token_embedding_table = (float*) ptr;
@@ -180,7 +180,7 @@ void accum(float *a, float *b, int size) {
     }
 }
 
-void rmsnorm(float* o, float* x, int8_t *wptr, int l, int size) {
+void rmsnorm(float* o, float* x, uint8_t *wptr, int l, int size) {
     // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
@@ -193,7 +193,7 @@ void rmsnorm(float* o, float* x, int8_t *wptr, int l, int size) {
     q8data* q8 = (q8data*) (wptr + quant_size(l, size));
     float base = q8->base;
     float scale = q8->scale;
-    int8_t *qweight = q8->weights;
+    uint8_t *qweight = q8->weights;
     for (int j = 0; j < size; j++) {
         o[j] = (base + scale * qweight[j]) * (ss * x[j]);
     }
@@ -219,13 +219,13 @@ void softmax(float* x, int size) {
     }
 }
 
-void matmul(float* xout, float* x, int8_t *wptr, int l, int n, int d) {
+void matmul(float* xout, float* x, uint8_t *wptr, int l, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
     q8data* q8 = (q8data*) (wptr + quant_size(l, n * d));
     float base = q8->base;
     float scale = q8->scale;
-    int8_t *qweight = q8->weights;
+    uint8_t *qweight = q8->weights;
     int i;
     #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
@@ -569,7 +569,7 @@ int main(int argc, char *argv[]) {
     Config config;
     TransformerWeights weights;
     int fd = 0;            // file descriptor for memory mapping
-    int8_t* data = NULL;   // memory mapped data pointer
+    uint8_t* data = NULL;   // memory mapped data pointer
     ssize_t file_size;     // size of the checkpoint file in bytes
     {
         FILE *file = fopen(checkpoint, "rb");
@@ -588,7 +588,7 @@ int main(int argc, char *argv[]) {
         if (fd == -1) { fprintf(stderr, "open failed!\n"); return 1; }
         data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
-        int8_t* weights_ptr = data + sizeof(Config);
+        uint8_t* weights_ptr = data + sizeof(Config);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
     }
     // right now we cannot run for more than config.seq_len steps

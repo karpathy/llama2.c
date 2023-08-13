@@ -132,10 +132,10 @@ void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size, 
       fwrite(&min, sizeof(float), 1, file);
       fwrite(&scale, sizeof(float), 1, file);
       // quantize the weights from this layer and save to file
-      int8_t qweight;
+      uint8_t qweight;
       for (int i = 0; i < layer_size; i++){
           qweight = round((weights[i] - min) / (max - min) * 255);
-          fwrite(&qweight, sizeof(int8_t), 1, file);
+          fwrite(&qweight, sizeof(uint8_t), 1, file);
       }
       // advance to the weights of the next layer
       weights += layer_size;  // * sizeof(float);
