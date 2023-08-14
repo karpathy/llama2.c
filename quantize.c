@@ -40,11 +40,11 @@ typedef struct {
     // weights for rmsnorms
     float* rms_att_weight; // (layer, dim) rmsnorm weights
     float* rms_ffn_weight; // (layer, dim)
-    // weights for matmuls
-    float* wq; // (layer, dim, dim)
-    float* wk; // (layer, dim, dim)
-    float* wv; // (layer, dim, dim)
-    float* wo; // (layer, dim, dim)
+    // weights for matmuls. note dim == n_heads * head_sizes
+    float* wq; // (layer, dim, n_heads * head_size)
+    float* wk; // (layer, dim, n_kv_heads * head_size)
+    float* wv; // (layer, dim, n_kv_heads * head_size)
+    float* wo; // (layer, n_heads * head_size, dim)
     // weights for ffn
     float* w1; // (layer, hidden_dim, dim)
     float* w2; // (layer, dim, hidden_dim)
@@ -64,40 +64,32 @@ typedef struct {
 void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int shared_weights) {
     int head_size = p->dim / p->n_heads;
     float* ptr = f;
-
     w->token_embedding_table = ptr;
     ptr += p->vocab_size * p->dim;
-
     w->rms_att_weight = ptr;
     ptr += p->n_layers * p->dim;
-
     w->wq = ptr;
-    ptr += p->n_layers * p->dim * p->dim;
+    ptr += p->n_layers * p->dim * (p->n_heads * head_size);
     w->wk = ptr;
-    ptr += p->n_layers * p->dim * p->dim;
+    ptr += p->n_layers * p->dim * (p->n_kv_heads * head_size);
     w->wv = ptr;
-    ptr += p->n_layers * p->dim * p->dim;
+    ptr += p->n_layers * p->dim * (p->n_kv_heads * head_size);
     w->wo = ptr;
-    ptr += p->n_layers * p->dim * p->dim;
-
+    ptr += p->n_layers * (p->n_heads * head_size) * p->dim;
     w->rms_ffn_weight = ptr;
     ptr += p->n_layers * p->dim;
-
     w->w1 = ptr;
     ptr += p->n_layers * p->dim * p->hidden_dim;
     w->w2 = ptr;
     ptr += p->n_layers * p->hidden_dim * p->dim;
     w->w3 = ptr;
     ptr += p->n_layers * p->dim * p->hidden_dim;
-
     w->rms_final_weight = ptr;
     ptr += p->dim;
-
     w->freq_cis_real = ptr;
     ptr += p->seq_len * head_size / 2;
     w->freq_cis_imag = ptr;
     ptr += p->seq_len * head_size / 2;
-
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
@@ -131,6 +123,7 @@ void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size, 
       // save min value and scale factor to file
       fwrite(&min, sizeof(float), 1, file);
       fwrite(&scale, sizeof(float), 1, file);
+      printf("[debug] min, scale written success for layer %d\n", l);
       // quantize the weights from this layer and save to file
       uint8_t qweight;
       for (int i = 0; i < layer_size; i++){
@@ -171,10 +164,10 @@ int convert_weights_q8(TransformerWeights *w, Config *p){
 
     quantize_weights(file, w->rms_att_weight, p->n_layers, p->dim, "rms_att_weight");
 
-    quantize_weights(file, w->wq, p->n_layers, p->dim * p->dim, "wq");
-    quantize_weights(file, w->wk, p->n_layers, p->dim * p->dim, "wk");
-    quantize_weights(file, w->wv, p->n_layers, p->dim * p->dim, "wv");
-    quantize_weights(file, w->wo, p->n_layers, p->dim * p->dim, "wo");
+    quantize_weights(file, w->wq, p->n_layers, p->dim * (p->n_heads * head_size), "wq");
+    quantize_weights(file, w->wk, p->n_layers, p->dim * (p->n_kv_heads * head_size), "wk");
+    quantize_weights(file, w->wv, p->n_layers, p->dim * (p->n_kv_heads * head_size), "wv");
+    quantize_weights(file, w->wo, p->n_layers, (p->n_heads * head_size) * p->dim, "wo");
 
     quantize_weights(file, w->rms_ffn_weight, p->n_layers, p->dim, "rms_ffn_weight");
     
