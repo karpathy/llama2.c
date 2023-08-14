@@ -123,7 +123,6 @@ void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size, 
       // save min value and scale factor to file
       fwrite(&min, sizeof(float), 1, file);
       fwrite(&scale, sizeof(float), 1, file);
-      printf("[debug] min, scale written success for layer %d\n", l);
       // quantize the weights from this layer and save to file
       uint8_t qweight;
       for (int i = 0; i < layer_size; i++){
@@ -131,7 +130,7 @@ void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size, 
           fwrite(&qweight, sizeof(uint8_t), 1, file);
       }
       // advance to the weights of the next layer
-      weights += layer_size;  // * sizeof(float);
+      weights += layer_size;
     }
 
 }
@@ -235,7 +234,7 @@ int main(int argc, char *argv[]) {
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
 
         int ret = convert_weights_q8(&weights, &config);
-        if (ret == 0) printf("model converted and saved\n");
+        if (ret == 0) printf("model converted and saved to data.bin\n");
     }
     
     // memory and file handles cleanup
