@@ -159,12 +159,6 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
 // ----------------------------------------------------------------------------
 // neural net blocks
 
-void accum(float *a, float *b, int size) {
-    for (int i = 0; i < size; i++) {
-        a[i] += b[i];
-    }
-}
-
 void rmsnorm(float* o, float* x, float* weight, int size) {
     // calculate sum of squares
     float ss = 0.0f;
@@ -312,7 +306,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
 
         // residual connection back into x
-        accum(x, s->xb2, dim);
+        for (int i = 0; i < dim; i++) {
+            x[i] += s->xb2[i];
+        }
 
         // ffn rmsnorm
         rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
@@ -336,7 +332,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
 
         // residual connection
-        accum(x, s->xb, dim);
+        for (int i = 0; i < dim; i++) {
+            x[i] += s->xb[i];
+        }
     }
 
     // final rmsnorm
