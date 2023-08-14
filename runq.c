@@ -97,8 +97,8 @@ void malloc_run_state(RunState* s, Config* p) {
     s->hb = calloc(p->hidden_dim, sizeof(float));
     s->hb2 = calloc(p->hidden_dim, sizeof(float));
     s->q = calloc(p->dim, sizeof(float));
-    s->k = calloc(p->dim, sizeof(float));
-    s->v = calloc(p->dim, sizeof(float));
+    s->k = calloc(kv_dim, sizeof(float));
+    s->v = calloc(kv_dim, sizeof(float));
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
     s->probindex = calloc(p->vocab_size, sizeof(ProbIndex));
@@ -173,12 +173,6 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, uint8_t* ptr, int
 
 // ----------------------------------------------------------------------------
 // neural net blocks
-
-void accum(float *a, float *b, int size) {
-    for (int i = 0; i < size; i++) {
-        a[i] += b[i];
-    }
-}
 
 void rmsnorm(float* o, float* x, uint8_t *wptr, int l, int size) {
     // calculate sum of squares
@@ -348,7 +342,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->xb2, s->xb, w->wo, l, dim, dim);
 
         // residual connection back into x
-        accum(x, s->xb2, dim);
+        for (int i = 0; i < dim; i++) {
+            x[i] += s->xb2[i];
+        }
 
         // ffn rmsnorm
         rmsnorm(s->xb, x, w->rms_ffn_weight, l, dim);
@@ -372,7 +368,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->xb, s->hb, w->w2, l, hidden_dim, dim);
 
         // residual connection
-        accum(x, s->xb, dim);
+        for (int i = 0; i < dim; i++) {
+            x[i] += s->xb[i];
+        }
     }
 
     // final rmsnorm
@@ -569,7 +567,7 @@ int main(int argc, char *argv[]) {
     char *tokenizer = "tokenizer.bin";
     float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    rng_seed = (unsigned int)time(NULL); // seed rng with time by default
+    rng_seed = 0; // seed rng with time by default
     int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
 
@@ -589,7 +587,7 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 'z') { tokenizer = argv[i + 1]; }
         else { error_usage(); }
     }
-    if(rng_seed == 0) { fprintf(stderr, "Cannot use seed=0 because of the rng alg used\n"); return 1; }
+    if(rng_seed == 0) { rng_seed =  (unsigned int)time(NULL);}
 
     // read in the model.bin file
     Config config;
@@ -620,7 +618,7 @@ int main(int argc, char *argv[]) {
     // right now we cannot run for more than config.seq_len steps
     if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
 
-    // read in the tokenizer.bin file
+    // read in the tokenizer .bin file
     char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
     float* vocab_scores = (float*)malloc(config.vocab_size * sizeof(float));
     unsigned int max_token_length;
@@ -676,7 +674,7 @@ int main(int argc, char *argv[]) {
                 // apply softmax to the logits to get the probabilities for next token
                 softmax(state.logits, config.vocab_size);
                 // we sample from this distribution to get the next token
-                if (topp <= 0) {
+                if (topp <= 0 || topp >= 1) {
                     // simply sample from the predicted probability distribution
                     next = sample(state.logits, config.vocab_size);
                 } else {
@@ -712,7 +710,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
     free(vocab);
     free(vocab_scores);
-    // if (prompt_tokens != NULL) free(prompt_tokens);
+    if (prompt_tokens != NULL) free(prompt_tokens);
     if (data != MAP_FAILED) munmap(data, file_size);
     if (fd != -1) close(fd);
     return 0;
