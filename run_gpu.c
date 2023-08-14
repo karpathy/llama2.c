@@ -681,6 +681,22 @@ void release_GPUContext(GPUContext* ctx) {
     eglTerminate(ctx->display);
 }
 
+void dumpGPUArray(GLuint data_gpu, int offset, int n) {
+    // return the index that has the highest probability
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, data_gpu);
+    float* data = (float*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, offset * sizeof(float),
+                                           n * sizeof(float), GL_MAP_READ_BIT);
+    GPU_CHECK();
+    if (data) {
+        for (int i = 0; i < n; i++) {
+            printf("%f ", data[i]);
+        }
+    }
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    GPU_CHECK();
+    printf("\n");
+}
+
 GLuint loadShader(GLenum shaderType, const char* pSource) {
     GLuint shader = glCreateShader(shaderType);
     if (shader) {
@@ -1017,6 +1033,9 @@ void rmsnorm(GPUProgram* prog, RunState* state, GLuint o, GLuint x, GLuint weigh
             nextStepSize += 1;
         }
 
+        //printf("rmsnorm currentStepSize=%d nextStepSize=%d\n", currentStepSize, nextStepSize);
+        //dumpGPUArray(currentBuffer, currentStepSize);
+
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
         glUseProgram(prog->shader_sum);
@@ -1187,7 +1206,13 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 
+    printf("att(no softmax):\n");
+    dumpGPUArray(state->mulBuffer_4, 0, (pos + 1) * n_heads);
+
     softmax(prog, state, state->mulBuffer_4, pos + 1, n_heads);
+
+    printf("att:\n");
+    dumpGPUArray(state->mulBuffer_4, 0, (pos + 1) * n_heads);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, state->mulBuffer_4);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, x);
@@ -1298,6 +1323,10 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, x);
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, dim * sizeof(float), content_row);
 
+    printf("\n\ndim=%d hidden_dim=%d head_size=%d\n", dim, hidden_dim, head_size);
+    printf("\ninput:\n");
+    dumpGPUArray(x, 0, dim);
+
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
     int freq_cis_idx_delta = pos * head_size / 2;
 
@@ -1310,6 +1339,13 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         matmul(prog, s, s->q, s->xb, w->wq, dim, dim, 0, l * dim * dim);
         matmul(prog, s, s->k, s->xb, w->wk, dim, dim, 0, l * dim * dim);
         matmul(prog, s, s->v, s->xb, w->wv, dim, dim, 0, l * dim * dim);
+
+        printf("q:\n");
+        dumpGPUArray(s->q, 0, dim);
+        printf("k:\n");
+        dumpGPUArray(s->k, 0, dim);
+        printf("v:\n");
+        dumpGPUArray(s->v, 0, dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
 
@@ -1338,12 +1374,22 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
 
+        printf("pos_q:\n");
+        dumpGPUArray(s->q, 0, dim);
+        printf("pos_k:\n");
+        dumpGPUArray(s->k, 0, dim);
+
         // save key,value at this time step (pos) to our kv cache
         int loff = l * p->seq_len * dim;  // kv cache layer offset for convenience
         int key_offset = loff + pos * dim;
         int value_offset = loff + pos * dim;
         copyBuffer(prog, s->k, s->key_cache, 0, key_offset, dim);
         copyBuffer(prog, s->v, s->value_cache, 0, value_offset, dim);
+
+        printf("key_cache:\n");
+        dumpGPUArray(s->key_cache, key_offset, dim);
+        printf("value_cache:\n");
+        dumpGPUArray(s->value_cache, value_offset, dim);
 
         // multihead attention. iterate over all heads
 
@@ -1371,6 +1417,9 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         glDispatchCompute(p->n_heads, head_size, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
+
+        printf("ori att:\n");
+        dumpGPUArray(s->att, 0, p->n_heads);
 
         // softmax the scores to get attention weights, from 0..pos inclusively
         transformer_softmax(prog, s, s->att, pos + 1, p->seq_len, p->n_heads);
@@ -1430,10 +1479,16 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
 
         // residual connection
         accum(prog, s, x, s->xb, dim);
+
+        printf("layer:\n");
+        dumpGPUArray(x, 0, dim);
     }
 
     // final rmsnorm
     rmsnorm(prog, s, x, x, w->rms_final_weight, dim, 0);
+
+    printf("final:\n");
+    dumpGPUArray(x, 0, dim);
 
     // classifier into logits
     matmul(prog, s, s->logits, x, w->wcls, p->dim, p->vocab_size, 0, 0);
@@ -1535,8 +1590,9 @@ int argmax(GPUProgram* prog, RunState* state, GLuint probabilities_gpu, int n) {
                                                     n * sizeof(float), GL_MAP_READ_BIT);
     GPU_CHECK();
     int max_i = 0;
+    float max_p;
     if (probabilities) {
-        float max_p = probabilities[0];
+        max_p = probabilities[0];
         for (int i = 1; i < n; i++) {
             if (probabilities[i] > max_p) {
                 max_i = i;
@@ -1547,6 +1603,7 @@ int argmax(GPUProgram* prog, RunState* state, GLuint probabilities_gpu, int n) {
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
     GPU_CHECK();
 
+    //printf("max_i=%d,max_p=%f\n", max_i, max_p);
     return max_i;
 }
 
