@@ -1,5 +1,5 @@
 ﻿/*
-Inference for Llama-2 Transformer model in pure Cuda.
+Inference for Llama-2 Transformer model in C + CUDA.
 */
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -383,6 +383,11 @@ typedef struct {
 } TransformerWeights;
 
 typedef struct {
+    float prob;
+    int index;
+} ProbIndex; // struct used when sorting probabilities during top-p sampling
+
+typedef struct {
     // current wave of activations
     half* x; // activation at current time stamp (dim,)
     half* xb; // same, but inside a residual branch (dim,)
@@ -394,6 +399,7 @@ typedef struct {
     half* logits_gpu16; // output logits
     float* logits_gpu32; // logits in GPU memory converted to float
     float* logits; // logits copied CPU side
+    ProbIndex *probindex; // buffer used in top-p sampling
     // kv cache
     half* key_cache;   // (layer, seq_len, dim)
     half* value_cache; // (layer, seq_len, dim)
@@ -412,11 +418,12 @@ void malloc_run_state(RunState* s, Config* p) {
     cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * p->dim * sizeof(half));
     cudaMalloc((void**)&s->logits_gpu32, p->vocab_size * sizeof(float));
     s->logits = (float*)malloc(p->vocab_size * sizeof(float));
+    s->probindex = calloc(p->vocab_size, sizeof(ProbIndex));
 
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-        || !s->att || !s->logits || !s->key_cache
-        || !s->value_cache || !s->logits_gpu16 || !s->logits_gpu32) {
+        || !s->att || !s->key_cache || !s->value_cache
+        || !s->logits_gpu16 || !s->logits_gpu32 || !s->logits || !s->probindex) {
         printf("malloc failed!\n");
         exit(1);
     }
@@ -433,6 +440,7 @@ void free_run_state(RunState* s) {
     cudaFree(s->logits_gpu16);
     cudaFree(s->logits_gpu32);
     free(s->logits);
+    free(s->probindex);
     cudaFree(s->key_cache);
     cudaFree(s->value_cache);
 }
@@ -670,7 +678,7 @@ int str_lookup(char *str, char **vocab, int vocab_size) {
 }
 
 void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
-    
+
     // a temporary buffer to merge two consecutive tokens
     char* str_buffer = (char*) malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
 
@@ -679,7 +687,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     for (char *c = text; *c != '\0'; c++) {
         sprintf(str_buffer, "%c", *c);
         int id = str_lookup(str_buffer, vocab, vocab_size);
-        if (id == -1) { printf("not good\n"); exit(1);}
+        if (id == -1) { fprintf(stderr, "not good\n"); exit(EXIT_FAILURE); }
         tokens[*n_tokens] = id;
         (*n_tokens)++;
     }
@@ -719,7 +727,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
 }
 
 // ----------------------------------------------------------------------------
-// utilities
+// utilities: time / rng
 
 long time_in_ms() {
     // return time in milliseconds, for benchmarking the model speed
@@ -740,8 +748,31 @@ float random_f32() { // random float32 in [0,1)
     return (random_u32() >> 8) / 16777216.0f;
 }
 
+// ----------------------------------------------------------------------------
+// sampling can be done in a few ways: greedy argmax, sampling, top-p sampling
+
+int argmax(float* probabilities, int n) {
+    // return the index that has the highest probability
+    int max_pos;
+    int *pmax_pos;
+
+    // allocate memory on the device
+    cudaMalloc((void**)&pmax_pos, sizeof(int));
+
+    // call the kernel
+    argmax32_kernel<<<1,1024>>>(probabilities, n, pmax_pos);
+
+    // copy the result back to host
+    cudaMemcpy(&max_pos, pmax_pos, sizeof(int), cudaMemcpyDeviceToHost);
+
+    // free the allocated memory
+    cudaFree(pmax_pos);
+
+    return max_pos;
+}
+
 int sample(float* probabilities, int n) {
-    // sample index from probabilities, they must sum to 1
+    // sample index from probabilities (they must sum to 1!)
     float r = random_f32();
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
@@ -753,57 +784,101 @@ int sample(float* probabilities, int n) {
     return n - 1; // in case of rounding errors
 }
 
-// return argmax of v in elements 0..n
-int argmax(float* v, int n) {
-    int max_pos;
-    int *pmax_pos;
-
-    // allocate memory on the device
-    cudaMalloc((void**)&pmax_pos, sizeof(int));
-
-    // call the kernel
-    argmax32_kernel<<<1,1024>>>(v, n, pmax_pos);
-
-    // copy the result back to host
-    cudaMemcpy(&max_pos, pmax_pos, sizeof(int), cudaMemcpyDeviceToHost);
-
-    // free the allocated memory
-    cudaFree(pmax_pos);
-
-    return max_pos;
+int compare(const void* a, const void* b) {
+    ProbIndex* a_ = (ProbIndex*) a;
+    ProbIndex* b_ = (ProbIndex*) b;
+    if (a_->prob > b_->prob) return -1;
+    if (a_->prob < b_->prob) return 1;
+    return 0;
 }
 
+int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
+    // top-p sampling (or "nucleus sampling") samples from the smallest set of
+    // tokens that exceed probability topp. This way we never sample tokens that
+    // have very low probabilities and are less likely to go "off the rails".
+
+    int n0 = 0;
+    // quicksort indices in descending order of probabilities
+    // values smaller than (1 - topp) / (n - 1) cannot be part of the result
+    // so for efficiency we crop these out as candidates before sorting
+    const float cutoff = (1.0f - topp) / (n - 1);
+    for (int i = 0; i < n; i++) {
+        if (probabilities[i] >= cutoff) {
+            probindex[n0].index = i;
+            probindex[n0].prob = probabilities[i];
+            n0++;
+        }
+    }
+    qsort(probindex, n0, sizeof(ProbIndex), compare);
+
+    // truncate the list where cumulative probability exceeds topp
+    float cumulative_prob = 0.0f;
+    int last_idx = n0 - 1; // in case of rounding errors consider all elements
+    for (int i = 0; i < n0; i++) {
+        cumulative_prob += probindex[i].prob;
+        if (cumulative_prob > topp) {
+            last_idx = i;
+            break; // we've exceeded topp by including last_idx
+        }
+    }
+
+    // sample from the truncated list
+    float r = random_f32() * cumulative_prob;
+    float cdf = 0.0f;
+    for (int i = 0; i <= last_idx; i++) {
+        cdf += probindex[i].prob;
+        if (r < cdf) {
+            return probindex[i].index;
+        }
+    }
+    return probindex[last_idx].index; // in case of rounding errors
+}
+
+
 // ----------------------------------------------------------------------------
+// int main
+
+void error_usage() {
+    fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
+    fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
+    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9\n");
+    fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
+    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
+    fprintf(stderr, "  -i <string> input prompt\n");
+    fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
+    exit(EXIT_FAILURE);
+}
 
 int main(int argc, char *argv[]) {
 
-    // poor man's C argparse
+    // default inits
     char *checkpoint = NULL;  // e.g. out/model.bin
-    float temperature = 0.9f; // e.g. 1.0, or 0.0
-    int steps = 256;          // max number of steps to run for, 0: use seq_len
+    char *tokenizer = "tokenizer.bin";
+    float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
+    float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+    rng_seed = 0; // seed rng with time by default
+    int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
 
-    // 'checkpoint' is necessary arg
-    if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps] [prompt]\n", argv[0]);
-        return 1;
+    // poor man's C argparse so we can override the defaults above from the command line
+    if (argc >= 2) { checkpoint = argv[1]; } else { error_usage(); }
+    for (int i = 2; i < argc; i+=2) {
+        // do some basic validation
+        if (i + 1 >= argc) { error_usage(); } // must have arg after flag
+        if (argv[i][0] != '-') { error_usage(); } // must start with dash
+        if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
+        // read in the args
+        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
+        else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
+        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
+        else if (argv[i][1] == 'z') { tokenizer = argv[i + 1]; }
+        else { error_usage(); }
     }
-    if (argc >= 2) {
-        checkpoint = argv[1];
-    }
-    if (argc >= 3) {
-        // optional temperature. 0.0 = (deterministic) argmax sampling. 1.0 = baseline
-        temperature = atof(argv[2]);
-    }
-    if (argc >= 4) {
-        steps = atoi(argv[3]);
-    }
-    if (argc >= 5) {
-        prompt = argv[4];
-    }
-
-    // seed rng with time. if you want deterministic behavior use temperature 0.0
-    rng_seed = (unsigned int)time(NULL);
+    if(rng_seed == 0) { rng_seed =  (unsigned int)time(NULL);}
 
     // read in the model.bin file
     Config config;
@@ -811,7 +886,7 @@ int main(int argc, char *argv[]) {
     int shared_weights;
     {
         FILE *file = fopen(checkpoint, "rb");
-        if (!file) { printf("Couldn't open file %s\n", checkpoint); return 1; }
+        if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); return 1; }
         // read in the config header
         if (fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
 
@@ -829,20 +904,20 @@ int main(int argc, char *argv[]) {
     // right now we cannot run for more than config.seq_len steps
     if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
 
-    // read in the tokenizer.bin file
+    // read in the tokenizer .bin file
     char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
     float* vocab_scores = (float*)malloc(config.vocab_size * sizeof(float));
     unsigned int max_token_length;
     {
-        FILE *file = fopen("tokenizer.bin", "rb");
-        if (!file) { printf("couldn't load tokenizer.bin\n"); return 1; }
-        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { printf("failed read\n"); return 1; }
+        FILE *file = fopen(tokenizer, "rb");
+        if (!file) { fprintf(stderr, "couldn't load %s\n", tokenizer); return 1; }
+        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
         int len;
         for (int i = 0; i < config.vocab_size; i++) {
-            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { printf("failed read\n"); return 1;}
-            if (fread(&len, sizeof(int), 1, file) != 1) { printf("failed read\n"); return 1; }
+            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1;}
+            if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
             vocab[i] = (char *)malloc(len + 1);
-            if (fread(vocab[i], len, 1, file) != 1) { printf("failed read\n"); return 1; }
+            if (fread(vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
             vocab[i][len] = '\0'; // add the string terminating token
         }
         fclose(file);
@@ -856,7 +931,7 @@ int main(int argc, char *argv[]) {
     int *prompt_tokens = NULL;
     int num_prompt_tokens = 0;
     if (prompt != NULL) {
-        prompt_tokens = (int*)malloc(config.seq_len * sizeof(int));
+        prompt_tokens = (int*)malloc(strlen(prompt) * sizeof(int));
         bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
     }
 
@@ -865,12 +940,12 @@ int main(int argc, char *argv[]) {
     int next;        // will store the next token in the sequence
     int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     int pos = 0;     // position in the sequence
-    printf("<s>\n"); // explicit print the initial BOS token for stylistic symmetry reasons
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
         transformer(token, pos, &config, &state, &weights);
 
+        // advance the state state machine
         if(pos < num_prompt_tokens) {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos];
@@ -888,31 +963,38 @@ int main(int argc, char *argv[]) {
                 // copy the logits from GPU to the CPU
                 cudaMemcpy(state.logits, state.logits_gpu32, config.vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
                 // we sample from this distribution to get the next token
-                next = sample(state.logits, config.vocab_size);
+                if (topp <= 0 || topp >= 1) {
+                    // simply sample from the predicted probability distribution
+                    next = sample(state.logits, config.vocab_size);
+                } else {
+                    // top-p (nucleus) sampling, clamping the least likely tokens to zero
+                    next = sample_topp(state.logits, config.vocab_size, topp, state.probindex);
+                }
             }
         }
+        pos++;
 
-        // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
+        // data-dependent terminating condition: the BOS (1) token delimits sequences
+        if (next == 1) { break; }
+
+        // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
         char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
         printf("%s", token_str);
         fflush(stdout);
-
-        if (next == 2) break; // break if EOS token is reached
-
-        // advance forward
         token = next;
-        pos++;
-        // init our timer here because the first iteration could be slow
+
+        // init the timer here because the first iteration can be slower
         if (start == 0) { start = time_in_ms(); }
     }
+    printf("\n");
 
-    // report achieved tok/s
-    long end = time_in_ms();
-    double time = (end - start) / 1000.0;
-    int timed_tokens = pos - 1;
-    printf("\nachieved tok/s: %f. Tokens: %d, seconds: %g\n", timed_tokens / time, timed_tokens, time);
+    // report achieved tok/s (pos-1 because the timer starts after first iteration)
+    if (pos > 1) {
+        long end = time_in_ms();
+        fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
+    }
 
-    // memory cleanup
+    // memory and file handles cleanup
     free_run_state(&state);
     free_weights(&weights, shared_weights);
     for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
