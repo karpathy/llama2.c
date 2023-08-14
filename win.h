@@ -4,7 +4,10 @@
 #define WIN32_LEAN_AND_MEAN      // Exclude rarely-used stuff from Windows headers
 #include <windows.h>
 #include <time.h>
+#include <stdint.h>
 
+#define ssize_t int64_t
+#define ftell _ftelli64
 
 // Below code is originally from mman-win32
 //
@@ -51,7 +54,7 @@ extern "C" {
 /* Flags for portable clock_gettime call. */
 #define CLOCK_REALTIME  0
 
-void*   mmap(void *addr, size_t len, int prot, int flags, int fildes, off_t off);
+void*   mmap(void *addr, size_t len, int prot, int flags, int fildes, ssize_t off);
 int     munmap(void *addr, size_t len);
 int     mprotect(void *addr, size_t len, int prot);
 int     msync(void *addr, size_t len, int flags);
