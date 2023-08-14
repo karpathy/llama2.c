@@ -47,11 +47,11 @@ typedef struct {
     // weights for rmsnorms
     uint8_t* rms_att_weight; // (layer, dim) rmsnorm weights
     uint8_t* rms_ffn_weight; // (layer, dim)
-    // weights for matmuls
-    uint8_t* wq; // (layer, dim, dim)
-    uint8_t* wk; // (layer, dim, dim)
-    uint8_t* wv; // (layer, dim, dim)
-    uint8_t* wo; // (layer, dim, dim)
+    // weights for matmuls. note dim == n_heads * head_size
+    uint8_t* wq; // (layer, dim, n_heads * head_size)
+    uint8_t* wk; // (layer, dim, n_kv_heads * head_size)
+    uint8_t* wv; // (layer, dim, n_kv_heads * head_size)
+    uint8_t* wo; // (layer, n_heads * head_size, dim)
     // weights for ffn
     uint8_t* w1; // (layer, hidden_dim, dim)
     uint8_t* w2; // (layer, dim, hidden_dim)
@@ -90,6 +90,7 @@ typedef struct {
 
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
     s->x = calloc(p->dim, sizeof(float));
     s->xb = calloc(p->dim, sizeof(float));
     s->xb2 = calloc(p->dim, sizeof(float));
@@ -101,8 +102,8 @@ void malloc_run_state(RunState* s, Config* p) {
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
     s->probindex = calloc(p->vocab_size, sizeof(ProbIndex));
-    s->key_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
-    s->value_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
+    s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+    s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
@@ -141,13 +142,13 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, uint8_t* ptr, int
     ptr += quant_size(p->n_layers, p->dim);
 
     w->wq = ptr;
-    ptr += quant_size(p->n_layers, p->dim * p->dim);
+    ptr += quant_size(p->n_layers, p->dim * (p->n_heads * head_size));
     w->wk = ptr;
-    ptr += quant_size(p->n_layers, p->dim * p->dim);
+    ptr += quant_size(p->n_layers, p->dim * (p->n_kv_heads * head_size));
     w->wv = ptr;
-    ptr += quant_size(p->n_layers, p->dim * p->dim);
+    ptr += quant_size(p->n_layers, p->dim * (p->n_kv_heads * head_size));
     w->wo = ptr;
-    ptr += quant_size(p->n_layers, p->dim * p->dim);
+    ptr += quant_size(p->n_layers, (p->n_heads * head_size) * p->dim);
 
     w->rms_ffn_weight = ptr;
     ptr += quant_size(p->n_layers, p->dim);
@@ -255,6 +256,8 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     // a few convenience variables
     float *x = s->x;
     int dim = p->dim;
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
@@ -273,29 +276,33 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // qkv matmuls for this position
         matmul(s->q, s->xb, w->wq, l, dim, dim);
-        matmul(s->k, s->xb, w->wk, l, dim, dim);
-        matmul(s->v, s->xb, w->wv, l, dim, dim);
+        matmul(s->k, s->xb, w->wk, l, dim, kv_dim);
+        matmul(s->v, s->xb, w->wv, l, dim, kv_dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
         for (int i = 0; i < dim; i+=2) {
             float q0 = s->q[i];
             float q1 = s->q[i+1];
-            float k0 = s->k[i];
-            float k1 = s->k[i+1];
             float fcr = freq_cis_real_row[(i % head_size) / 2];
             float fci = freq_cis_imag_row[(i % head_size) / 2];
             s->q[i]   = q0 * fcr - q1 * fci;
             s->q[i+1] = q0 * fci + q1 * fcr;
+        }
+        for (int i = 0; i < kv_dim; i+=2) {
+            float k0 = s->k[i];
+            float k1 = s->k[i+1];
+            float fcr = freq_cis_real_row[(i % head_size) / 2];
+            float fci = freq_cis_imag_row[(i % head_size) / 2];
             s->k[i]   = k0 * fcr - k1 * fci;
             s->k[i+1] = k0 * fci + k1 * fcr;
         }
 
         // save key,value at this time step (pos) to our kv cache
-        int loff = l * p->seq_len * dim; // kv cache layer offset for convenience
-        float* key_cache_row = s->key_cache + loff + pos * dim;
-        float* value_cache_row = s->value_cache + loff + pos * dim;
-        memcpy(key_cache_row, s->k, dim*sizeof(*key_cache_row));
-        memcpy(value_cache_row, s->v, dim*sizeof(*value_cache_row));
+        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
+        float* key_cache_row = s->key_cache + loff + pos * kv_dim;
+        float* value_cache_row = s->value_cache + loff + pos * kv_dim;
+        memcpy(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row));
+        memcpy(value_cache_row, s->v, kv_dim * sizeof(*value_cache_row));
 
         // multihead attention. iterate over all heads
         int h;
@@ -308,7 +315,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * dim + h * head_size;
+                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
@@ -327,7 +334,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * dim + h * head_size;
+                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
@@ -501,17 +508,24 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     // tokens that exceed probability topp. This way we never sample tokens that
     // have very low probabilities and are less likely to go "off the rails".
 
+    int n0 = 0;
     // quicksort indices in descending order of probabilities
+    // values smaller than (1 - topp) / (n - 1) cannot be part of the result
+    // so for efficiency we crop these out as candidates before sorting
+    const float cutoff = (1.0f - topp) / (n - 1);
     for (int i = 0; i < n; i++) {
-        probindex[i].index = i;
-        probindex[i].prob = probabilities[i];
+        if (probabilities[i] >= cutoff) {
+            probindex[n0].index = i;
+            probindex[n0].prob = probabilities[i];
+            n0++;
+        }
     }
-    qsort(probindex, n, sizeof(ProbIndex), compare);
+    qsort(probindex, n0, sizeof(ProbIndex), compare);
 
     // truncate the list where cumulative probability exceeds topp
     float cumulative_prob = 0.0f;
-    int last_idx = 0;
-    for (int i = 0; i < n; i++) {
+    int last_idx = n0 - 1; // in case of rounding errors consider all elements
+    for (int i = 0; i < n0; i++) {
         cumulative_prob += probindex[i].prob;
         if (cumulative_prob > topp) {
             last_idx = i;
@@ -540,10 +554,11 @@ void error_usage() {
     fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
-    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9, 0 = off\n");
+    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9\n");
     fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
     fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
     fprintf(stderr, "  -i <string> input prompt\n");
+    fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
     exit(EXIT_FAILURE);
 }
 
@@ -551,8 +566,9 @@ int main(int argc, char *argv[]) {
 
     // default inits
     char *checkpoint = NULL;  // e.g. out/model.bin
+    char *tokenizer = "tokenizer.bin";
     float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-    float topp = 0.9f;        // top-p in nucleus sampling
+    float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
     rng_seed = (unsigned int)time(NULL); // seed rng with time by default
     int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
@@ -570,6 +586,7 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
         else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
         else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
+        else if (argv[i][1] == 'z') { tokenizer = argv[i + 1]; }
         else { error_usage(); }
     }
     if(rng_seed == 0) { fprintf(stderr, "Cannot use seed=0 because of the rng alg used\n"); return 1; }
@@ -608,8 +625,8 @@ int main(int argc, char *argv[]) {
     float* vocab_scores = (float*)malloc(config.vocab_size * sizeof(float));
     unsigned int max_token_length;
     {
-        FILE *file = fopen("tokenizer.bin", "rb");
-        if (!file) { fprintf(stderr, "couldn't load tokenizer.bin\n"); return 1; }
+        FILE *file = fopen(tokenizer, "rb");
+        if (!file) { fprintf(stderr, "couldn't load %s\n", tokenizer); return 1; }
         if (fread(&max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
         int len;
         for (int i = 0; i < config.vocab_size; i++) {
