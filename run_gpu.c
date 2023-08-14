@@ -31,6 +31,7 @@ void checkGPUError(int line) {
     GLenum err = glGetError();
     if (err != GL_NO_ERROR) {
         printf(__FILE__ ":%d glGetError returns %d\n", line, err);
+        exit(1);
     }
 }
 #define GPU_CHECK() checkGPUError(__LINE__);
@@ -158,10 +159,11 @@ static const char* shader_rmsnorm_squares_and_sum =
 
     "void main(){\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
-    "    b.data[idx]  = a.data[idx*2]*a.data[idx*2];\n"
+    "    float res = a.data[idx*2]*a.data[idx*2];\n"
     "    if(idx*2+1 < insize){\n"
-    "       b.data[idx] += a.data[idx*2+1]*a.data[idx*2+1];\n"
+    "       res += a.data[idx*2+1]*a.data[idx*2+1];\n"
     "    }\n"
+    "    b.data[idx] = res;"
     "}";
 
 static const char* shader_softmax_exp_and_sum =
@@ -188,10 +190,11 @@ static const char* shader_softmax_exp_and_sum =
     "    int i0 = idx*2 + insize*idy;\n"
     "    int i1 = i0+1;\n"
     "    float max_val = maxVal_arr.data[0];\n"
-    "    b.data[idx + shape0*idy]  = exp(a.data[i0] - max_val);\n"
+    "    float res = exp(a.data[i0] - max_val);\n"
     "    if(i1 < insize){\n"
-    "       b.data[idx + shape0*idy] += exp(a.data[i1] - max_val);\n"
+    "        res += exp(a.data[i1] - max_val);\n"
     "    }\n"
+    "    b.data[idx + shape0*idy] = res;"
     "}";
 
 static const char* shader_softmax_normalize =
@@ -235,10 +238,11 @@ static const char* shader_sum =
     "void main(){\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    int idy = int(gl_GlobalInvocationID.y);\n"
-    "    b.data[idx + shape0*idy]  = a.data[insize*idy + idx*2];\n"
+    "    float res = a.data[insize*idy + idx*2];\n"
     "    if(idx*2+1 < insize){\n"
-    "        b.data[idx + shape0*idy] += a.data[insize*idy + idx*2 + 1];\n"
+    "        res += a.data[insize*idy + idx*2 + 1];\n"
     "    }\n"
+    "    b.data[idx + shape0*idy] = res;"
     "}";
 
 static const char* shader_max =
@@ -264,66 +268,6 @@ static const char* shader_max =
     "        b.data[idx + shape0*idy] = a.data[insize*idy + idx*2];\n"
     "    }"
     "}";
-
-static const char* shader_argmax_set_index =
-    "#version 320 es\n"
-    "uniform int insize;\n"
-    "layout(local_size_x = 1 , local_size_y = 1) in;\n"
-
-    "layout(binding = 0) readonly buffer Input0{\n"
-    "    float data[];\n"
-    "} a;\n"
-
-    "layout(binding = 1) writeonly buffer Output0{\n"
-    "    float data[];\n"
-    "} a_index;\n"
-
-    "void main(){\n"
-    "    int idx = int(gl_GlobalInvocationID.x);\n"
-    "    int idy = int(gl_GlobalInvocationID.y);\n"
-    "    a_index.data[idx + insize*idy] = float(idx);\n"
-    "}\n";
-
-static const char* shader_argmax =
-    "#version 320 es\n"
-    "uniform int insize;\n"
-    "uniform int shape0;\n"
-    "layout(local_size_x = 1 , local_size_y = 1) in;\n"
-
-    "layout(binding = 0) readonly buffer Input0{\n"
-    "    float data[];\n"
-    "} a;\n"
-
-    "layout(binding = 1) readonly buffer Input1{\n"
-    "    float data[];\n"
-    "} a_index;\n"
-
-    "layout(binding = 2) writeonly buffer Output0{\n"
-    "    float data[];\n"
-    "} b;\n"
-
-    "layout(binding = 3) writeonly buffer Output1{\n"
-    "    float data[];\n"
-    "} b_index;\n"
-
-    "void main(){\n"
-    "    int idx = int(gl_GlobalInvocationID.x);\n"
-    "    int idy = int(gl_GlobalInvocationID.y);\n"
-    "    if(idx*2+1 < insize){\n"
-    "        int v0 = a.data[insize*idy + idx*2];\n"
-    "        int v1 = a.data[insize*idy + idx*2+1];\n"
-    "        if(v0>v1){\n"
-    "            b.data[idx + shape0*idy] = v0\n"
-    "            b_index.data[idx + shape0*idy] = a_index.data[insize*idy + idx*2];\n"
-    "        }else{\n"
-    "            b.data[idx + shape0*idy] = v1\n"
-    "            b_index.data[idx + shape0*idy] = a_index.data[insize*idy + idx*2 + 1];\n"
-    "        }\n"
-    "    }else{\n"
-    "        b.data[idx + shape0*idy] = a.data[insize*idy + idx*2];\n"
-    "        b_index.data[idx + shape0*idy] = a_index.data[insize*idy + idx*2];\n"
-    "    }\n"
-    "}\n";
 
 static const char* shader_min =
     "#version 320 es\n"
@@ -618,6 +562,26 @@ static const char* shader_temperature =
     "    logit.data[index] /= temperature;\n"
     "}\n";
 
+static const char* shader_copyBuffer =
+    "#version 320 es\n"
+    "uniform int src_offset;"
+    "uniform int dst_offset;"
+
+    "layout(local_size_x = 1) in;\n"
+
+    "layout(binding = 0) readonly buffer Input0{\n"
+    "    float data[];\n"
+    "} src;\n"
+
+    "layout(binding = 1) writeonly buffer Output0{\n"
+    "    float data[];\n"
+    "} dst;\n"
+
+    "void main(){\n"
+    "    int index = int(gl_GlobalInvocationID.x);\n"
+    "    dst.data[index+dst_offset] = src.data[index+src_offset];\n"
+    "}\n";
+
 typedef struct {
     GLuint shader_matmul;
     GLuint shader_rmsnorm_squares_and_sum;
@@ -636,8 +600,7 @@ typedef struct {
     GLuint shader_transformer_softmax_input;
     GLuint shader_transformer_softmax_output;
     GLuint shader_temperature;
-    GLuint shader_argmax_set_index;
-    GLuint shader_argmax;
+    GLuint shader_copyBuffer;
 } GPUProgram;
 
 typedef struct {
@@ -732,9 +695,10 @@ GLuint loadShader(GLenum shaderType, const char* pSource) {
                 char* buf = (char*)malloc(infoLen);
                 if (buf) {
                     glGetShaderInfoLog(shader, infoLen, NULL, buf);
-                    fprintf(stderr, "Could not compile shader %d:\n%s\n",
-                            shaderType, buf);
+                    printf("%s\n\nCould not compile shader %d:\n%s\n",
+                           pSource, shaderType, buf);
                     free(buf);
+                    exit(1);
                 }
                 glDeleteShader(shader);
                 shader = 0;
@@ -763,8 +727,9 @@ GLuint createComputeProgram(const char* pComputeSource) {
                 char* buf = (char*)malloc(bufLength);
                 if (buf) {
                     glGetProgramInfoLog(program, bufLength, NULL, buf);
-                    fprintf(stderr, "Could not link program:\n%s\n", buf);
+                    printf("Could not link program:\n%s\n", buf);
                     free(buf);
+                    exit(1);
                 }
             }
             glDeleteProgram(program);
@@ -809,9 +774,7 @@ void compile_GPUProgram(GPUProgram* program) {
     GPU_CHECK();
     program->shader_temperature = createComputeProgram(shader_temperature);
     GPU_CHECK();
-    program->shader_argmax_set_index = createComputeProgram(shader_argmax_set_index);
-    GPU_CHECK();
-    program->shader_argmax = createComputeProgram(shader_argmax);
+    program->shader_copyBuffer = createComputeProgram(shader_copyBuffer);
     GPU_CHECK();
 }
 
@@ -1005,8 +968,7 @@ void free_gpu_program(GPUProgram* prog) {
     glDeleteProgram(prog->shader_transformer_softmax_input);
     glDeleteProgram(prog->shader_transformer_softmax_output);
     glDeleteProgram(prog->shader_temperature);
-    glDeleteProgram(prog->shader_argmax_set_index);
-    glDeleteProgram(prog->shader_argmax);
+    glDeleteProgram(prog->shader_copyBuffer);
 }
 
 // ----------------------------------------------------------------------------
@@ -1112,6 +1074,7 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     GLuint resBuffer_max;
     GLuint resBuffer_sum;
     GLuint tmp;
+    int insize, shape0;
     do {
         //swap current and next
         tmp = currentBuffer;
@@ -1128,10 +1091,10 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
         glUseProgram(prog->shader_max);
 
-        int insize = glGetUniformLocation(prog->shader_max, "insize");
+        insize = glGetUniformLocation(prog->shader_max, "insize");
         glUniform1i(insize, currentStepSize);
 
-        int shape0 = glGetUniformLocation(prog->shader_max, "shape0");
+        shape0 = glGetUniformLocation(prog->shader_max, "shape0");
         glUniform1i(shape0, nextStepSize);
 
         glDispatchCompute(nextStepSize, size_y, 1);
@@ -1156,10 +1119,10 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, nextBuffer);
     glUseProgram(prog->shader_softmax_exp_and_sum);
 
-    int insize = glGetUniformLocation(prog->shader_softmax_exp_and_sum, "insize");
+    insize = glGetUniformLocation(prog->shader_softmax_exp_and_sum, "insize");
     glUniform1i(insize, currentStepSize);
 
-    int shape0 = glGetUniformLocation(prog->shader_softmax_exp_and_sum, "shape0");
+    shape0 = glGetUniformLocation(prog->shader_softmax_exp_and_sum, "shape0");
     glUniform1i(shape0, nextStepSize);
 
     glDispatchCompute(nextStepSize, size_y, 1);
@@ -1182,10 +1145,10 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
         glUseProgram(prog->shader_sum);
 
-        int insize = glGetUniformLocation(prog->shader_sum, "insize");
+        insize = glGetUniformLocation(prog->shader_sum, "insize");
         glUniform1i(insize, currentStepSize);
 
-        int shape0 = glGetUniformLocation(prog->shader_sum, "shape0");
+        shape0 = glGetUniformLocation(prog->shader_sum, "shape0");
         glUniform1i(shape0, nextStepSize);
 
         glDispatchCompute(nextStepSize, size_y, 1);
@@ -1200,7 +1163,7 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, x);
     glUseProgram(prog->shader_softmax_normalize);
 
-    int shape0 = glGetUniformLocation(prog->shader_softmax_normalize, "shape0");
+    shape0 = glGetUniformLocation(prog->shader_softmax_normalize, "shape0");
     glUniform1i(shape0, size_x);
 
     glDispatchCompute(size_x, size_y, 1);
@@ -1209,11 +1172,12 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
 }
 
 void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, int seq_len, int n_heads) {
+    int uniformVar;
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, state->mulBuffer_4);
     glUseProgram(prog->shader_transformer_softmax_input);
 
-    int uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_input, "seq_len");
+    uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_input, "seq_len");
     glUniform1i(uniformVar, seq_len);
 
     uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_input, "pos");
@@ -1229,7 +1193,7 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, x);
     glUseProgram(prog->shader_transformer_softmax_output);
 
-    int uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_output, "seq_len");
+    uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_output, "seq_len");
     glUniform1i(uniformVar, seq_len);
 
     uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_output, "pos");
@@ -1305,6 +1269,22 @@ void matmul(GPUProgram* prog, RunState* state, GLuint xout, GLuint x, GLuint w, 
     GPU_CHECK();
 }
 
+void copyBuffer(GPUProgram* prog, GLuint src, GLuint dst, int src_offset, int dst_offset, int size) {
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, src);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, dst);
+    glUseProgram(prog->shader_copyBuffer);
+
+    int uniformVar = glGetUniformLocation(prog->shader_copyBuffer, "src_offset");
+    glUniform1i(uniformVar, src_offset);
+
+    uniformVar = glGetUniformLocation(prog->shader_copyBuffer, "dst_offset");
+    glUniform1i(uniformVar, dst_offset);
+
+    glDispatchCompute(size, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    GPU_CHECK();
+}
+
 void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, TransformerWeights_gpu* w) {
     // a few convenience variables
     GLuint x = s->x;
@@ -1360,10 +1340,10 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
 
         // save key,value at this time step (pos) to our kv cache
         int loff = l * p->seq_len * dim;  // kv cache layer offset for convenience
-        int key_offset = sizeof(float) * (loff + pos * dim);
-        int value_offset = sizeof(float) * (loff + pos * dim);
-        glCopyBufferSubData(s->k, s->key_cache, 0, key_offset, dim * sizeof(float));
-        glCopyBufferSubData(s->v, s->value_cache, 0, value_offset, dim * sizeof(float));
+        int key_offset = loff + pos * dim;
+        int value_offset = loff + pos * dim;
+        copyBuffer(prog, s->k, s->key_cache, 0, key_offset, dim);
+        copyBuffer(prog, s->v, s->value_cache, 0, value_offset, dim);
 
         // multihead attention. iterate over all heads
 
@@ -1548,93 +1528,26 @@ float random_f32() {  // random float32 in [0,1)
 // ----------------------------------------------------------------------------
 // sampling can be done in a few ways: greedy argmax, sampling, top-p sampling
 
-int argmax(GPUProgram* prog, RunState* state, GLuint probabilities, int n) {
+int argmax(GPUProgram* prog, RunState* state, GLuint probabilities_gpu, int n) {
     // return the index that has the highest probability
-
-    int currentStepSize = n;
-    int nextStepSize = currentStepSize / 2;
-
-    GLuint currentBuffer_v = state->mulBuffer_1;
-    GLuint currentBuffer_i = state->mulBuffer_2;
-    GLuint nextBuffer_v = state->mulBuffer_3;
-    GLuint nextBuffer_i = state->mulBuffer_4;
-    GLuint tmp;
-
-    //init index
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, probabilities);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, currentBuffer_i);
-    glUseProgram(prog->shader_argmax_set_index);
-    int uniformVar = glGetUniformLocation(prog->shader_argmax_set_index, "insize");
-    glUniform1i(uniformVar, n);
-    glDispatchCompute(n, 1, 1);
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, probabilities_gpu);
+    float* probabilities = (float*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+                                                    n * sizeof(float), GL_MAP_READ_BIT);
     GPU_CHECK();
-
-    if (currentStepSize % 2 == 1) {
-        nextStepSize += 1;
-    }
-
-    //first step
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, probabilities);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, currentBuffer_i);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, nextBuffer_v);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, nextBuffer_i);
-    glUseProgram(prog->shader_rmsnorm_squares_and_sum);
-
-    uniformVar = glGetUniformLocation(prog->shader_argmax, "insize");
-    glUniform1i(uniformVar, currentStepSize);
-
-    uniformVar = glGetUniformLocation(prog->shader_argmax, "shape0");
-    glUniform1i(uniformVar, nextStepSize);
-
-    glDispatchCompute(nextStepSize, 1, 1);
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    GPU_CHECK();
-
-    while (nextStepSize != 1) {
-        //swap current and next
-        tmp = currentBuffer_i;
-        currentBuffer_i = nextBuffer_i;
-        nextBuffer_i = tmp;
-
-        tmp = currentBuffer_v;
-        currentBuffer_v = nextBuffer_v;
-        nextBuffer_v = tmp;
-
-        currentStepSize = nextStepSize;
-        nextStepSize = currentStepSize / 2;
-        if (currentStepSize % 2 == 1) {
-            nextStepSize += 1;
+    int max_i = 0;
+    if (probabilities) {
+        float max_p = probabilities[0];
+        for (int i = 1; i < n; i++) {
+            if (probabilities[i] > max_p) {
+                max_i = i;
+                max_p = probabilities[i];
+            }
         }
-
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer_v);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, currentBuffer_i);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, nextBuffer_v);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, nextBuffer_i);
-        glUseProgram(prog->shader_rmsnorm_squares_and_sum);
-
-        uniformVar = glGetUniformLocation(prog->shader_argmax, "insize");
-        glUniform1i(uniformVar, currentStepSize);
-
-        uniformVar = glGetUniformLocation(prog->shader_argmax, "shape0");
-        glUniform1i(uniformVar, nextStepSize);
-
-        glDispatchCompute(nextStepSize, 1, 1);
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-        GPU_CHECK();
-    }
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, nextBuffer_i);
-    float* pOut = (float*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
-                                           sizeof(float), GL_MAP_READ_BIT);
-    GPU_CHECK();
-    int res = -1;
-    if (pOut) {
-        res = pOut[0];
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    GPU_CHECK();
 
-    return res;
+    return max_i;
 }
 
 int sample(GPUProgram* prog, RunState* state, GLuint probabilities_gpu, int n) {
