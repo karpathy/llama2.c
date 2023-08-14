@@ -474,8 +474,8 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
 
     int n0 = 0;
     // quicksort indices in descending order of probabilities
-    // elements smaller than (1 - topp) / (n - 1) cannot be part of the result
-    // and can be filtered out directly
+    // values smaller than (1 - topp) / (n - 1) cannot be part of the result
+    // so for efficiency we crop these out as candidates before sorting
     const float cutoff = (1.0f - topp) / (n - 1);
     for (int i = 0; i < n; i++) {
         if (probabilities[i] >= cutoff) {
@@ -518,7 +518,7 @@ void error_usage() {
     fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
-    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 1.0 (=off)\n");
+    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9\n");
     fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
     fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
     fprintf(stderr, "  -i <string> input prompt\n");
@@ -532,7 +532,7 @@ int main(int argc, char *argv[]) {
     char *checkpoint = NULL;  // e.g. out/model.bin
     char *tokenizer = "tokenizer.bin";
     float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-    float topp = 1.0f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+    float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
     rng_seed = 0; // seed rng with time by default
     int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
