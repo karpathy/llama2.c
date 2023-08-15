@@ -358,7 +358,7 @@ int compare_tokens(const void *a, const void *b) {
 
 int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     // find the perfect match for str in vocab, return its index or -1 if not found
-    TokenIndex tok = {str=str}; 
+    TokenIndex tok = {str=str};
     TokenIndex *res = bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
     return res!=NULL ? res->id : -1;
 }
@@ -438,19 +438,6 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
 
     free(str_buffer);
     free(sorted_vocab);
-}
-
-// convert token to printable string
-char *token_to_str(char **vocab, int token, int prev_token) {
-    // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
-    char *token_str = (prev_token == 1 && vocab[token][0] == ' ') ? vocab[token]+1 : vocab[token];
-    // make '<0x01>' into '\x01'
-    static char byte_piece[4];
-    if (sscanf(token_str, "<0x%02X>", (int*)(&byte_piece)) == 1) {
-        byte_piece[1] = '\0';
-        token_str = byte_piece;
-    }
-    return token_str;
 }
 
 // ----------------------------------------------------------------------------
@@ -699,7 +686,9 @@ int main(int argc, char *argv[]) {
         // data-dependent terminating condition: the BOS (1) token delimits sequences
         if (next == 1) { break; }
 
-        printf("%s", token_to_str(vocab, next, token));
+        // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
+        char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
+        printf("%s", token_str);
         fflush(stdout);
         token = next;
 
