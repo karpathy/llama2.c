@@ -364,6 +364,12 @@ int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     return res != NULL ? res->id : -1;
 }
 
+static unsigned char const utf8_length[] = {
+// 0 1 2 3 4 5 6 7 8 9 A B C D E F
+   1,1,1,1,1,1,1,1,0,0,0,0,2,2,3,4
+} ;
+
+#define utf8_len(s) utf8_length[(((unsigned char *)(s))[0] & 0xFF) >> 4];
 
 int get_next_char(char *str_buffer, char *text)
 {
@@ -376,12 +382,13 @@ int get_next_char(char *str_buffer, char *text)
     // U+10000	U+10FFFF    11110xxx	10xxxxxx	10xxxxxx	10xxxxxx
 
    int len = 0;
+   int max_len = utf8_len(text);
    unsigned long encoding = 0;
    do {
      str_buffer[len] = text[len];
      encoding = (encoding << 8) | str_buffer[len];
      str_buffer[++len] = '\0';
-   } while (((*text & 0xC0) == 0x80) && (len < 4));
+   } while (((*text & 0xC0) == 0x80) && (len < max_len));
 
    // Check if it's valid utf8 encoding
    // For explanation on how it works, look here: https://stackoverflow.com/q/66715611/16827
