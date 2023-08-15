@@ -364,6 +364,38 @@ int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     return res != NULL ? res->id : -1;
 }
 
+
+int get_next_char(char *str_buffer, char *text)
+{
+    // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
+    // Code point ↔ UTF-8 conversion
+    // First code point	Last code point	Byte 1	Byte 2	Byte 3	Byte 4
+    // U+0000	U+007F	    0xxxxxxx
+    // U+0080	U+07FF	    110xxxxx	10xxxxxx
+    // U+0800	U+FFFF	    1110xxxx	10xxxxxx	10xxxxxx
+    // U+10000	U+10FFFF    11110xxx	10xxxxxx	10xxxxxx	10xxxxxx
+
+   int len = 0;
+   unsigned long encoding = 0;
+   do {
+     str_buffer[len] = text[len];
+     encoding = (encoding << 8) | str_buffer[len];
+     str_buffer[++len] = '\0';
+   } while (((*text & 0xC0) == 0x80) && (len < 4));
+
+   // Check if it's valid utf8 encoding
+   // For explanation on how it works, look here: https://stackoverflow.com/q/66715611/16827
+   #define invalid_utf8() (str_buffer[1] = '\0', 1)   
+   if (encoding <= 0x7F)                                 return len;
+   if (0xC080 == encoding)                               return len;             // Accept 0xC080 as representation for '\0'
+   if (0xC280 <= encoding && encoding <= 0xDFBF)         return (((encoding & 0xE0C0) == 0xC080) ? len : invalid_utf8());
+   if (0xEDA080 <= encoding && encoding <= 0xEDBFBF)     return invalid_utf8();  // Reject UTF-16 surrogates
+   if (0xE0A080 <= encoding && encoding <= 0xEFBFBF)     return (((encoding & 0xF0C0C0) == 0xE08080) ? len : invalid_utf8());
+   if (0xF0908080 <= encoding && encoding <= 0xF48FBFBF) return (((encoding & 0xF8C0C0C0) == 0xF0808080) ? len : invalid_utf8());
+
+   return invalid_utf8();
+}
+
 void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
 
     // sort vocabulary
@@ -382,38 +414,11 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     tokens[0] = str_lookup(" ", sorted_vocab, vocab_size);
     *n_tokens = 1; // the number of tokens
 
-    // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
-    // Code point ↔ UTF-8 conversion
-    // First code point	Last code point	Byte 1	Byte 2	Byte 3	Byte 4
-    // U+0000	U+007F	    0xxxxxxx
-    // U+0080	U+07FF	    110xxxxx	10xxxxxx
-    // U+0800	U+FFFF	    1110xxxx	10xxxxxx	10xxxxxx
-    // U+10000	U+10FFFF    11110xxx	10xxxxxx	10xxxxxx	10xxxxxx
-
     // process the raw (UTF-8) byte sequence of the input string
-    for (char *c = text; *c != '\0'; c++) {
+    for (char *c = text; *c != '\0'; c += str_len) {
 
-        // reset buffer if the current byte is ASCII or a leading byte
-        // 0xC0 is 11000000, so (*c & 0xC0) keeps the first 2 bits and zeros the rest
-        // 0x80 is 10000000
-        // in UTF-8, all continuation bytes start with "10" in first two bits
-        // so in English this is: "if this byte is not a continuation byte"
-        if ((*c & 0xC0) != 0x80) {
-            // this byte must be either a leading byte (11...) or an ASCII char (0x...)
-            // => reset our location, as we're starting a new UTF-8 codepoint
-            str_len = 0;
-        }
+        str_len = get_next_char(str_buffer,c);
 
-        // append the current byte to the buffer
-        str_buffer[str_len++] = *c; // ++ is post-increment, incremented after this line
-        str_buffer[str_len] = '\0';
-
-        // while the next character is a continuation byte, continue appending
-        if ((*(c+1) & 0xC0) == 0x80) {
-            continue;
-        }
-
-        // ok c+1 is not a continuation byte, so we've read in a full codepoint
         int id = str_lookup(str_buffer, sorted_vocab, vocab_size);
 
         if (id != -1) {
