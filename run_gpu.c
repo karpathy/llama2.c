@@ -1202,11 +1202,11 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
     uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_input, "pos");
     glUniform1i(uniformVar, pos);
 
-    glDispatchCompute(pos + 1, 1, 1);
+    glDispatchCompute(n_heads, pos + 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 
-    printf("att(no softmax):\n");
+    printf("att(no softmax): pos=%d seq_len=%d n_heads=%d\n", pos, seq_len, n_heads);
     dumpGPUArray(state->mulBuffer_4, 0, (pos + 1) * n_heads);
 
     softmax(prog, state, state->mulBuffer_4, pos + 1, n_heads);
@@ -1419,10 +1419,12 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         GPU_CHECK();
 
         printf("ori att:\n");
-        dumpGPUArray(s->att, 0, p->n_heads);
+        for (int h = 0; h < p->n_heads; ++h) {
+            dumpGPUArray(s->att, h * p->seq_len, pos + 1);
+        }
 
         // softmax the scores to get attention weights, from 0..pos inclusively
-        transformer_softmax(prog, s, s->att, pos + 1, p->seq_len, p->n_heads);
+        transformer_softmax(prog, s, s->att, pos, p->seq_len, p->n_heads);
 
         // weighted sum of the values, store back into xb
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s->value_cache);
