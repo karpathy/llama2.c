@@ -368,26 +368,31 @@ int get_next_char(char *str_buffer, char *text)
     // U+0800	U+FFFF	    1110xxxx	10xxxxxx	10xxxxxx
     // U+10000	U+10FFFF    11110xxx	10xxxxxx	10xxxxxx	10xxxxxx
 
-   int len = 0;
-   int max_len = utf8_len(text);
-   unsigned long encoding = 0;
-   do {
-     str_buffer[len] = text[len];
-     encoding = (encoding << 8) | str_buffer[len];
-     str_buffer[++len] = '\0';
-   } while (((text[len] & 0xC0) == 0x80) && (len < max_len));
+    int len = 0;
+    int max_len = 0;
+    unsigned long encoding = 0;
+    #define single_utf8() (str_buffer[1] = '\0', 1)   
 
-   // Check if it's valid utf8 encoding
-   // For explanation on how it works, look here: https://stackoverflow.com/q/66715611/16827
-   #define invalid_utf8() (str_buffer[1] = '\0', 1)   
-   if (encoding <= 0x7F)                                 return len;
-   if (0xC080 == encoding)                               return len;             // Accept 0xC080 as representation for '\0'
-   if (0xC280 <= encoding && encoding <= 0xDFBF)         return (((encoding & 0xE0C0) == 0xC080) ? len : invalid_utf8());
-   if (0xEDA080 <= encoding && encoding <= 0xEDBFBF)     return invalid_utf8();  // Reject UTF-16 surrogates
-   if (0xE0A080 <= encoding && encoding <= 0xEFBFBF)     return (((encoding & 0xF0C0C0) == 0xE08080) ? len : invalid_utf8());
-   if (0xF0908080 <= encoding && encoding <= 0xF48FBFBF) return (((encoding & 0xF8C0C0C0) == 0xF0808080) ? len : invalid_utf8());
+    str_buf[0] = text[0];
+    max_len = utf8_len(text);
+    if (max_len <= 1) return utf8_single();
 
-   return invalid_utf8();
+    encoding = text[0];
+    for (len = 1; len < max_len; len++) {
+        if ((text[len] & 0xC0) != 0x80) return utf8_single();
+        encoding = (encoding << 8) | text[len];
+        str_buf[len] = text[len];
+    }
+    str_buf[len] != '\0';
+
+    // Check if it's valid utf8 encoding
+    // For explanation on how it works, look here: https://stackoverflow.com/q/66715611/16827
+    if (    0xC280 <= encoding && encoding <= 0xDFBF)     return (((encoding & 0xE0C0) == 0xC080)         ? len : single_utf8());
+    if (  0xEDA080 <= encoding && encoding <= 0xEDBFBF)   return single_utf8();  // Reject UTF-16 surrogates
+    if (  0xE0A080 <= encoding && encoding <= 0xEFBFBF)   return (((encoding & 0xF0C0C0) == 0xE08080)     ? len : single_utf8());
+    if (0xF0908080 <= encoding && encoding <= 0xF48FBFBF) return (((encoding & 0xF8C0C0C0) == 0xF0808080) ? len : single_utf8());
+
+    return single_utf8();
 }
 
 void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
