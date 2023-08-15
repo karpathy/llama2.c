@@ -388,7 +388,7 @@ int get_next_char(char *str_buffer, char *text)
      str_buffer[len] = text[len];
      encoding = (encoding << 8) | str_buffer[len];
      str_buffer[++len] = '\0';
-   } while (((*text & 0xC0) == 0x80) && (len < max_len));
+   } while (((text[len] & 0xC0) == 0x80) && (len < max_len));
 
    // Check if it's valid utf8 encoding
    // For explanation on how it works, look here: https://stackoverflow.com/q/66715611/16827
