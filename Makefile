@@ -45,6 +45,10 @@ rungnu:
 runompgnu:
 	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm  -o run
 
+.PHONY: cuda
+cuda:
+	nvcc llama2.cu -o llama2 -Xcudafe --diag_suppress=2464
+
 .PHONY: clean
 clean:
-	rm -f run
+	rm -f run llama2

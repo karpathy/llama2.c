@@ -217,7 +217,7 @@ __global__ void RoPERotation_kernel(half* sq, half* sk, half* f_real, half* f_im
     q[i] = q0 * fcr - q1 * fci;
     q[i + 1] = q0 * fci + q1 * fcr;
 
-    if (i < num_kv_heads) {
+    if (h < num_kv_heads) {
         float k0 = k[i];
         float k1 = k[i + 1];
         k[i] = k0 * fcr - k1 * fci;
@@ -428,7 +428,7 @@ void malloc_run_state(RunState* s, Config* p) {
     cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * kv_dim * sizeof(half));
     cudaMalloc((void**)&s->logits_gpu32, p->vocab_size * sizeof(float));
     s->logits = (float*)malloc(p->vocab_size * sizeof(float));
-    s->probindex = calloc(p->vocab_size, sizeof(ProbIndex));
+    s->probindex = (ProbIndex*)calloc(p->vocab_size, sizeof(ProbIndex));
 
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
@@ -582,6 +582,7 @@ void RoPERotation(half *q, half *k, half *f_real, half *f_imag, int num_heads, i
 
 void MultiHeadAttention(half *output, half *q, half *key_cache, half *value_cache, half *att, int num_heads, int head_size, int seq_len) {
     int dim = head_size * num_heads;
+
     // 1. Get attention scores
     int serialElements = divUp(head_size, 32);
     dim3 block_dim(32, 32);
@@ -640,7 +641,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         RoPERotation(s->q, key_cache_row, freq_cis_real_row, freq_cis_imag_row, p->n_heads, p->n_kv_heads, head_size);
 
         // apply MHA using the query and the key-value cache
-        MultiHeadAttention(s->xb, s->q, s->key_cache + loff, s->value_cache + loff, s->att, p->n_heads, p->n_kv_heads, head_size, pos+1);
+        MultiHeadAttention(s->xb, s->q, s->key_cache + loff, s->value_cache + loff, s->att, p->n_heads, head_size, pos+1);
 
         // final matmul to get the output of the attention
         matmul(s->xb2, s->xb, w->wo + l * dim * dim, dim, dim);
@@ -691,14 +692,14 @@ int compare_tokens(const void *a, const void *b) {
 int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     // efficiently find the perfect match for str in vocab, return its index or -1 if not found
     TokenIndex tok = { .str = str }; // acts as the key to search for
-    TokenIndex *res = bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
+    TokenIndex *res = (TokenIndex*) bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
     return res != NULL ? res->id : -1;
 }
 
 void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
 
     // sort vocabulary
-    TokenIndex *sorted_vocab = malloc(vocab_size * sizeof(TokenIndex));
+    TokenIndex *sorted_vocab = (TokenIndex*) malloc(vocab_size * sizeof(TokenIndex));
     for (int i = 0; i < vocab_size; i++) {
         sorted_vocab[i].str = vocab[i];
         sorted_vocab[i].id = i;
@@ -706,7 +707,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     qsort(sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
 
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
-    char* str_buffer = malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
+    char* str_buffer = (char*) malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
     size_t str_len = 0;
 
     // add_dummy_prefix is true by default
