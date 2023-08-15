@@ -1,12 +1,4 @@
-/*
-Inference for Llama-2 Transformer model in pure C.
-
-Example compile: (see README for more details)
-$ gcc -O3 -o run run.c -lm
-
-Then run with:
-$ ./run
-*/
+/* Inference for Llama-2 Transformer model in pure C */
 
 #include <stdio.h>
 #include <stdlib.h>
