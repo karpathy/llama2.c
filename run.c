@@ -1,12 +1,4 @@
-/*
-Inference for Llama-2 Transformer model in pure C.
-
-Example compile: (see README for more details)
-$ gcc -O3 -o run run.c -lm
-
-Then run with:
-$ ./run
-*/
+/* Inference for Llama-2 Transformer model in pure C */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,9 +117,8 @@ void free_run_state(RunState* s) {
 // ----------------------------------------------------------------------------
 // initialization: read from checkpoint
 
-void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int shared_weights) {
+void checkpoint_init_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights) {
     int head_size = p->dim / p->n_heads;
-    float* ptr = f;
     w->token_embedding_table = ptr;
     ptr += p->vocab_size * p->dim;
     w->rms_att_weight = ptr;
@@ -239,21 +230,17 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
-        for (int i = 0; i < dim; i+=2) {
-            float q0 = s->q[i];
-            float q1 = s->q[i+1];
-            float fcr = freq_cis_real_row[(i % head_size) / 2];
-            float fci = freq_cis_imag_row[(i % head_size) / 2];
-            s->q[i]   = q0 * fcr - q1 * fci;
-            s->q[i+1] = q0 * fci + q1 * fcr;
-        }
-        for (int i = 0; i < kv_dim; i+=2) {
-            float k0 = s->k[i];
-            float k1 = s->k[i+1];
-            float fcr = freq_cis_real_row[(i % head_size) / 2];
-            float fci = freq_cis_imag_row[(i % head_size) / 2];
-            s->k[i]   = k0 * fcr - k1 * fci;
-            s->k[i+1] = k0 * fci + k1 * fcr;
+        for (int v = 0; v < 2; v++) {
+            float* vec   = v == 0 ? s->q : s->k;    // the vector to rotate (query or key)
+            int vec_size = v == 0 ? dim  : kv_dim;  // the size of the vector
+            for (int i = 0; i < vec_size; i+=2) {
+                float v0 = vec[i];
+                float v1 = vec[i+1];
+                float fcr = freq_cis_real_row[(i % head_size) / 2];
+                float fci = freq_cis_imag_row[(i % head_size) / 2];
+                vec[i]   = v0 * fcr - v1 * fci;
+                vec[i+1] = v0 * fci + v1 * fcr;
+            }
         }
 
         // save key,value at this time step (pos) to our kv cache

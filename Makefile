@@ -45,6 +45,16 @@ rungnu:
 runompgnu:
 	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm  -o run
 
+# run all tests
+.PHONY: test
+test:
+	pytest
+
+# run only tests for run.c C implementation (is a bit faster if only C code changed)
+.PHONY: testc
+testc:
+	pytest -k runc
+
 .PHONY: clean
 clean:
 	rm -f run
