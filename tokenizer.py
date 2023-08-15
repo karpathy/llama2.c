@@ -51,8 +51,6 @@ class Tokenizer:
                 t = '\n<s>\n'
             elif i == self.eos_id:
                 t = '\n</s>\n'
-            elif len(t) == 6 and t.startswith('<0x') and t.endswith('>'):
-                t = chr(int(t[3:5], 16)) # e.g. make '<0x01>' into '\x01'
             t = t.replace('▁', ' ') # sentencepiece uses this character as whitespace
             b = t.encode('utf-8') # bytes of this token, utf-8 encoded
 
