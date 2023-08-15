@@ -3,15 +3,6 @@
 <p align="center">
   <img src="assets/llama_cute.jpg" width="300" height="300" alt="Cute Llama">
 </p>
-<p align="center">
-  <img src="pngs/w1.png" width="300" height="300" alt="Cute Llama">
-</p>
-
-|  | FP32 model size | Q8 model size |
-| --------------- | --------------- | --------------- |
-| stories15M.bin | 58MB | 14MB |
-| stories42M.bin | 159MB | 40MB |
-| stories110M.bin | 418MB | 105MB |
 
 Train the Llama 2 LLM architecture in PyTorch then inference it with one simple 700-line C file ([run.c](run.c)). You might think that you need many billion parameter LLMs to do anything useful, but in fact very small LLMs can have surprisingly strong performance if you make the domain narrow enough (ref: [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) paper). This repo is a "fullstack" train + inference solution for Llama 2 LLM, with focus on minimalism and simplicity.
 
