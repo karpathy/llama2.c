@@ -373,17 +373,17 @@ int get_next_char(char *str_buffer, char *text)
     unsigned long encoding = 0;
     #define single_utf8() (str_buffer[1] = '\0', 1)   
 
-    str_buf[0] = text[0];
+    str_buffer[0] = text[0];
     max_len = utf8_len(text);
-    if (max_len <= 1) return utf8_single();
+    if (max_len <= 1) return single_utf8();
 
     encoding = text[0];
     for (len = 1; len < max_len; len++) {
-        if ((text[len] & 0xC0) != 0x80) return utf8_single();
+        if ((text[len] & 0xC0) != 0x80) return single_utf8();
         encoding = (encoding << 8) | text[len];
-        str_buf[len] = text[len];
+        str_buffer[len] = text[len];
     }
-    str_buf[len] != '\0';
+    str_buffer[len] != '\0';
 
     // Check if it's valid utf8 encoding
     // For explanation on how it works, look here: https://stackoverflow.com/q/66715611/16827
