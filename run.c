@@ -396,7 +396,8 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
         str_buffer[str_len] = '\0';
 
         // while the next character is a continuation byte, continue appending
-        if ((*(c+1) & 0xC0) == 0x80) {
+        // but if there are too many of them, just stop to avoid overruning str_buffer size.
+        if ((*(c+1) & 0xC0) == 0x80 && str_len < 4) {
             continue;
         }
 
@@ -414,6 +415,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
                 tokens[(*n_tokens)++] = (unsigned char)str_buffer[i] + 3;
             }
         }
+        str_len = 0; // protect against a sequence of stray UTF8 continuation bytes
     }
 
     // merge the best consecutive pair each iteration, according the scores in vocab_scores
