@@ -612,7 +612,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
     //int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
-    int hidden_dim = p->hidden_dim;
+    int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
     // copy the token embedding into x
@@ -624,10 +624,10 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     half* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
 
     // forward all the layers
-    for (int l = 0; l < p->n_layers; l++) {
+    for(int l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
-        rmsnorm(s->xb, x, w->rms_att_weight + l * dim, dim);
+        rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         // we directly store (key, value) at this time step (pos) to our kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
@@ -635,9 +635,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         half* value_cache_row = s->value_cache + loff + pos * kv_dim;
 
         // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l * dim * dim, dim, dim);
-        matmul(key_cache_row, s->xb, w->wk + l * dim * kv_dim, dim, kv_dim);
-        matmul(value_cache_row, s->xb, w->wv + l * dim * kv_dim, dim, kv_dim);
+        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
+        matmul(key_cache_row, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
+        matmul(value_cache_row, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
         // also save the output (key, value) at this time step (pos) to our kv cache
@@ -647,24 +647,24 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         MultiHeadAttention(s->xb, s->q, s->key_cache + loff, s->value_cache + loff, s->att, p->n_heads, head_size, pos+1);
 
         // final matmul to get the output of the attention
-        matmul(s->xb2, s->xb, w->wo + l * dim * dim, dim, dim);
+        matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
 
         // residual connection back into x
         accum(x, s->xb2, dim);
 
         // ffn rmsnorm
-        rmsnorm(s->xb, x, w->rms_ffn_weight + l * dim, dim);
+        rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(s->hb, s->xb, w->w1 + l * dim * hidden_dim, dim, hidden_dim);
-        matmul(s->hb2, s->xb, w->w3 + l * dim * hidden_dim, dim, hidden_dim);
+        matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
+        matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
         // apply F.silu activation on hb and multiply it with hb2
         siluElementwiseMul(s->hb, s->hb2, hidden_dim);
 
         // final matmul to get the output of the ffn
-        matmul(s->xb, s->hb, w->w2 + l * dim * hidden_dim, hidden_dim, dim);
+        matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
 
         // residual connection
         accum(x, s->xb, dim);
