@@ -1,12 +1,4 @@
-/*
-Inference for Llama-2 Transformer model in pure C.
-
-Example compile: (see README for more details)
-$ gcc -O3 -o run run.c -lm
-
-Then run with:
-$ ./run
-*/
+/* Inference for Llama-2 Transformer model in pure C */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,9 +117,8 @@ void free_run_state(RunState* s) {
 // ----------------------------------------------------------------------------
 // initialization: read from checkpoint
 
-void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int shared_weights) {
+void checkpoint_init_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights) {
     int head_size = p->dim / p->n_heads;
-    float* ptr = f;
     w->token_embedding_table = ptr;
     ptr += p->vocab_size * p->dim;
     w->rms_att_weight = ptr;
@@ -239,21 +230,17 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
-        for (int i = 0; i < dim; i+=2) {
-            float q0 = s->q[i];
-            float q1 = s->q[i+1];
-            float fcr = freq_cis_real_row[(i % head_size) / 2];
-            float fci = freq_cis_imag_row[(i % head_size) / 2];
-            s->q[i]   = q0 * fcr - q1 * fci;
-            s->q[i+1] = q0 * fci + q1 * fcr;
-        }
-        for (int i = 0; i < kv_dim; i+=2) {
-            float k0 = s->k[i];
-            float k1 = s->k[i+1];
-            float fcr = freq_cis_real_row[(i % head_size) / 2];
-            float fci = freq_cis_imag_row[(i % head_size) / 2];
-            s->k[i]   = k0 * fcr - k1 * fci;
-            s->k[i+1] = k0 * fci + k1 * fcr;
+        for (int v = 0; v < 2; v++) {
+            float* vec   = v == 0 ? s->q : s->k;    // the vector to rotate (query or key)
+            int vec_size = v == 0 ? dim  : kv_dim;  // the size of the vector
+            for (int i = 0; i < vec_size; i+=2) {
+                float v0 = vec[i];
+                float v1 = vec[i+1];
+                float fcr = freq_cis_real_row[(i % head_size) / 2];
+                float fci = freq_cis_imag_row[(i % head_size) / 2];
+                vec[i]   = v0 * fcr - v1 * fci;
+                vec[i+1] = v0 * fci + v1 * fcr;
+            }
         }
 
         // save key,value at this time step (pos) to our kv cache
@@ -375,7 +362,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     qsort(sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
 
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
-    char* str_buffer = malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
+    char* str_buffer = malloc((max_token_length*2 +1 +2) * sizeof(char)); // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
     size_t str_len = 0;
 
     // add_dummy_prefix is true by default
@@ -409,7 +396,8 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
         str_buffer[str_len] = '\0';
 
         // while the next character is a continuation byte, continue appending
-        if ((*(c+1) & 0xC0) == 0x80) {
+        // but if there are too many of them, just stop to avoid overruning str_buffer size.
+        if ((*(c+1) & 0xC0) == 0x80 && str_len < 4) {
             continue;
         }
 
@@ -427,6 +415,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
                 tokens[(*n_tokens)++] = (unsigned char)str_buffer[i] + 3;
             }
         }
+        str_len = 0; // protect against a sequence of stray UTF8 continuation bytes
     }
 
     // merge the best consecutive pair each iteration, according the scores in vocab_scores
