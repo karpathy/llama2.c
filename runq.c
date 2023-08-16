@@ -15,6 +15,7 @@ $ ./run
 #include <math.h>
 #include <string.h>
 #include <fcntl.h>
+#include <stdint.h>
 #if defined _WIN32
     #include "win.h"
 #else
