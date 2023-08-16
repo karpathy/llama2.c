@@ -362,7 +362,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     qsort(sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
 
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
-    char* str_buffer = malloc((max_token_length*2+1) * sizeof(char)); // *2 for concat, +1 for null terminator
+    char* str_buffer = malloc((max_token_length*2 +1 +2) * sizeof(char)); // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
     size_t str_len = 0;
 
     // add_dummy_prefix is true by default
