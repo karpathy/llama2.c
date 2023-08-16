@@ -15,6 +15,66 @@ Inference for Llama-2 Transformer model in C + CUDA.
 #include <cub/cub.cuh>
 
 // ----------------------------------------------------------------------------
+// Transformer and RunState structs
+
+typedef struct {
+    int dim; // transformer dimension
+    int hidden_dim; // for ffn layers
+    int n_layers; // number of layers
+    int n_heads; // number of query heads
+    int n_kv_heads; // number of key/value heads (can be < query heads because of multiquery)
+    int vocab_size; // vocabulary size, usually 256 (byte-level)
+    int seq_len; // max sequence length
+} Config;
+
+typedef struct {
+    // token embedding table
+    half* token_embedding_table;    // (vocab_size, dim)
+    // weights for rmsnorms
+    half* rms_att_weight; // (layer, dim) rmsnorm weights
+    half* rms_ffn_weight; // (layer, dim)
+    // weights for matmuls. note dim == n_heads * head_size
+    half* wq; // (layer, dim, n_heads * head_size)
+    half* wk; // (layer, dim, n_kv_heads * head_size)
+    half* wv; // (layer, dim, n_kv_heads * head_size)
+    half* wo; // (layer, n_heads * head_size, dim)
+    // weights for ffn
+    half* w1; // (layer, hidden_dim, dim)
+    half* w2; // (layer, dim, hidden_dim)
+    half* w3; // (layer, hidden_dim, dim)
+    // final rmsnorm
+    half* rms_final_weight; // (dim,)
+    // freq_cis for RoPE relatively positional embeddings
+    half* freq_cis_real; // (seq_len, head_size/2)
+    half* freq_cis_imag; // (seq_len, head_size/2)
+    // (optional) classifier weights for the logits, on the last layer
+    half* wcls;
+} TransformerWeights;
+
+typedef struct {
+    float prob;
+    int index;
+} ProbIndex; // struct used when sorting probabilities during top-p sampling
+
+typedef struct {
+    // current wave of activations
+    half* x; // activation at current time stamp (dim,)
+    half* xb; // same, but inside a residual branch (dim,)
+    half* xb2; // an additional buffer just for convenience (dim,)
+    half* hb; // buffer for hidden dimension in the ffn (hidden_dim,)
+    half* hb2; // buffer for hidden dimension in the ffn (hidden_dim,)
+    half* q; // query (dim,)
+    half* att; // buffer for scores/attention values (n_heads, seq_len)
+    half* logits_gpu16; // output logits
+    float* logits_gpu32; // logits in GPU memory converted to float
+    float* logits; // logits copied CPU side
+    ProbIndex *probindex; // buffer used in top-p sampling
+    // kv cache
+    half* key_cache;   // (layer, seq_len, dim)
+    half* value_cache; // (layer, seq_len, dim)
+} RunState;
+
+// ----------------------------------------------------------------------------
 // GPU kernels
 
 __global__ void scalar_mul32_kernel(float* arr, float value, int size) {
@@ -349,64 +409,7 @@ __global__ void silu_element_wise_mul_kernel(half* dest, half* src, int size) {
 }
 
 // ----------------------------------------------------------------------------
-// Transformer and RunState structs, and related memory management
-
-typedef struct {
-    int dim; // transformer dimension
-    int hidden_dim; // for ffn layers
-    int n_layers; // number of layers
-    int n_heads; // number of query heads
-    int n_kv_heads; // number of key/value heads (can be < query heads because of multiquery)
-    int vocab_size; // vocabulary size, usually 256 (byte-level)
-    int seq_len; // max sequence length
-} Config;
-
-typedef struct {
-    // token embedding table
-    half* token_embedding_table;    // (vocab_size, dim)
-    // weights for rmsnorms
-    half* rms_att_weight; // (layer, dim) rmsnorm weights
-    half* rms_ffn_weight; // (layer, dim)
-    // weights for matmuls. note dim == n_heads * head_size
-    half* wq; // (layer, dim, n_heads * head_size)
-    half* wk; // (layer, dim, n_kv_heads * head_size)
-    half* wv; // (layer, dim, n_kv_heads * head_size)
-    half* wo; // (layer, n_heads * head_size, dim)
-    // weights for ffn
-    half* w1; // (layer, hidden_dim, dim)
-    half* w2; // (layer, dim, hidden_dim)
-    half* w3; // (layer, hidden_dim, dim)
-    // final rmsnorm
-    half* rms_final_weight; // (dim,)
-    // freq_cis for RoPE relatively positional embeddings
-    half* freq_cis_real; // (seq_len, head_size/2)
-    half* freq_cis_imag; // (seq_len, head_size/2)
-    // (optional) classifier weights for the logits, on the last layer
-    half* wcls;
-} TransformerWeights;
-
-typedef struct {
-    float prob;
-    int index;
-} ProbIndex; // struct used when sorting probabilities during top-p sampling
-
-typedef struct {
-    // current wave of activations
-    half* x; // activation at current time stamp (dim,)
-    half* xb; // same, but inside a residual branch (dim,)
-    half* xb2; // an additional buffer just for convenience (dim,)
-    half* hb; // buffer for hidden dimension in the ffn (hidden_dim,)
-    half* hb2; // buffer for hidden dimension in the ffn (hidden_dim,)
-    half* q; // query (dim,)
-    half* att; // buffer for scores/attention values (n_heads, seq_len)
-    half* logits_gpu16; // output logits
-    float* logits_gpu32; // logits in GPU memory converted to float
-    float* logits; // logits copied CPU side
-    ProbIndex *probindex; // buffer used in top-p sampling
-    // kv cache
-    half* key_cache;   // (layer, seq_len, dim)
-    half* value_cache; // (layer, seq_len, dim)
-} RunState;
+// Memory management functions
 
 void malloc_run_state(RunState* s, Config* p) {
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
