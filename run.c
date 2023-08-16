@@ -613,14 +613,10 @@ int main(int argc, char *argv[]) {
         config.vocab_size = abs(config.vocab_size);
         // figure out the file size
         fseek(file, 0, SEEK_END); // move file pointer to end of file
-        const ssize_t file_size = ftell(file); // get the checkpoint file size, in bytes
-        fclose(file);
         // memory map the Transformer weights into the data pointer
-        const int fd = open(checkpoint, O_RDONLY); // open in read only mode
-        if (fd == -1) { fprintf(stderr, "open failed!\n"); return 1; }
-        float* data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-	if (fd != -1) close(fd);
+        float* data = mmap(NULL, ftell(file), PROT_READ, MAP_PRIVATE, fileno(file), 0);
         if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
+        fclose(file);
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
     }
