@@ -601,8 +601,7 @@ int main(int argc, char *argv[]) {
     // read in the model.bin file
     Config config;
     TransformerWeights weights;
-    int fd = 0;         // file descriptor for memory mapping
-    float* data = NULL; // memory mapped data pointer
+    float* data = NULL; // pointer to the weights
     ssize_t file_size;     // size of the checkpoint file in bytes
     {
         FILE *file = fopen(checkpoint, "rb");
@@ -614,15 +613,21 @@ int main(int argc, char *argv[]) {
         config.vocab_size = abs(config.vocab_size);
         // figure out the file size
         fseek(file, 0, SEEK_END); // move file pointer to end of file
-        file_size = ftell(file); // get the file size, in bytes
+        file_size = ftell(file);
+        fseek(file, sizeof(Config), SEEK_SET); // rewind to after the Config header
+        size_t weights_size = file_size - sizeof(Config);
+
+        // allocate memory for the weights, page aligned for best performance
+        data = (float*) aligned_alloc(sysconf(_SC_PAGESIZE), weights_size);
+        if (!data) { fprintf(stderr, "aligned_alloc failed!\n"); return 1; }
+
+        // Read the weights into the allocated memory
+        if (fread(data, 1, weights_size, file) != weights_size) {
+            fprintf(stderr, "Failed to read weights!\n");
+            return 1;
+        }
         fclose(file);
-        // memory map the Transformer weights into the data pointer
-        fd = open(checkpoint, O_RDONLY); // open in read only mode
-        if (fd == -1) { fprintf(stderr, "open failed!\n"); return 1; }
-        data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-        if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
-        float* weights_ptr = data + sizeof(Config)/sizeof(float);
-        checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
+        checkpoint_init_weights(&weights, &config, data, shared_weights);
     }
     // right now we cannot run for more than config.seq_len steps
     if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
@@ -733,7 +738,6 @@ int main(int argc, char *argv[]) {
     free(vocab);
     free(vocab_scores);
     if (prompt_tokens != NULL) free(prompt_tokens);
-    if (data != MAP_FAILED) munmap(data, file_size);
-    if (fd != -1) close(fd);
+    free(data);
     return 0;
 }
