@@ -68,6 +68,21 @@ jobs:
         run: |
           brew update
 
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+
+      - name: Pip setup
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Build clang
+        id: make_build_clang
+        run: |
+          make run CC=clang
+
       - name: Build
         id: make_build
         run: |
@@ -78,15 +93,17 @@ jobs:
         run: |
           make runfast
 
-      - name: Build clang
-        id: make_build_clang
-        run: |
-          make run CC=clang
+      - name: Test with pytest
+        run: pytest
+
+
+
 
   windows-latest-make:
     runs-on: windows-latest
 
     strategy:
+      fail-fast: false  #necessary, otherwise the matrix breaks
       matrix:
         arch:
           - amd64
@@ -106,10 +123,29 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
 
+      - name: Set up Python 3.10
+        if: matrix.arch != 'amd64_arm64'
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+
+      - name: Pip setup
+        if: matrix.arch != 'amd64_arm64'
+        run: |
+          python -m pip install --upgrade pip
+          if (Test-Path requirements.txt) {
+            pip install -r requirements.txt
+          }
+
       - name: Build ${{ matrix.arch }}
         id: build_msvc
         run: |
           .\build_msvc.bat
+
+      #cross-comiled, cannot be run on host
+      - name: Test with pytest
+        if: matrix.arch != 'amd64_arm64'
+        run: pytest
 
   windows-latest-mingw:
     runs-on: windows-latest
@@ -138,3 +174,20 @@ jobs:
         id: build_mingw
         run: |
           make win64
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+
+      - name: Pip setup
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          if (Test-Path requirements.txt) {
+            pip install -r requirements.txt
+          }
+
+      - name: Test with pytest
+        shell: powershell
+        run: pytest
