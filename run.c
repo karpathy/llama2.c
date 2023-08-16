@@ -603,9 +603,6 @@ int main(int argc, char *argv[]) {
     // read in the model.bin file
     Config config;
     TransformerWeights weights;
-    int fd = 0;         // file descriptor for memory mapping
-    float* data = NULL; // memory mapped data pointer
-    ssize_t file_size;     // size of the checkpoint file in bytes
     {
         FILE *file = fopen(checkpoint, "rb");
         if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); return 1; }
@@ -616,12 +613,13 @@ int main(int argc, char *argv[]) {
         config.vocab_size = abs(config.vocab_size);
         // figure out the file size
         fseek(file, 0, SEEK_END); // move file pointer to end of file
-        file_size = ftell(file); // get the file size, in bytes
+        const ssize_t file_size = ftell(file); // get the checkpoint file size, in bytes
         fclose(file);
         // memory map the Transformer weights into the data pointer
-        fd = open(checkpoint, O_RDONLY); // open in read only mode
+        const int fd = open(checkpoint, O_RDONLY); // open in read only mode
         if (fd == -1) { fprintf(stderr, "open failed!\n"); return 1; }
-        data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        float* data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (fd != -1) close(fd);
         if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
@@ -735,7 +733,6 @@ int main(int argc, char *argv[]) {
     free(vocab);
     free(vocab_scores);
     if (prompt_tokens != NULL) free(prompt_tokens);
-    if (data != MAP_FAILED) munmap(data, file_size);
-    if (fd != -1) close(fd);
+    // data is munmapped at exit
     return 0;
 }
