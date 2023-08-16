@@ -142,7 +142,7 @@ static const char* shader_matmul =
     "        val += w.data[i * n + j + w_offset] * x.data[j + x_offset];\n"
     "    }\n"
     "    xout.data[i] = val;\n"
-    "}";
+    "}\n";
 
 static const char* shader_rmsnorm_squares_and_sum =
     "#version 320 es\n"
@@ -163,8 +163,8 @@ static const char* shader_rmsnorm_squares_and_sum =
     "    if(idx*2+1 < insize){\n"
     "       res += a.data[idx*2+1]*a.data[idx*2+1];\n"
     "    }\n"
-    "    b.data[idx] = res;"
-    "}";
+    "    b.data[idx] = res;\n"
+    "}\n";
 
 static const char* shader_softmax_exp_and_sum =
     "#version 320 es\n"
@@ -194,8 +194,8 @@ static const char* shader_softmax_exp_and_sum =
     "    if(i1 < insize){\n"
     "        res += exp(a.data[i1] - max_val);\n"
     "    }\n"
-    "    b.data[idx + shape0*idy] = res;"
-    "}";
+    "    b.data[idx + shape0*idy] = res;\n"
+    "}\n";
 
 static const char* shader_softmax_normalize =
     "#version 320 es\n"
@@ -219,7 +219,7 @@ static const char* shader_softmax_normalize =
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    int idy = int(gl_GlobalInvocationID.y);\n"
     "    x.data[idx + shape0*idy] = x.data[idx + shape0*idy]/sum_arr.data[0];\n"
-    "}";
+    "}\n";
 
 static const char* shader_sum =
     "#version 320 es\n"
@@ -242,8 +242,8 @@ static const char* shader_sum =
     "    if(idx*2+1 < insize){\n"
     "        res += a.data[insize*idy + idx*2 + 1];\n"
     "    }\n"
-    "    b.data[idx + shape0*idy] = res;"
-    "}";
+    "    b.data[idx + shape0*idy] = res;\n"
+    "}\n";
 
 static const char* shader_max =
     "#version 320 es\n"
@@ -266,8 +266,8 @@ static const char* shader_max =
     "        b.data[idx + shape0*idy] = max(a.data[insize*idy + idx*2] , a.data[insize*idy + idx*2+1]);\n"
     "    }else{\n"
     "        b.data[idx + shape0*idy] = a.data[insize*idy + idx*2];\n"
-    "    }"
-    "}";
+    "    }\n"
+    "}\n";
 
 static const char* shader_min =
     "#version 320 es\n"
@@ -290,8 +290,8 @@ static const char* shader_min =
     "        b.data[idx + shape0*idy] = min(a.data[insize*idy + idx*2] , a.data[insize*idy + idx*2+1]);\n"
     "    }else{\n"
     "        b.data[idx + shape0*idy] = a.data[insize*idy + idx*2];\n"
-    "    }"
-    "}";
+    "    }\n"
+    "}\n";
 
 static const char* shader_rmsnorm_normalize_and_scale =
     "#version 320 es\n"
@@ -321,8 +321,8 @@ static const char* shader_rmsnorm_normalize_and_scale =
     "    ss /= float(size);\n"
     "    ss += 0.00001;\n"
     "    ss = 1.0f / sqrt(ss);\n"
-    "    o.data[idx] = weight.data[idx+weight_offset] * (ss * x.data[idx]);"
-    "}";
+    "    o.data[idx] = weight.data[idx+weight_offset] * (ss * x.data[idx]);\n"
+    "}\n";
 
 static const char* shader_rmsnorm_normalize_and_scale_currentPos =
     "#version 320 es\n"
@@ -348,8 +348,8 @@ static const char* shader_rmsnorm_normalize_and_scale_currentPos =
     "    ss /= float(size);\n"
     "    ss += 0.00001;\n"
     "    ss = 1.0f / sqrt(ss);\n"
-    "    o.data[idx] = weight.data[idx+weight_offset] * (ss * o.data[idx]);"
-    "}";
+    "    o.data[idx] = weight.data[idx+weight_offset] * (ss * o.data[idx]);\n"
+    "}\n";
 
 static const char* shader_accum =
     "#version 320 es\n"
@@ -366,7 +366,7 @@ static const char* shader_accum =
     "void main(){\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    a.data[idx] = a.data[idx]+b.data[idx];\n"
-    "}";
+    "}\n";
 
 static const char* shader_positionalEncoding =
     "#version 320 es\n"
@@ -503,8 +503,8 @@ static const char* shader_transformer_build_attMat =
 
 static const char* shader_transformer_softmax_input =
     "#version 320 es\n"
-    "uniform int seq_len;"
-    "uniform int pos;"
+    "uniform int seq_len;\n"
+    "uniform int pos;\n"
 
     "layout(local_size_x = 1, local_size_y = 1) in;\n"
 
@@ -526,8 +526,8 @@ static const char* shader_transformer_softmax_input =
 
 static const char* shader_transformer_softmax_output =
     "#version 320 es\n"
-    "uniform int seq_len;"
-    "uniform int pos;"
+    "uniform int seq_len;\n"
+    "uniform int pos;\n"
 
     "layout(local_size_x = 1, local_size_y = 1) in;\n"
 
@@ -549,7 +549,7 @@ static const char* shader_transformer_softmax_output =
 
 static const char* shader_temperature =
     "#version 320 es\n"
-    "uniform float temperature;"
+    "uniform float temperature;\n"
 
     "layout(local_size_x = 1) in;\n"
 
@@ -564,8 +564,8 @@ static const char* shader_temperature =
 
 static const char* shader_copyBuffer =
     "#version 320 es\n"
-    "uniform int src_offset;"
-    "uniform int dst_offset;"
+    "uniform int src_offset;\n"
+    "uniform int dst_offset;\n"
 
     "layout(local_size_x = 1) in;\n"
 
@@ -1089,11 +1089,12 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     int nextStepSize = size_x;
 
     GLuint currentBuffer = state->mulBuffer_1;
-    GLuint nextBuffer = state->mulBuffer_2;
+    GLuint nextBuffer = x;
     GLuint resBuffer_max;
     GLuint resBuffer_sum;
     GLuint tmp;
     int insize, shape0;
+    int first = 1;
     do {
         //swap current and next
         tmp = currentBuffer;
@@ -1105,6 +1106,9 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
         if (currentStepSize % 2 == 1) {
             nextStepSize += 1;
         }
+
+        printf("softmax:shader_max currentStepSize=%d nextStepSize=%d size_x=%d size_y=%d\n", currentStepSize, nextStepSize, size_x, size_y);
+        dumpGPUArray(currentBuffer, 0, currentStepSize * size_y);
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
@@ -1119,6 +1123,11 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
         glDispatchCompute(nextStepSize, size_y, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
+
+        if (first) {
+            currentBuffer = state->mulBuffer_2;
+            first = 0;
+        }
 
     } while (nextStepSize != 1);
     resBuffer_max = nextBuffer;
@@ -1224,7 +1233,7 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
     uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_output, "pos");
     glUniform1i(uniformVar, pos);
 
-    glDispatchCompute(pos + 1, 1, 1);
+    glDispatchCompute(n_heads, pos + 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 }
@@ -1340,12 +1349,12 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         matmul(prog, s, s->k, s->xb, w->wk, dim, dim, 0, l * dim * dim);
         matmul(prog, s, s->v, s->xb, w->wv, dim, dim, 0, l * dim * dim);
 
-        printf("q:\n");
-        dumpGPUArray(s->q, 0, dim);
-        printf("k:\n");
-        dumpGPUArray(s->k, 0, dim);
-        printf("v:\n");
-        dumpGPUArray(s->v, 0, dim);
+        // printf("q:\n");
+        // dumpGPUArray(s->q, 0, dim);
+        // printf("k:\n");
+        // dumpGPUArray(s->k, 0, dim);
+        // printf("v:\n");
+        // dumpGPUArray(s->v, 0, dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
 
@@ -1374,10 +1383,10 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
 
-        printf("pos_q:\n");
-        dumpGPUArray(s->q, 0, dim);
-        printf("pos_k:\n");
-        dumpGPUArray(s->k, 0, dim);
+        // printf("pos_q:\n");
+        // dumpGPUArray(s->q, 0, dim);
+        // printf("pos_k:\n");
+        // dumpGPUArray(s->k, 0, dim);
 
         // save key,value at this time step (pos) to our kv cache
         int loff = l * p->seq_len * dim;  // kv cache layer offset for convenience
@@ -1386,10 +1395,10 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         copyBuffer(prog, s->k, s->key_cache, 0, key_offset, dim);
         copyBuffer(prog, s->v, s->value_cache, 0, value_offset, dim);
 
-        printf("key_cache:\n");
-        dumpGPUArray(s->key_cache, key_offset, dim);
-        printf("value_cache:\n");
-        dumpGPUArray(s->value_cache, value_offset, dim);
+        // printf("key_cache:\n");
+        // dumpGPUArray(s->key_cache, key_offset, dim);
+        // printf("value_cache:\n");
+        // dumpGPUArray(s->value_cache, value_offset, dim);
 
         // multihead attention. iterate over all heads
 
@@ -1872,7 +1881,7 @@ int main(int argc, char* argv[]) {
                 GPU_CHECK();
 
                 // apply softmax to the logits to get the probabilities for next token
-                softmax(&prog, &state, state.logits, config.vocab_size, 0);
+                softmax(&prog, &state, state.logits, config.vocab_size, 1);
                 // we sample from this distribution to get the next token
                 if (topp <= 0) {
                     // simply sample from the predicted probability distribution
