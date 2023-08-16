@@ -617,9 +617,9 @@ int main(int argc, char *argv[]) {
         fseek(file, sizeof(Config), SEEK_SET); // rewind to after the Config header
         size_t weights_size = file_size - sizeof(Config);
 
-        // allocate memory for the weights, page aligned for best performance
-        data = (float*) aligned_alloc(sysconf(_SC_PAGESIZE), weights_size);
-        if (!data) { fprintf(stderr, "aligned_alloc failed!\n"); return 1; }
+        // allocate memory for the weights
+        data = (float*) malloc(weights_size);
+        if (!data) { fprintf(stderr, "malloc failed!\n"); return 1; }
 
         // Read the weights into the allocated memory
         if (fread(data, 1, weights_size, file) != weights_size) {
