@@ -29,25 +29,23 @@ __global__ void element_wise_add_kernel(half* dest, half* src, int size) {
         dest[i] = (half)((float)dest[i] + (float)src[i]);
 }
 
-__global__ void convert_fp32_to_fp16(half* out, float* in, int elements) {
-    int index = blockIdx.x * 256 + threadIdx.x;
-    if (index < elements)
+__global__ void convert_fp32_to_fp16(half* out, float* in, int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size)
         out[index] = (half)in[index];
 }
 
-__global__ void convert_fp16_to_fp32(float* out, half* in, int elements) {
-    int index = blockIdx.x * 256 + threadIdx.x;
-    if (index < elements)
+__global__ void convert_fp16_to_fp32(float* out, half* in, int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size)
         out[index] = (float)in[index];
 }
 
 // Single block - not enough parallelism for the GPU, but it's just 1% of total time
 __global__ void rmsnorm_kernel(half* o, half* x, half* weight, int size, int elementsPerThread) {
     float ss = 0.0f;
-    for (int i = 0; i < elementsPerThread; i++) {
-        int index = threadIdx.x + i * 1024;
-        if (index < size)
-            ss += (float)x[index];
+    for (int index = threadIdx.x; index < size; index+=1024) {
+        ss += (float)x[index];
     }
 
     using BlockReduce = cub::BlockReduce<float, 1024>;
@@ -65,13 +63,9 @@ __global__ void rmsnorm_kernel(half* o, half* x, half* weight, int size, int ele
     ss = shared_ss;
 
     // normalize
-    for (int i = 0; i < elementsPerThread; i++) {
-        int index = threadIdx.x + i * 1024;
-        if (index < size) {
-            float val = (float)x[index];
-            val *= ss * (float)weight[index];
-            o[index] = (half)val;
-        }
+    for (int index = threadIdx.x; index < size; index+=1024) {
+        float val = ((float)x[index]) * ss * (float)weight[index];
+        o[index] = (half)val;
     }
 }
 
@@ -416,6 +410,8 @@ typedef struct {
 
 void malloc_run_state(RunState* s, Config* p) {
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+
+    // allocated on the GPU
     cudaMalloc((void**)&s->x, p->dim * sizeof(half));
     cudaMalloc((void**)&s->xb, p->dim * sizeof(half));
     cudaMalloc((void**)&s->xb2, p->dim * sizeof(half));
@@ -427,6 +423,8 @@ void malloc_run_state(RunState* s, Config* p) {
     cudaMalloc((void**)&s->key_cache, p->n_layers * p->seq_len * kv_dim * sizeof(half));    // potentially huge allocs
     cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * kv_dim * sizeof(half));
     cudaMalloc((void**)&s->logits_gpu32, p->vocab_size * sizeof(float));
+
+    // allocated on the CPU
     s->logits = (float*)malloc(p->vocab_size * sizeof(float));
     s->probindex = (ProbIndex*)calloc(p->vocab_size, sizeof(ProbIndex));
 
@@ -449,25 +447,27 @@ void free_run_state(RunState* s) {
     cudaFree(s->att);
     cudaFree(s->logits_gpu16);
     cudaFree(s->logits_gpu32);
-    free(s->logits);
-    free(s->probindex);
     cudaFree(s->key_cache);
     cudaFree(s->value_cache);
+    free(s->logits);
+    free(s->probindex);
 }
 
 void malloc_weights(TransformerWeights* w, Config* p, int shared_weights) {
+    int head_size = p->dim / p->n_heads;
+
     cudaMalloc((void**)&w->token_embedding_table, p->vocab_size * p->dim * sizeof(half));
     cudaMalloc((void**)&w->rms_att_weight, p->n_layers * p->dim * sizeof(half));
     cudaMalloc((void**)&w->rms_ffn_weight, p->n_layers * p->dim * sizeof(half));
-    cudaMalloc((void**)&w->wq, p->n_layers * p->dim * p->dim * sizeof(half));
-    cudaMalloc((void**)&w->wk, p->n_layers * p->dim * p->dim * sizeof(half));
-    cudaMalloc((void**)&w->wv, p->n_layers * p->dim * p->dim * sizeof(half));
-    cudaMalloc((void**)&w->wo, p->n_layers * p->dim * p->dim * sizeof(half));
+    cudaMalloc((void**)&w->wq, p->n_layers * p->dim * (p->n_heads * head_size) * sizeof(half));
+    cudaMalloc((void**)&w->wk, p->n_layers * p->dim * (p->n_kv_heads * head_size) * sizeof(half));
+    cudaMalloc((void**)&w->wv, p->n_layers * p->dim * (p->n_kv_heads * head_size) * sizeof(half));
+    cudaMalloc((void**)&w->wo, p->n_layers * (p->n_heads * head_size) * p->dim * sizeof(half));
     cudaMalloc((void**)&w->w1, p->n_layers * p->hidden_dim * p->dim * sizeof(half));
     cudaMalloc((void**)&w->w2, p->n_layers * p->dim * p->hidden_dim * sizeof(half));
     cudaMalloc((void**)&w->w3, p->n_layers * p->hidden_dim * p->dim * sizeof(half));
     cudaMalloc((void**)&w->rms_final_weight, p->dim * sizeof(half));
-    int head_size = p->dim / p->n_heads;
+
     cudaMalloc((void**)&w->freq_cis_real, p->seq_len * head_size / 2 * sizeof(half));
     cudaMalloc((void**)&w->freq_cis_imag, p->seq_len * head_size / 2 * sizeof(half));
 
@@ -507,12 +507,12 @@ int divUp(int a, int b) {
     return (a - 1) / b + 1;
 }
 
-int uploadWeight(void *w, int elements, FILE* f, void *scratchCpu, void *scratchGpu) {
+int load_weights(void *w, int elements, FILE* f, void *scratchCpu, void *scratchGpu) {
     int count = fread(scratchCpu, sizeof(float), elements, f);
     if (count != elements) return 1;
     // copy and convert fp32->fp16
     cudaMemcpyAsync(scratchGpu, scratchCpu, sizeof(float) * elements, cudaMemcpyHostToDevice);
-    convert_fp32_to_fp16 <<<divUp(elements, 256), 256 >>> ((half*)w, (float*)scratchGpu, elements);
+    convert_fp32_to_fp16 <<< divUp(elements, 1024), 1024 >>> ((half*)w, (float*)scratchGpu, elements);
     return 0;
 }
 
@@ -527,23 +527,24 @@ int checkpoint_init_weights(TransformerWeights* w, Config* p, FILE* f, int share
     void* scratchCpu = malloc(scratch_size);
     void* scratchGpu = nullptr;
     cudaMalloc(&scratchGpu, scratch_size);
-    if (uploadWeight(w->token_embedding_table, p->vocab_size * p->dim, f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->rms_att_weight, p->n_layers * p->dim, f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->wq, p->n_layers * p->dim * (p->n_heads * head_size), f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->wk, p->n_layers * p->dim * (p->n_kv_heads * head_size), f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->wv, p->n_layers * p->dim * (p->n_kv_heads * head_size), f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->wo, p->n_layers * (p->n_heads * head_size) * p->dim, f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->rms_ffn_weight, p->n_layers * p->dim, f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->w1, p->n_layers * p->dim * p->hidden_dim, f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->w2, p->n_layers * p->hidden_dim * p->dim, f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->w3, p->n_layers * p->dim * p->hidden_dim, f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->rms_final_weight, p->dim, f, scratchCpu, scratchGpu)) return 1;
 
-    if (uploadWeight(w->freq_cis_real, p->seq_len * head_size / 2, f, scratchCpu, scratchGpu)) return 1;
-    if (uploadWeight(w->freq_cis_imag, p->seq_len * head_size / 2, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->token_embedding_table, p->vocab_size * p->dim, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->rms_att_weight, p->n_layers * p->dim, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->wq, p->n_layers * p->dim * (p->n_heads * head_size), f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->wk, p->n_layers * p->dim * (p->n_kv_heads * head_size), f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->wv, p->n_layers * p->dim * (p->n_kv_heads * head_size), f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->wo, p->n_layers * (p->n_heads * head_size) * p->dim, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->rms_ffn_weight, p->n_layers * p->dim, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->w1, p->n_layers * p->dim * p->hidden_dim, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->w2, p->n_layers * p->hidden_dim * p->dim, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->w3, p->n_layers * p->dim * p->hidden_dim, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->rms_final_weight, p->dim, f, scratchCpu, scratchGpu)) return 1;
+
+    if (load_weights(w->freq_cis_real, p->seq_len * head_size / 2, f, scratchCpu, scratchGpu)) return 1;
+    if (load_weights(w->freq_cis_imag, p->seq_len * head_size / 2, f, scratchCpu, scratchGpu)) return 1;
 
     if (!shared_weights)
-        if (uploadWeight(w->wcls, p->vocab_size * p->dim, f, scratchCpu, scratchGpu)) return 1;
+        if (load_weights(w->wcls, p->vocab_size * p->dim, f, scratchCpu, scratchGpu)) return 1;
 
     cudaFree(scratchGpu);
     free(scratchCpu);
@@ -554,8 +555,8 @@ int checkpoint_init_weights(TransformerWeights* w, Config* p, FILE* f, int share
 // neural net blocks
 
 void accum(half* a, half* b, int size) {
-    int blocks = divUp(size, 256);
-    element_wise_add_kernel <<< blocks, 256 >>> (a, b, size);
+    int blocks = divUp(size, 1024);
+    element_wise_add_kernel <<< blocks, 1024 >>> (a, b, size);
 }
 
 
@@ -599,7 +600,7 @@ void MultiHeadAttention(half *output, half *q, half *key_cache, half *value_cach
 }
 
 void siluElementwiseMul(half *hb, half *hb2, int size) {
-   silu_element_wise_mul_kernel <<< divUp(size, 256), 256 >>> (hb, hb2, size);
+   silu_element_wise_mul_kernel <<< divUp(size, 1024), 1024 >>> (hb, hb2, size);
 }
 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
@@ -608,7 +609,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     half* x = s->x;
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-    int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    //int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
     int hidden_dim = p->hidden_dim;
     int head_size = dim / p->n_heads;
 
@@ -674,7 +675,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     matmul(s->logits_gpu16, x, w->wcls, p->dim, p->vocab_size);
 
     // copy logits from GPU->CPU
-    convert_fp16_to_fp32 <<<divUp(p->vocab_size, 256), 256 >>> (s->logits_gpu32, s->logits_gpu16, p->vocab_size);
+    convert_fp16_to_fp32 <<<divUp(p->vocab_size, 1024), 1024 >>> (s->logits_gpu32, s->logits_gpu16, p->vocab_size);
 }
 
 // ----------------------------------------------------------------------------
@@ -959,11 +960,6 @@ int main(int argc, char *argv[]) {
         if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); return 1; }
         // read in the config header
         if (fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
-
-        // Dump model config
-        printf("\nModel params:- \ndim: %d \nhidden_dim: %d\nn_heads: %d\nn_kv_heads: %d\nn_layers: %d\nseq_len: %d\nvocab_size: %d\n\n",
-            config.dim, config.hidden_dim, config.n_heads, config.n_kv_heads, config.n_layers, config.seq_len, config.vocab_size);
-
         // negative vocab size is hacky way of signaling unshared weights. bit yikes.
         shared_weights = config.vocab_size > 0 ? 1 : 0;
         config.vocab_size = abs(config.vocab_size);
