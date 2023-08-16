@@ -205,7 +205,7 @@ If compiling with gcc, try experimenting with `-funroll-all-loops`, see PR [#183
 
 ### OpenMP
 Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention, allowing the work in the loops to be split up over multiple processors.
-You'll need to install the OpenMP library and the clang compiler first (e.g. `apt install clang libomp-dev` on ubuntu). I was not able to get improvements from OpenMP on my MacBook, though. Then you can compile with `make runomp`, which does:
+You'll need to install the OpenMP library and the clang compiler first (e.g. `apt install clang libomp-dev` on ubuntu). Then you can compile with `make runomp`, which does:
 
 ```bash
 clang -Ofast -fopenmp -march=native run.c  -lm  -o run
@@ -224,6 +224,8 @@ Depending on your system resources you may want to tweak these hyperparameters a
 On **Windows**, use `build_msvc.bat` in a Visual Studio Command Prompt to build with msvc, or you can use `make win64` to use mingw compiler toolchain from linux or windows to build the windows target. MSVC build will automatically use openmp and max threads appropriate for your CPU unless you set `OMP_NUM_THREADS` env.
 
 On **Centos 7**, **Amazon Linux 2018** use `rungnu` Makefile target: `make rungnu` or `make runompgnu` to use openmp.
+
+On **Mac**, use clang from brew for openmp build. Install clang as `brew install llvm` and use the installed clang binary to compile with openmp: `make runomp CC=/opt/homebrew/opt/llvm/bin/clang`
 
 ## tests
 
