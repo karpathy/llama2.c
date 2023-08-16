@@ -27,10 +27,10 @@ def download_file(url, filename):
 
 def attempt_download_files():
     os.makedirs(test_ckpt_dir, exist_ok=True)
-    root_url = "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260K"
+    root_url = "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260K/"
     need = ["stories260K.bin", "stories260K.pt", "tok512.bin", "tok512.model"]
     for file in need:
-        url = os.path.join(root_url, file)
+        url = root_url + file  # Using string concatenation for URLs
         filename = os.path.join(test_ckpt_dir, file)
         if not os.path.exists(filename):
             download_file(url, filename)
