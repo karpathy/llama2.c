@@ -1293,6 +1293,9 @@ void matmul(GPUProgram* prog, RunState* state, GLuint xout, GLuint x, GLuint w, 
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
 
+    // printf("mmul:\n");
+    // dumpGPUArray(x, x_offset, n);
+    // dumpGPUArray(w, w_offset, d);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, w);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, xout);
@@ -1353,17 +1356,14 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         // attention rmsnorm
         rmsnorm(prog, s, s->xb, x, w->rms_att_weight, dim, l * dim);
 
+        // printf("\nrms:\n");
+        // dumpGPUArray(s->xb, 0, dim);
+
         // qkv matmuls for this position
         matmul(prog, s, s->q, s->xb, w->wq, dim, dim, 0, l * dim * dim);
         matmul(prog, s, s->k, s->xb, w->wk, dim, dim, 0, l * dim * dim);
         matmul(prog, s, s->v, s->xb, w->wv, dim, dim, 0, l * dim * dim);
 
-        // printf("q:\n");
-        // dumpGPUArray(s->q, 0, dim);
-        // printf("k:\n");
-        // dumpGPUArray(s->k, 0, dim);
-        // printf("v:\n");
-        // dumpGPUArray(s->v, 0, dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
 
@@ -1392,10 +1392,12 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
 
-        // printf("pos_q:\n");
-        // dumpGPUArray(s->q, 0, dim);
-        // printf("pos_k:\n");
-        // dumpGPUArray(s->k, 0, dim);
+        printf("q:\n");
+        dumpGPUArray(s->q, 0, dim);
+        printf("k:\n");
+        dumpGPUArray(s->k, 0, dim);
+        printf("v:\n");
+        dumpGPUArray(s->v, 0, dim);
 
         // save key,value at this time step (pos) to our kv cache
         int loff = l * p->seq_len * dim;  // kv cache layer offset for convenience
@@ -1404,6 +1406,10 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         copyBuffer(prog, s->k, s->key_cache, 0, key_offset, dim);
         copyBuffer(prog, s->v, s->value_cache, 0, value_offset, dim);
 
+        printf("key_cache:\n");
+        dumpGPUArray(s->key_cache, key_offset, dim);
+        printf("value_cache:\n");
+        dumpGPUArray(s->value_cache, value_offset, dim);
         // printf("key_cache:\n");
         // dumpGPUArray(s->key_cache, key_offset, dim);
         // printf("value_cache:\n");
@@ -1436,15 +1442,15 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
 
-        printf("ori att:\n");
-        for (int h = 0; h < p->n_heads; ++h) {
-            dumpGPUArray(s->att, h * p->seq_len, pos + 1);
-        }
+        // printf("ori att:\n");
+        // for (int h = 0; h < p->n_heads; ++h) {
+        //     dumpGPUArray(s->att, h * p->seq_len, pos + 1);
+        // }
 
         // softmax the scores to get attention weights, from 0..pos inclusively
         transformer_softmax(prog, s, s->att, pos, p->seq_len, p->n_heads);
 
-        printf("softmaxed att:\n");
+        printf("softmax att:\n");
         for (int h = 0; h < p->n_heads; ++h) {
             dumpGPUArray(s->att, h * p->seq_len, pos + 1);
         }
@@ -1474,6 +1480,9 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         GPU_CHECK();
 
         transformer_sum(prog, s, s->xb, s->mulBuffer_4, pos + 1, head_size, p->n_heads);
+
+        printf("xb:\n");
+        dumpGPUArray(s->xb, 0, dim);
 
         // final matmul to get the output of the attention
         matmul(prog, s, s->xb2, s->xb, w->wo, dim, dim, 0, l * dim * dim);
