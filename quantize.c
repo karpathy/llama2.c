@@ -136,7 +136,10 @@ void quantize_weights(FILE* file, float *weights, int n_layers, int layer_size, 
 
 }
 
-void write_weights(FILE* file, float *weights, int n_layers, int layer_size) {
+void write_weights(FILE* file, float *weights, int n_layers, int layer_size, char *name) {
+    puts("------------------------");
+    printf("%s layer_size=%d\n", name, layer_size);
+    printf("%d layer(s) - not quantized\n", n_layers);
     fwrite(weights, sizeof(float), n_layers * layer_size, file);
 }
 
@@ -182,12 +185,14 @@ int convert_weights_q8(TransformerWeights *w, Config *p, int shared_weights){
 
     quantize_weights(file, w->rms_final_weight, 1, p->dim, "rms_final_weight");
 
-    write_weights(file, w->freq_cis_real, 1, p->seq_len * head_size / 2);
-    write_weights(file, w->freq_cis_imag, 1, p->seq_len * head_size / 2);
+    write_weights(file, w->freq_cis_real, 1, p->seq_len * head_size / 2, "freq_cis_real");
+    write_weights(file, w->freq_cis_imag, 1, p->seq_len * head_size / 2, "freq_cis_imag");
 
     if (!shared_weights) {
-      quantize_weights(file, w->wcls, 1, p->vocab_size * p->dim, "wcls");
+        quantize_weights(file, w->wcls, 1, p->vocab_size * p->dim, "wcls");
     }
+
+    puts("------------------------");
 
     fclose(file);
     return 0;
@@ -222,7 +227,7 @@ int main(int argc, char *argv[]) {
         // negative vocab size is hacky way of signaling unshared weights. bit yikes.
         int shared_weights = config.vocab_size > 0 ? 1 : 0;
         config.vocab_size = abs(config.vocab_size);
-        printf("vocab size = %d  shared_weights=%d\n", config.vocab_size, shared_weights);
+        printf("vocab size = %d  shared_weights = %s\n", config.vocab_size, shared_weights ? "yes" : "no");
 
         // figure out the file size
         fseek(file, 0, SEEK_END); // move file pointer to end of file
