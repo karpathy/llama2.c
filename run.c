@@ -520,7 +520,7 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     // quicksort indices in descending order of probabilities
     // values smaller than (1 - topp) / (n - 1) cannot be part of the result
     // so for efficiency we crop these out as candidates before sorting
-    const float cutoff = (1.0f - topp) / (n - 1);
+    const float cutoff = 0.001; //a practical lowerbound for the probabilities that get sampled
     for (int i = 0; i < n; i++) {
         if (probabilities[i] >= cutoff) {
             probindex[n0].index = i;
