@@ -140,12 +140,17 @@ void write_weights(FILE* file, float *weights, int n_layers, int layer_size) {
     fwrite(weights, sizeof(float), n_layers * layer_size, file);
 }
 
-int convert_weights_q8(TransformerWeights *w, Config *p){
+int convert_weights_q8(TransformerWeights *w, Config *p, int shared_weights){
 
     FILE* file = fopen("data.bin", "wb");
     if (file == NULL) {
         perror("Error opening file");
         return 1;
+    }
+
+    int vocab_size = p->vocab_size;
+    if (!shared_weights) {
+        vocab_size = -vocab_size;
     }
 
     // write headers
@@ -154,7 +159,7 @@ int convert_weights_q8(TransformerWeights *w, Config *p){
     fwrite(&p->n_layers, sizeof(int), 1, file);
     fwrite(&p->n_heads, sizeof(int), 1, file);
     fwrite(&p->n_kv_heads, sizeof(int), 1, file);
-    fwrite(&p->vocab_size, sizeof(int), 1, file);
+    fwrite(&vocab_size, sizeof(int), 1, file);
     fwrite(&p->seq_len, sizeof(int), 1, file);
 
     // write quantized weights
@@ -180,7 +185,9 @@ int convert_weights_q8(TransformerWeights *w, Config *p){
     write_weights(file, w->freq_cis_real, 1, p->seq_len * head_size / 2);
     write_weights(file, w->freq_cis_imag, 1, p->seq_len * head_size / 2);
 
-    //quantize_weights(file, w->token_embedding_table, 1, p->vocab_size * p->dim, "wcls");
+    if (!shared_weights) {
+      quantize_weights(file, w->wcls, 1, p->vocab_size * p->dim, "wcls");
+    }
 
     fclose(file);
     return 0;
@@ -234,7 +241,7 @@ int main(int argc, char *argv[]) {
         
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);
 
-        int ret = convert_weights_q8(&weights, &config);
+        int ret = convert_weights_q8(&weights, &config, shared_weights);
         if (ret == 0) printf("model converted and saved to data.bin\n");
     }
     
