@@ -166,13 +166,11 @@ static const char* shader_rmsnorm_squares_and_sum =
     "    b.data[idx] = res;\n"
     "}\n";
 
-static const char* shader_softmax_exp_and_sum =
+static const char* shader_softmax_exp =
     "#version 320 es\n"
-    "uniform int insize;\n"
-    "uniform int shape0;\n"
-    "layout(local_size_x = 1 , local_size_y = 1) in;\n"
+    "layout(local_size_x = 1) in;\n"
 
-    "layout(binding = 0) readonly buffer Input0{\n"
+    "layout(binding = 0) buffer Input0{\n"
     "    float data[];\n"
     "} a;\n"
 
@@ -180,21 +178,11 @@ static const char* shader_softmax_exp_and_sum =
     "    float data[];\n"
     "} maxVal_arr;\n"
 
-    "layout(binding = 2) writeonly buffer Output0{\n"
-    "    float data[];\n"
-    "} b;\n"
-
     "void main(){\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
-    "    int idy = int(gl_GlobalInvocationID.y);\n"
-    "    int i0 = idx*2 + insize*idy;\n"
-    "    int i1 = i0+1;\n"
     "    float max_val = maxVal_arr.data[0];\n"
-    "    float res = exp(a.data[i0] - max_val);\n"
-    "    if(i1 < insize){\n"
-    "        res += exp(a.data[i1] - max_val);\n"
-    "    }\n"
-    "    b.data[idx + shape0*idy] = res;\n"
+    "    float res0 = exp(a.data[idx] - max_val);\n"
+    "    a.data[idx] = res0;\n"
     "}\n";
 
 static const char* shader_softmax_normalize =
@@ -218,7 +206,7 @@ static const char* shader_softmax_normalize =
     "    float max_val = maxVal_arr.data[0];\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    int idy = int(gl_GlobalInvocationID.y);\n"
-    "    x.data[idx + shape0*idy] = x.data[idx + shape0*idy]/sum_arr.data[0];\n"
+    "    x.data[idx + shape0*idy] = x.data[idx + shape0*idy]/sum_arr.data[idy];\n"
     "}\n";
 
 static const char* shader_sum =
@@ -592,7 +580,7 @@ typedef struct {
     GLuint shader_positionalEncoding;
     GLuint shader_max;
     GLuint shader_min;
-    GLuint shader_softmax_exp_and_sum;
+    GLuint shader_softmax_exp;
     GLuint shader_softmax_normalize;
     GLuint shader_transformer_silu_and_mulW3;
     GLuint shader_transformer_get_query_vector;
@@ -631,10 +619,11 @@ typedef struct {
     GLuint key_cache_len;
     GLuint value_cache;  // (layer, seq_len, dim)
     GLuint value_cache_len;
-    GLuint mulBuffer_1;  // mulBuffer 1
-    GLuint mulBuffer_2;  // mulBuffer 2
-    GLuint mulBuffer_3;  // mulBuffer 3
-    GLuint mulBuffer_4;  // mulBuffer 4
+    GLuint transformer_softmax_cache;  // mulBuffer 4
+    GLuint mulBuffer_1;                // mulBuffer 1
+    GLuint mulBuffer_2;                // mulBuffer 2
+    GLuint mulBuffer_3;                // mulBuffer 3
+    GLuint mulBuffer_4;                // mulBuffer 4
     GLuint mulBuffer_len;
 } RunState;
 
@@ -774,7 +763,7 @@ void compile_GPUProgram(GPUProgram* program) {
     GPU_CHECK();
     program->shader_min = createComputeProgram(shader_min);
     GPU_CHECK();
-    program->shader_softmax_exp_and_sum = createComputeProgram(shader_softmax_exp_and_sum);
+    program->shader_softmax_exp = createComputeProgram(shader_softmax_exp);
     GPU_CHECK();
     program->shader_softmax_normalize = createComputeProgram(shader_softmax_normalize);
     GPU_CHECK();
@@ -846,6 +835,7 @@ void malloc_run_state(RunState* s, Config* p) {
     if (p->vocab_size > s->mulBuffer_len) {
         s->mulBuffer_len = p->vocab_size;
     }
+    create_GPU_buffer(s->transformer_softmax_cache, s->mulBuffer_len, GL_DYNAMIC_DRAW, NULL);
     create_GPU_buffer(s->mulBuffer_1, s->mulBuffer_len, GL_DYNAMIC_DRAW, NULL);
     create_GPU_buffer(s->mulBuffer_2, s->mulBuffer_len, GL_DYNAMIC_DRAW, NULL);
     create_GPU_buffer(s->mulBuffer_3, s->mulBuffer_len, GL_DYNAMIC_DRAW, NULL);
@@ -865,9 +855,11 @@ void free_run_state(RunState* s) {
     glDeleteBuffers(1, &s->logits);
     glDeleteBuffers(1, &s->key_cache);
     glDeleteBuffers(1, &s->value_cache);
+    glDeleteBuffers(1, &s->transformer_softmax_cache);
     glDeleteBuffers(1, &s->mulBuffer_1);
     glDeleteBuffers(1, &s->mulBuffer_2);
     glDeleteBuffers(1, &s->mulBuffer_3);
+    glDeleteBuffers(1, &s->mulBuffer_4);
     free(s->probindex);
 }
 
@@ -976,7 +968,7 @@ void free_gpu_program(GPUProgram* prog) {
     glDeleteProgram(prog->shader_positionalEncoding);
     glDeleteProgram(prog->shader_max);
     glDeleteProgram(prog->shader_min);
-    glDeleteProgram(prog->shader_softmax_exp_and_sum);
+    glDeleteProgram(prog->shader_softmax_exp);
     glDeleteProgram(prog->shader_softmax_normalize);
     glDeleteProgram(prog->shader_transformer_silu_and_mulW3);
     glDeleteProgram(prog->shader_transformer_get_query_vector);
@@ -1107,8 +1099,8 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
             nextStepSize += 1;
         }
 
-        printf("softmax:shader_max currentStepSize=%d nextStepSize=%d size_x=%d size_y=%d\n", currentStepSize, nextStepSize, size_x, size_y);
-        dumpGPUArray(currentBuffer, 0, currentStepSize * size_y);
+        // printf("softmax:shader_max currentStepSize=%d nextStepSize=%d size_x=%d size_y=%d\n", currentStepSize, nextStepSize, size_x, size_y);
+        // dumpGPUArray(currentBuffer, 0, currentStepSize * size_y);
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
@@ -1132,32 +1124,31 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     } while (nextStepSize != 1);
     resBuffer_max = nextBuffer;
 
-    // exp and sum
-    currentStepSize = size_x;
-    nextStepSize = currentStepSize / 2;
+    // printf("max:\n");
+    // dumpGPUArray(resBuffer_max, 0, size_y);
 
-    nextBuffer = state->mulBuffer_3;
-
-    if (currentStepSize % 2 == 1) {
-        nextStepSize += 1;
-    }
-
+    // exp
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, resBuffer_max);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, nextBuffer);
-    glUseProgram(prog->shader_softmax_exp_and_sum);
+    glUseProgram(prog->shader_softmax_exp);
 
-    insize = glGetUniformLocation(prog->shader_softmax_exp_and_sum, "insize");
-    glUniform1i(insize, currentStepSize);
-
-    shape0 = glGetUniformLocation(prog->shader_softmax_exp_and_sum, "shape0");
-    glUniform1i(shape0, nextStepSize);
-
-    glDispatchCompute(nextStepSize, size_y, 1);
+    glDispatchCompute(size_x * size_y, 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 
-    while (nextStepSize != 1) {
+    // printf("shader_softmax_exp currentStepSize=%d nextStepSize=%d\n", currentStepSize, nextStepSize);
+    // dumpGPUArray(x, 0, size_x * size_y);
+    // dumpGPUArray(nextBuffer, 0, size_y * nextStepSize);
+
+    // sum
+    currentStepSize = 0;
+    nextStepSize = size_x;
+
+    currentBuffer = state->mulBuffer_3;
+    nextBuffer = x;
+
+    first = 1;
+    do {
         //swap current and next
         tmp = currentBuffer;
         currentBuffer = nextBuffer;
@@ -1168,6 +1159,9 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
         if (currentStepSize % 2 == 1) {
             nextStepSize += 1;
         }
+
+        // printf("softmax:shader_sum currentStepSize=%d nextStepSize=%d size_x=%d size_y=%d\n", currentStepSize, nextStepSize, size_x, size_y);
+        // dumpGPUArray(currentBuffer, 0, currentStepSize * size_y);
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
@@ -1182,8 +1176,20 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
         glDispatchCompute(nextStepSize, size_y, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
-    }
+
+        if (first) {
+            currentBuffer = state->mulBuffer_4;
+            first = 0;
+        }
+
+    } while (nextStepSize != 1);
     resBuffer_sum = nextBuffer;
+
+    // printf("softmax sum:\n");
+    // dumpGPUArray(resBuffer_sum, 0, size_y);
+
+    // printf("softmax no normalize:\n");
+    // dumpGPUArray(x, 0, size_x * size_y);
 
     // normalize
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, resBuffer_sum);
@@ -1197,12 +1203,15 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     glDispatchCompute(size_x, size_y, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
+
+    // printf("softmax normalized:\n");
+    // dumpGPUArray(x, 0, size_x * size_y);
 }
 
 void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, int seq_len, int n_heads) {
     int uniformVar;
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, state->mulBuffer_4);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, state->transformer_softmax_cache);
     glUseProgram(prog->shader_transformer_softmax_input);
 
     uniformVar = glGetUniformLocation(prog->shader_transformer_softmax_input, "seq_len");
@@ -1215,15 +1224,15 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 
-    printf("att(no softmax): pos=%d seq_len=%d n_heads=%d\n", pos, seq_len, n_heads);
-    dumpGPUArray(state->mulBuffer_4, 0, (pos + 1) * n_heads);
+    // printf("att(no softmax): pos=%d seq_len=%d n_heads=%d\n", pos, seq_len, n_heads);
+    // dumpGPUArray(state->transformer_softmax_cache, 0, (pos + 1) * n_heads);
 
-    softmax(prog, state, state->mulBuffer_4, pos + 1, n_heads);
+    softmax(prog, state, state->transformer_softmax_cache, pos + 1, n_heads);
 
-    printf("att:\n");
-    dumpGPUArray(state->mulBuffer_4, 0, (pos + 1) * n_heads);
+    // printf("att:\n");
+    // dumpGPUArray(state->transformer_softmax_cache, 0, (pos + 1) * n_heads);
 
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, state->mulBuffer_4);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, state->transformer_softmax_cache);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, x);
     glUseProgram(prog->shader_transformer_softmax_output);
 
@@ -1435,6 +1444,10 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         // softmax the scores to get attention weights, from 0..pos inclusively
         transformer_softmax(prog, s, s->att, pos, p->seq_len, p->n_heads);
 
+        printf("softmaxed att:\n");
+        for (int h = 0; h < p->n_heads; ++h) {
+            dumpGPUArray(s->att, h * p->seq_len, pos + 1);
+        }
         // weighted sum of the values, store back into xb
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s->value_cache);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, s->att);
