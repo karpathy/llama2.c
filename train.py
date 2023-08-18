@@ -22,6 +22,7 @@ import time
 from contextlib import nullcontext
 from datetime import datetime
 from functools import partial
+import json
 
 import torch
 from model import Transformer, ModelArgs
@@ -192,6 +193,26 @@ if init_from == "resume" and "optimizer" in checkpoint:
     optimizer.load_state_dict(checkpoint["optimizer"])
 checkpoint = None  # free up memory
 
+def generate_config_json():
+    # Directly reference the variables from the script
+    total_params = sum(p.numel() for p in model.parameters())
+    config_values = {
+        "vocab_size": vocab_size,
+        "torch_dtype": dtype,
+        "model_type": "llama",
+        "dim": dim,
+        "num_layer": n_layers,
+        "num_attention_heads": n_heads,
+        "num_key_value_heads": n_kv_heads, 
+        "max_seq_len": max_seq_len,
+        "parameters": total_params,
+    }
+
+    # Save the extracted values to a JSON file
+    config_json = os.path.join(out_dir, "config.json")
+    with open(config_json, "w", encoding="utf-8") as file:
+        json.dump(config_values, file, indent=4)
+
 # compile the model
 if compile:
     print("compiling the model... (takes a ~minute)")
@@ -242,6 +263,9 @@ def get_lr(it):
 if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+
+# generate config data
+generate_config_json()
 
 # training loop
 train_batch_iter = iter_batches(split="train")
