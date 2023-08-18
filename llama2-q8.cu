@@ -113,12 +113,13 @@ __global__ void convert_fp16_to_fp32(float* out, half* in, int size) {
 __global__ void rmsnorm_kernel(half* o, half* x, q8data* q8, int size) {
     float ss = 0.0f;
     for (int index = threadIdx.x; index < size; index+=1024) {
-        ss += (float)x[index];
+        float val = x[index];
+        ss += (val * val);
     }
 
     using BlockReduce = cub::BlockReduce<float, 1024>;
     __shared__ typename BlockReduce::TempStorage temp;
-    ss = BlockReduce(temp).Sum(ss * ss);
+    ss = BlockReduce(temp).Sum(ss);
 
     __shared__ float shared_ss;
     if (threadIdx.x == 0) {
