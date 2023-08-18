@@ -1,0 +1,10 @@
+name: llama2.dart
+description: A one file implementation of llama2 inference
+version: 1.0.0
+
+environment:
+  sdk: ^3.1.0
+
+# Add regular dependencies here.
+dependencies:
+  args: ^2.4.2

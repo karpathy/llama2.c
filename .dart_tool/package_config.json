@@ -1,0 +1,20 @@
+{
+  "configVersion": 2,
+  "packages": [
+    {
+      "name": "args",
+      "rootUri": "file:///Users/yiminghan/.pub-cache/hosted/pub.dev/args-2.4.2",
+      "packageUri": "lib/",
+      "languageVersion": "2.19"
+    },
+    {
+      "name": "llama2.dart",
+      "rootUri": "../",
+      "packageUri": "lib/",
+      "languageVersion": "3.1"
+    }
+  ],
+  "generated": "2023-08-18T18:58:12.764817Z",
+  "generator": "pub",
+  "generatorVersion": "3.1.0"
+}
