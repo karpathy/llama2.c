@@ -339,10 +339,15 @@ class Transformer(nn.Module):
 
         return idx
 
-    def export(self, filepath='model.bin', group_size=64):
+    def export(self, filepath='model.bin'):
         """export the model weights in Q8_0 into .bin file to be read from C"""
-        hidden_dim = self.layers[0].feed_forward.w1.weight.shape[0]
         out_file = open(filepath, 'wb')
+
+        # find the max group size that fits hidden_dim using backoff
+        group_size = 64 # a good desired group size default
+        while self.params.dim % group_size != 0:
+            group_size //= 2
+        print(f"using group size {group_size} for quantization")
 
         def serialize_fp32(t):
             """ writes one fp32 tensor to file """
@@ -392,6 +397,7 @@ class Transformer(nn.Module):
         nbytes += 4
         # 3) write the params, which will be 7 ints
         p = self.params
+        hidden_dim = self.layers[0].feed_forward.w1.weight.shape[0]
         n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
         header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
                                        n_kv_heads, p.vocab_size, p.max_seq_len)
