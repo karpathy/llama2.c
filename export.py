@@ -115,7 +115,60 @@ def legacy_export(model, filepath):
 # -----------------------------------------------------------------------------
 # new version
 
-def version1_export(model, filepath, group_size=64):
+def version1_export(model, filepath):
+    """
+    Export the model weights in full float32 .bin file to be read from C.
+    This is same as legacy_export, but with a proper header.
+    """
+    version = 1
+
+    out_file = open(filepath, 'wb')
+    # first write out the header. the header will be 256 bytes
+    nbytes = 0
+    # 1) write magic, which will be uint32 of "ak42" in ASCII
+    out_file.write(struct.pack('I', 0x616b3432))
+    nbytes += 4
+    # 2) write version, which will be int
+    out_file.write(struct.pack('i', version))
+    nbytes += 4
+    # 3) write the params, which will be 7 ints
+    p = model.params
+    hidden_dim = model.layers[0].feed_forward.w1.weight.shape[0]
+    n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
+    header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
+                                    n_kv_heads, p.vocab_size, p.max_seq_len)
+    out_file.write(header)
+    nbytes += 7*4
+    # 4) write some other flags
+    shared_classifier = 1 # we do share a classifier, write flag as a byte
+    out_file.write(struct.pack('B', shared_classifier))
+    nbytes += 1
+    pad = 256 - nbytes # pad the rest with zeros
+    assert pad >= 0
+    out_file.write(b'\0' * pad)
+
+    # now let's write out all the params
+    weights = [
+        *[layer.attention_norm.weight for layer in model.layers],
+        *[layer.ffn_norm.weight for layer in model.layers],
+        model.norm.weight,
+        model.tok_embeddings.weight,
+        *[layer.attention.wq.weight for layer in model.layers],
+        *[layer.attention.wk.weight for layer in model.layers],
+        *[layer.attention.wv.weight for layer in model.layers],
+        *[layer.attention.wo.weight for layer in model.layers],
+        *[layer.feed_forward.w1.weight for layer in model.layers],
+        *[layer.feed_forward.w2.weight for layer in model.layers],
+        *[layer.feed_forward.w3.weight for layer in model.layers],
+    ]
+    for w in weights:
+        serialize_fp32(out_file, w)
+
+    # write to binary file
+    out_file.close()
+    print(f"wrote {filepath}")
+
+def version2_export(model, filepath, group_size=64):
     """
     Export the model weights in Q8_0 into .bin file to be read from C.
     That is:
@@ -123,7 +176,7 @@ def version1_export(model, filepath, group_size=64):
     - all other tensors (the rmsnorm params) are kept and exported in fp32
     - quantization is done in groups of group_size to reduce the effects of any outliers
     """
-    version = 1
+    version = 2
 
     # let's first do some validation for this export type
     while model.params.dim % group_size != 0:
@@ -213,6 +266,8 @@ def model_export(model, filepath, version):
         legacy_export(model, filepath)
     elif version == 1:
         version1_export(model, filepath)
+    elif version == 2:
+        version2_export(model, filepath)
     else:
         raise ValueError(f"unknown version {version}")
 
