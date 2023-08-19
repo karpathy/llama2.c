@@ -405,16 +405,15 @@ static const char* shader_transformer_silu_and_mulW3 =
     "    float data[];\n"
     "} hb;\n"
 
-    "layout(binding = 0) readonly buffer Input1{\n"
+    "layout(binding = 1) readonly buffer Input1{\n"
     "    float data[];\n"
     "} hb2;\n"
 
     "void main(){\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    float v = hb.data[idx];\n"
-    "    v = v * (1.0 / (1.0 + exp(v)));\n"
-    "    v = v * hb2.data[idx];\n"
-    "    hb.data[idx] = v;\n"
+    "    float res = v * (1.0 / (1.0 + exp(-v))) * hb2.data[idx];\n"
+    "    hb.data[idx] = res;\n"
     "}\n";
 
 static const char* shader_transformer_get_query_vector =
@@ -486,7 +485,7 @@ static const char* shader_transformer_build_attMat =
     "    int v_offset = loff + t * dim + h * head_size;\n"
     "    float a = att.data[t+att_offset];\n"
     "    float attMatVal = a * value_cache.data[i+v_offset];\n"
-    "    attMat.data[h*pos*head_size + i*pos + t] = attMatVal;\n"
+    "    attMat.data[h*(pos+1)*head_size + i*(pos+1) + t] = attMatVal;\n"
     "}\n";
 
 static const char* shader_transformer_softmax_input =
@@ -1246,18 +1245,19 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 }
-void transformer_sum(GPUProgram* prog, RunState* state, GLuint xb, GLuint attMat, int pos, int head_size, int n_heads) {
+void transformer_sum(GPUProgram* prog, RunState* state, GLuint outMat, GLuint inMat, int size_x, int size_y) {
     //prog, s, s->xb, s->mulBuffer_4, pos + 1, head_size, p->n_heads
     int currentStepSize = 0;
-    int nextStepSize = pos;
+    int nextStepSize = size_x;
 
     GLuint currentBuffer = state->mulBuffer_1;
-    GLuint nextBuffer = attMat;
+    GLuint nextBuffer = inMat;
     GLuint resBuffer_max;
     GLuint resBuffer_sum;
     GLuint tmp;
 
-    while (nextStepSize != 1) {
+    int first = 1;
+    do {
         //swap current and next
         tmp = currentBuffer;
         currentBuffer = nextBuffer;
@@ -1269,12 +1269,15 @@ void transformer_sum(GPUProgram* prog, RunState* state, GLuint xb, GLuint attMat
             nextStepSize += 1;
         }
 
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
         if (nextStepSize == 1) {
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, xb);
-        } else {
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
+            nextBuffer = outMat;
         }
+
+        // printf("softmax:shader_sum currentStepSize=%d nextStepSize=%d size_x=%d size_y=%d\n", currentStepSize, nextStepSize, size_x, size_y);
+        // dumpGPUArray(currentBuffer, 0, currentStepSize * size_y);
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
         glUseProgram(prog->shader_sum);
 
         int insize = glGetUniformLocation(prog->shader_sum, "insize");
@@ -1283,10 +1286,17 @@ void transformer_sum(GPUProgram* prog, RunState* state, GLuint xb, GLuint attMat
         int shape0 = glGetUniformLocation(prog->shader_sum, "shape0");
         glUniform1i(shape0, nextStepSize);
 
-        glDispatchCompute(nextStepSize, n_heads * head_size, 1);
+        glDispatchCompute(nextStepSize, size_y, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
-    }
+
+        if (first) {
+            currentBuffer = state->mulBuffer_2;
+            first = 0;
+        }
+
+    } while (nextStepSize != 1);
+    resBuffer_sum = nextBuffer;
 }
 
 void matmul(GPUProgram* prog, RunState* state, GLuint xout, GLuint x, GLuint w, int n, int d, int x_offset, int w_offset) {
@@ -1363,7 +1373,6 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         matmul(prog, s, s->q, s->xb, w->wq, dim, dim, 0, l * dim * dim);
         matmul(prog, s, s->k, s->xb, w->wk, dim, dim, 0, l * dim * dim);
         matmul(prog, s, s->v, s->xb, w->wv, dim, dim, 0, l * dim * dim);
-
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
 
@@ -1450,10 +1459,10 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         // softmax the scores to get attention weights, from 0..pos inclusively
         transformer_softmax(prog, s, s->att, pos, p->seq_len, p->n_heads);
 
-        printf("softmax att:\n");
-        for (int h = 0; h < p->n_heads; ++h) {
-            dumpGPUArray(s->att, h * p->seq_len, pos + 1);
-        }
+        // printf("softmax att:\n");
+        // for (int h = 0; h < p->n_heads; ++h) {
+        //     dumpGPUArray(s->att, h * p->seq_len, pos + 1);
+        // }
         // weighted sum of the values, store back into xb
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s->value_cache);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, s->att);
@@ -1479,13 +1488,29 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
 
-        transformer_sum(prog, s, s->xb, s->mulBuffer_4, pos + 1, head_size, p->n_heads);
+        // printf("attMat:\n");
+        // for (int h = 0; h < p->n_heads; h++) {
+        //     for (int i = 0; i < head_size; ++i) {
+        //         dumpGPUArray(s->mulBuffer_4, h * head_size * (pos + 1) + i * (pos + 1), pos + 1);
+        //     }
+        //     printf("\n");
+        // }
+
+        transformer_sum(prog, s, s->xb, s->mulBuffer_4, pos + 1, head_size * p->n_heads);
 
         printf("xb:\n");
         dumpGPUArray(s->xb, 0, dim);
 
         // final matmul to get the output of the attention
         matmul(prog, s, s->xb2, s->xb, w->wo, dim, dim, 0, l * dim * dim);
+
+        printf("xb2:\n");
+        dumpGPUArray(s->xb2, 0, dim);
+
+        // printf("l * dim * dim = %d\n",l * dim * dim);
+
+        // printf("wo:\n");
+        // dumpGPUArray(w->wo, l * dim * dim, dim);
 
         // residual connection back into x
         accum(prog, s, x, s->xb2, dim);
@@ -1498,6 +1523,14 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         matmul(prog, s, s->hb, s->xb, w->w1, dim, hidden_dim, 0, l * dim * hidden_dim);
         matmul(prog, s, s->hb2, s->xb, w->w3, dim, hidden_dim, 0, l * dim * hidden_dim);
 
+        printf("\n");
+
+        printf("hb:\n");
+        dumpGPUArray(s->hb, 0, hidden_dim);
+
+        printf("hb2:\n");
+        dumpGPUArray(s->hb2, 0, hidden_dim);
+
         // 1. F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         // 2. elementwise multiply with w3(x)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s->hb);
@@ -1507,14 +1540,25 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         GPU_CHECK();
 
+        printf("hb: hidden_dim=%d\n",hidden_dim);
+        dumpGPUArray(s->hb, 0, hidden_dim);
+
+        printf("hb2:\n");
+        dumpGPUArray(s->hb2, 0, hidden_dim);
+        printf("\n");
+
         // final matmul to get the output of the ffn
         matmul(prog, s, s->xb, s->hb, w->w2, hidden_dim, dim, 0, l * dim * hidden_dim);
+
+        printf("xb:\n");
+        dumpGPUArray(s->xb, 0, dim);
 
         // residual connection
         accum(prog, s, x, s->xb, dim);
 
         printf("layer:\n");
         dumpGPUArray(x, 0, dim);
+        printf("\n");
     }
 
     // final rmsnorm
