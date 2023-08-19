@@ -24,8 +24,9 @@ from datetime import datetime
 from functools import partial
 
 import torch
-from model import Transformer, ModelArgs
+from model import Transformer, ModelArgs, apply_lora, merge_lora, tie_lora_weights
 from torch.distributed import destroy_process_group, init_process_group
+from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from tinystories import Task
@@ -38,7 +39,7 @@ log_interval = 1
 eval_iters = 100
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = False  # if True, always save a checkpoint after each eval
-init_from = "scratch"  # 'scratch' or 'resume'
+init_from = "scratch"  # 'scratch' or 'resume' or 'lora_finetune'
 # wandb logging
 wandb_log = False  # disabled by default
 wandb_project = "llamac"
@@ -55,6 +56,12 @@ n_heads = 6
 n_kv_heads = 6
 multiple_of = 32
 dropout = 0.0
+# LoRA
+lora_layer_types = [nn.Linear, nn.Embedding]
+lora_rank = 4
+lora_dropout = 0.1
+lora_alpha = 1.0
+lora_tie_embedding_weights = True
 # adamw optimizer
 gradient_accumulation_steps = 4  # used to simulate larger batch sizes
 learning_rate = 5e-4  # max learning rate
@@ -158,7 +165,7 @@ if init_from == "scratch":
     print("Initializing a new model from scratch")
     gptconf = ModelArgs(**model_args)
     model = Transformer(gptconf)
-elif init_from == "resume":
+elif init_from in ("resume", "lora_finetune"):
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
     ckpt_path = os.path.join(out_dir, "ckpt.pt")
@@ -179,8 +186,19 @@ elif init_from == "resume":
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix) :]] = state_dict.pop(k)
     model.load_state_dict(state_dict)
-    iter_num = checkpoint["iter_num"]
-    best_val_loss = checkpoint["best_val_loss"]
+    if init_from == 'resume':
+        iter_num = checkpoint["iter_num"]
+        best_val_loss = checkpoint["best_val_loss"]
+
+if init_from == "lora_finetune":
+    out_dir = out_dir + "_lora_finetune"
+    os.makedirs(out_dir, exist_ok=True)
+    for p in model.parameters():
+        p.requires_grad = False
+    apply_lora(model, layer_types=lora_layer_types, rank=lora_rank, dropout=lora_dropout, alpha=lora_alpha)
+    if lora_tie_embedding_weights:
+        tie_lora_weights(model.output, model.tok_embeddings)
+
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
@@ -337,6 +355,13 @@ while True:
     # termination conditions
     if iter_num > max_iters:
         break
+
+if init_from == "lora_finetune":
+    print('merging lora')
+    merge_lora(raw_model)
+    print('saving merged lora model checkpoint')
+    raw_model.export(os.path.join(out_dir, "model_lora_merged.bin"))
+
 
 if ddp:
     destroy_process_group()
