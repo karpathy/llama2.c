@@ -76,19 +76,19 @@ typedef struct {
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-    s->x = calloc(p->dim, sizeof(float));
-    s->xb = calloc(p->dim, sizeof(float));
-    s->xb2 = calloc(p->dim, sizeof(float));
-    s->hb = calloc(p->hidden_dim, sizeof(float));
-    s->hb2 = calloc(p->hidden_dim, sizeof(float));
-    s->q = calloc(p->dim, sizeof(float));
-    s->k = calloc(kv_dim, sizeof(float));
-    s->v = calloc(kv_dim, sizeof(float));
-    s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
-    s->logits = calloc(p->vocab_size, sizeof(float));
-    s->probindex = calloc(p->vocab_size, sizeof(ProbIndex));
-    s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
-    s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+    s->x = (float *)calloc(p->dim, sizeof(float));
+    s->xb = (float *)calloc(p->dim, sizeof(float));
+    s->xb2 = (float *)calloc(p->dim, sizeof(float));
+    s->hb = (float *)calloc(p->hidden_dim, sizeof(float));
+    s->hb2 = (float *)calloc(p->hidden_dim, sizeof(float));
+    s->q = (float *)calloc(p->dim, sizeof(float));
+    s->k = (float *)calloc(kv_dim, sizeof(float));
+    s->v = (float *)calloc(kv_dim, sizeof(float));
+    s->att = (float *)calloc(p->n_heads * p->seq_len, sizeof(float));
+    s->logits = (float *)calloc(p->vocab_size, sizeof(float));
+    s->probindex = (ProbIndex *)calloc(p->vocab_size, sizeof(ProbIndex));
+    s->key_cache = (float *)calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+    s->value_cache = (float *)calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
@@ -346,14 +346,14 @@ int compare_tokens(const void *a, const void *b) {
 int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     // efficiently find the perfect match for str in vocab, return its index or -1 if not found
     TokenIndex tok = { .str = str }; // acts as the key to search for
-    TokenIndex *res = bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
+    TokenIndex *res = (TokenIndex *)bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
     return res != NULL ? res->id : -1;
 }
 
 void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
 
     // sort vocabulary
-    TokenIndex *sorted_vocab = malloc(vocab_size * sizeof(TokenIndex));
+    TokenIndex *sorted_vocab = (TokenIndex *)malloc(vocab_size * sizeof(TokenIndex));
     for (int i = 0; i < vocab_size; i++) {
         sorted_vocab[i].str = vocab[i];
         sorted_vocab[i].id = i;
@@ -361,7 +361,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     qsort(sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
 
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
-    char* str_buffer = malloc((max_token_length*2 +1 +2) * sizeof(char)); // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
+    char* str_buffer = (char *)malloc((max_token_length*2 +1 +2) * sizeof(char)); // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
     size_t str_len = 0;
 
     // add_dummy_prefix is true by default
@@ -620,7 +620,7 @@ int main(int argc, char *argv[]) {
         // memory map the Transformer weights into the data pointer
         fd = open(checkpoint, O_RDONLY); // open in read only mode
         if (fd == -1) { fprintf(stderr, "open failed!\n"); return 1; }
-        data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        data = (float *)mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); return 1; }
         float* weights_ptr = data + sizeof(Config)/sizeof(float);
         checkpoint_init_weights(&weights, &config, weights_ptr, shared_weights);

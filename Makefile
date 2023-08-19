@@ -1,6 +1,8 @@
 # choose your compiler, e.g. gcc/clang
 # example override to clang: make run CC=clang
 CC = gcc
+# CUDA compiler
+NVCC = nvcc
 
 # the most basic way of building that is most likely to work on most systems
 .PHONY: run
@@ -54,6 +56,11 @@ test:
 .PHONY: testc
 testc:
 	pytest -k runc
+
+# run cuda
+.PHONY: runcuda
+runcuda: run.c
+	$(NVCC) -O3 -o run run.cu -lm
 
 .PHONY: clean
 clean:
