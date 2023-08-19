@@ -194,24 +194,13 @@ if init_from == "resume" and "optimizer" in checkpoint:
 checkpoint = None  # free up memory
 
 def generate_config_json():
-    # Directly reference the variables from the script
-    total_params = sum(p.numel() for p in model.parameters())
-    config_values = {
-        "vocab_size": vocab_size,
-        "torch_dtype": dtype,
-        "model_type": "llama",
-        "dim": dim,
-        "num_layers": n_layers,
-        "num_attention_heads": n_heads,
-        "num_key_value_heads": n_kv_heads, 
-        "max_seq_len": max_seq_len,
-        "parameters": total_params,
-    }
+    # Calculate all parameter data of the model
+    config["parameters"] = sum(p.numel() for p in model.parameters())
 
     # Save the extracted values to a JSON file
     config_json = os.path.join(out_dir, "config.json")
     with open(config_json, "w", encoding="utf-8") as file:
-        json.dump(config_values, file, indent=4)
+        json.dump(config, file, indent=4)
 
 # compile the model
 if compile:
