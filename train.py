@@ -201,7 +201,7 @@ def generate_config_json():
         "torch_dtype": dtype,
         "model_type": "llama",
         "dim": dim,
-        "num_layer": n_layers,
+        "num_layers": n_layers,
         "num_attention_heads": n_heads,
         "num_key_value_heads": n_kv_heads, 
         "max_seq_len": max_seq_len,
