@@ -62,6 +62,11 @@ testc:
 runcuda: run.c
 	$(NVCC) -DUSE_CUDA -O3 -o run run.cu -lm
 
+# run debug cuda
+.PHONY: rundebugcuda
+rundebugcuda: run.c
+	$(NVCC) -DUSE_CUDA -g -o run run.cu -lm
+
 .PHONY: clean
 clean:
 	rm -f run
