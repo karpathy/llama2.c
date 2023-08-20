@@ -1,2 +1,5 @@
 run
 stories*bin
+save/
+llama2.cu
+RALLEN.txt

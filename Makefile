@@ -60,7 +60,7 @@ testc:
 # run cuda
 .PHONY: runcuda
 runcuda: run.c
-	$(NVCC) -O3 -o run run.cu -lm
+	$(NVCC) -DUSE_CUDA -O3 -o run run.cu -lm
 
 .PHONY: clean
 clean:
