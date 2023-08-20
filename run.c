@@ -43,9 +43,6 @@ typedef struct {
     float* w3; // (layer, hidden_dim, dim)
     // final rmsnorm
     float* rms_final_weight; // (dim,)
-    // freq_cis for RoPE relatively positional embeddings (not used anymore)
-    float* freq_cis_real; // (seq_len, head_size/2)
-    float* freq_cis_imag; // (seq_len, head_size/2)
     // (optional) classifier weights for the logits, on the last layer
     float* wcls;
 } TransformerWeights;
@@ -133,10 +130,8 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* ptr, int s
     ptr += p->n_layers * p->dim * p->hidden_dim;
     w->rms_final_weight = ptr;
     ptr += p->dim;
-    w->freq_cis_real = ptr;
-    ptr += p->seq_len * head_size / 2;
-    w->freq_cis_imag = ptr;
-    ptr += p->seq_len * head_size / 2;
+    ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
+    ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
