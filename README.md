@@ -308,11 +308,11 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## unsorted todos
 
-- make it easier to add a new dataset with not too much pain
-- should calculate freq_cis online in the script run.c instead of loading them
-- int4/8 quantization
-- export the model in a more sensible output format with a proper header, etc.
+- delete the export_meta_llama_bin.py and export_meta_llama_hf_bin.py files. instead, import both of these into a proper model.py Transformer instance, and then export using the export script as usual.
+- migrate the code to work with the new versions export and deprecate the original .bin files
 - support Llama 2 7B Chat models and tune run.c to Chat UI/UX
+- make it easier to add a new dataset with not too much pain
+- int8 quantization
 - llama2.cu investigate and merge
 - (LoRA) finetuning and export of Llama 2 models
 
