@@ -17,6 +17,7 @@ class ModelArgs:
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
     vocab_size: int = 32000
+    hidden_dim: int = (4 * 4096)
     multiple_of: int = 256  # MLP hidden layer size will be multiple of
     norm_eps: float = 1e-5
     max_seq_len: int = 2048
@@ -186,7 +187,7 @@ class TransformerBlock(nn.Module):
         self.attention = Attention(args)
         self.feed_forward = FeedForward(
             dim=args.dim,
-            hidden_dim=4 * args.dim,
+            hidden_dim=args.hidden_dim,
             multiple_of=args.multiple_of,
             dropout=args.dropout,
         )
