@@ -241,6 +241,35 @@ static const char* shader_sum =
     "    b.data[idx + shape0*idy] = res;\n"
     "}\n";
 
+static const char* shader_sum_vec4 =
+    "#version 320 es\n"
+    "uniform int insize;\n"
+    "uniform int shape0;\n"
+    "layout(local_size_x = 1 , local_size_y = 1) in;\n"
+
+    "layout(binding = 0) readonly buffer Input0{\n"
+    "    vec4 data[];\n"
+    "} a;\n"
+
+    "layout(binding = 1) writeonly buffer Output0{\n"
+    "    float data[];\n"
+    "} b;\n"
+
+    "void main(){\n"
+    "    int idx = int(gl_GlobalInvocationID.x);\n"
+    "    int idy = int(gl_GlobalInvocationID.y);\n"
+    "    if(idx>=insize){\n"
+    "        b.data[idx + shape0*idy] = 0;\n"
+    "        return;\n"
+    "    }\n"
+    "    vec4 va = a.data[insize*idy + idx];\n"
+
+    "    float res0 = va.x + va.y;\n"//step0-0
+    "    float res1 = va.z + va.w;\n"//step0-1
+
+    "    b.data[idx + shape0*idy] = res0 + res1;\n"
+    "}\n";
+
 static const char* shader_max =
     "#version 320 es\n"
     "uniform int insize;\n"
@@ -265,6 +294,37 @@ static const char* shader_max =
     "    }\n"
     "}\n";
 
+static const char* shader_max_vec4 =
+    "#version 320 es\n"
+    "uniform int insize;\n"
+    "uniform int shape0;\n"
+    "layout(local_size_x = 1 , local_size_y = 1) in;\n"
+
+    "layout(binding = 0) readonly buffer Input0{\n"
+    "    vec4 data[];\n"
+    "} a;\n"
+
+    "layout(binding = 1) writeonly buffer Output0{\n"
+    "    float data[];\n"
+    "} b;\n"
+    
+    "const float infinity = 1. / 0.;\n"
+
+    "void main(){\n"
+    "    int idx = int(gl_GlobalInvocationID.x);\n"
+    "    int idy = int(gl_GlobalInvocationID.y);\n"
+    "    if(idx>=insize){\n"
+    "        b.data[idx + shape0*idy] = -infinity;\n"
+    "        return;\n"
+    "    }\n"
+    "    vec4 va = a.data[insize*idy + idx];\n"
+
+    "    float res0 = max(va.x , va.y;)\n"//step0-0
+    "    float res1 = max(va.z , va.w;)\n"//step0-1
+
+    "    b.data[idx + shape0*idy] = max(res0 , res1);\n"
+    "}\n";
+
 static const char* shader_min =
     "#version 320 es\n"
     "uniform int insize;\n"
@@ -287,6 +347,37 @@ static const char* shader_min =
     "    }else{\n"
     "        b.data[idx + shape0*idy] = a.data[insize*idy + idx*2];\n"
     "    }\n"
+    "}\n";
+
+static const char* shader_min_vec4 =
+    "#version 320 es\n"
+    "uniform int insize;\n"
+    "uniform int shape0;\n"
+    "layout(local_size_x = 1 , local_size_y = 1) in;\n"
+
+    "layout(binding = 0) readonly buffer Input0{\n"
+    "    vec4 data[];\n"
+    "} a;\n"
+
+    "layout(binding = 1) writeonly buffer Output0{\n"
+    "    float data[];\n"
+    "} b;\n"
+    
+    "const float infinity = 1. / 0.;\n"
+
+    "void main(){\n"
+    "    int idx = int(gl_GlobalInvocationID.x);\n"
+    "    int idy = int(gl_GlobalInvocationID.y);\n"
+    "    if(idx>=insize){\n"
+    "        b.data[idx + shape0*idy] = infinity;\n"
+    "        return;\n"
+    "    }\n"
+    "    vec4 va = a.data[insize*idy + idx];\n"
+
+    "    float res0 = min(va.x , va.y;)\n"//step0-0
+    "    float res1 = min(va.z , va.w;)\n"//step0-1
+
+    "    b.data[idx + shape0*idy] = min(res0 , res1);\n"
     "}\n";
 
 static const char* shader_rmsnorm_normalize_and_scale =
