@@ -4,20 +4,19 @@
 
 import os
 import struct
-from logging import getLogger
+import argparse
 from typing import List
 
 from sentencepiece import SentencePieceProcessor
 
 TOKENIZER_MODEL = "tokenizer.model" # the llama sentencepiece tokenizer model
-TOKENIZER_BIN = "tokenizer.bin" # binary version of the tokenizer for inference in C
 
 class Tokenizer:
-    def __init__(self):
-        model_path = TOKENIZER_MODEL
+    def __init__(self, tokenizer_model=None):
+        model_path = tokenizer_model if tokenizer_model else TOKENIZER_MODEL
         assert os.path.isfile(model_path), model_path
         self.sp_model = SentencePieceProcessor(model_file=model_path)
-        #print(f"Loaded SentencePiece model from {model_path}")
+        self.model_path = model_path
 
         # BOS / EOS token IDs
         self.n_words: int = self.sp_model.vocab_size()
@@ -52,24 +51,28 @@ class Tokenizer:
                 t = '\n<s>\n'
             elif i == self.eos_id:
                 t = '\n</s>\n'
-            elif len(t) == 6 and t.startswith('<0x') and t.endswith('>'):
-                t = chr(int(t[3:5], 16)) # e.g. make '<0x01>' into '\x01'
             t = t.replace('▁', ' ') # sentencepiece uses this character as whitespace
             b = t.encode('utf-8') # bytes of this token, utf-8 encoded
 
             tokens.append(b)
             scores.append(s)
-        
+
         # record the max token length
         max_token_length = max(len(t) for t in tokens)
 
         # write to a binary file
-        with open(TOKENIZER_BIN, 'wb') as f:
+        # the tokenizer.bin file is the same as .model file, but .bin
+        tokenizer_bin = self.model_path.replace('.model', '.bin')
+        with open(tokenizer_bin, 'wb') as f:
             f.write(struct.pack("I", max_token_length))
             for bytes, score in zip(tokens, scores):
                 f.write(struct.pack("fI", score, len(bytes)))
                 f.write(bytes)
 
 if __name__ == "__main__":
-    t = Tokenizer()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--tokenizer-model", type=str, help="optional path to custom tokenizer ")
+    args = parser.parse_args()
+
+    t = Tokenizer(args.tokenizer_model)
     t.export()

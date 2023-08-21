@@ -11,12 +11,13 @@ from torch import nn
 
 @dataclass
 class ModelArgs:
+    # default hyperparameters for the Llama 7B model
     dim: int = 4096
     n_layers: int = 32
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
-    vocab_size: int = -1  # defined later by tokenizer
-    multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
+    vocab_size: int = 32000
+    multiple_of: int = 256  # MLP hidden layer size will be multiple of
     norm_eps: float = 1e-5
     max_seq_len: int = 2048
     dropout: float = 0.0
@@ -93,6 +94,7 @@ class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
+        assert args.n_heads % self.n_kv_heads == 0
         model_parallel_size = 1
         self.n_local_heads = args.n_heads // model_parallel_size
         self.n_local_kv_heads = self.n_kv_heads // model_parallel_size
@@ -336,55 +338,3 @@ class Transformer(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
-
-    def export(self, filepath='model.bin'):
-        """export the model weights in fp32 into .bin file to be read from C"""
-        f = open(filepath, 'wb')
-
-        def serialize(t):
-            d = t.detach().cpu().view(-1).numpy().astype(np.float32)
-            b = struct.pack(f'{len(d)}f', *d)
-            f.write(b)
-
-        # first write out the header
-        hidden_dim = self.layers[0].feed_forward.w1.weight.shape[0]
-        p = self.params
-        n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
-        header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
-                                       n_kv_heads, p.vocab_size, p.max_seq_len)
-        f.write(header)
-
-        # next write out the embedding weights
-        serialize(self.tok_embeddings.weight)
-
-        # now all the layers
-        # attention weights
-        for layer in self.layers:
-            serialize(layer.attention_norm.weight)
-        for layer in self.layers:
-            serialize(layer.attention.wq.weight)
-        for layer in self.layers:
-            serialize(layer.attention.wk.weight)
-        for layer in self.layers:
-            serialize(layer.attention.wv.weight)
-        for layer in self.layers:
-            serialize(layer.attention.wo.weight)
-        # ffn weights
-        for layer in self.layers:
-            serialize(layer.ffn_norm.weight)
-        for layer in self.layers:
-            serialize(layer.feed_forward.w1.weight)
-        for layer in self.layers:
-            serialize(layer.feed_forward.w2.weight)
-        for layer in self.layers:
-            serialize(layer.feed_forward.w3.weight)
-        # final rmsnorm
-        serialize(self.norm.weight)
-        # note: no need to write final classifier weights due to weight sharing
-        # freqs_cis
-        serialize(self.freqs_cos[:p.max_seq_len])
-        serialize(self.freqs_sin[:p.max_seq_len])
-
-        # write to binary file
-        f.close()
-        print(f"wrote {filepath}")
