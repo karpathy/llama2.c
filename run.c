@@ -731,7 +731,6 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 'z') { tokenizer_path = argv[i + 1]; }
         else { error_usage(); }
     }
-    if(rng_seed == 0) { rng_seed = (unsigned int)time(NULL);}
 
     // build the Transformer via the model .bin file
     Transformer transformer;
@@ -744,6 +743,16 @@ int main(int argc, char *argv[]) {
     // build the Sampler
     Sampler sampler;
     build_sampler(&sampler, transformer.config.vocab_size);
+
+
+    // Check for sound parameters and fallback to defaults if needed.
+    // This needs to stay close to the generation code since, in the future,
+    // it will be in the "chat loop" (one may change params from on prompts to the other).
+    if (rng_seed <= 0) { rng_seed = (unsigned int)time(NULL);}
+    if (temperature < 0.0 || 1.0 < temperature) temperature = 1.0;
+    if (topp < 0.0 || 1.0 < temperature) topp = 0.9;
+    if (steps <= 0 || transformer.config.seq_len < steps ) { steps = transformer.config.seq_len; }
+
 
     // encode the (string) prompt into tokens sequence, if any is given
     int *prompt_tokens = NULL; // the sequence of prompt tokens
