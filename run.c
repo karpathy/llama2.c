@@ -13,6 +13,9 @@
     #include <unistd.h>
     #include <sys/mman.h>
 #endif
+
+#include <stdint.h>
+
 // ----------------------------------------------------------------------------
 // Transformer model
 
