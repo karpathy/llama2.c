@@ -381,7 +381,7 @@ void free_tokenizer(Tokenizer* t) {
     free(t->vocab_scores);
 }
 
-char* get_piece(Tokenizer* t, int prev_token, int token) {
+char* decode(Tokenizer* t, int prev_token, int token) {
     char *piece = t->vocab[token];
     // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
     if (prev_token == 1 && piece[0] == ' ') { piece++; }
@@ -414,7 +414,7 @@ int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     return res != NULL ? res->id : -1;
 }
 
-void bpe_encode(Tokenizer* t, char *text, int *tokens, int *n_tokens) {
+void encode(Tokenizer* t, char *text, int *tokens, int *n_tokens) {
     // encode the string text (input) into an upper-bound preallocated tokens[] array
 
     // sort vocabulary
@@ -694,7 +694,7 @@ int main(int argc, char *argv[]) {
     int num_prompt_tokens = 0;
     if (prompt != NULL) {
         prompt_tokens = (int*)malloc((strlen(prompt)+1) * sizeof(int));
-        bpe_encode(&tokenizer, prompt, prompt_tokens, &num_prompt_tokens);
+        encode(&tokenizer, prompt, prompt_tokens, &num_prompt_tokens);
     }
 
     // start the main loop
@@ -737,7 +737,7 @@ int main(int argc, char *argv[]) {
         if (next == 1) { break; }
 
         // print the token as string, decode it with the Tokenizer object
-        char* piece = get_piece(&tokenizer, token, next);
+        char* piece = decode(&tokenizer, token, next);
         printf("%s", piece);
         fflush(stdout);
         token = next;
