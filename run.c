@@ -667,7 +667,7 @@ int sample(Sampler* sampler, float* logits, float temperature, float topp) {
         // apply softmax to the logits to get the probabilities for next token
         softmax(logits, sampler->vocab_size);
         // we sample from this distribution to get the next token
-        if (topp <= 0 || topp >= 1) {
+        if (topp == 0) {
             // simply sample from the predicted probability distribution
             next = sample_mult(logits, sampler->vocab_size);
         } else {
