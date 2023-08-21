@@ -689,6 +689,62 @@ long time_in_ms() {
 }
 
 // ----------------------------------------------------------------------------
+// Generate text
+
+int generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, float temperature, int steps, float topp)
+{
+    // encode the (string) prompt into tokens sequence, if any is given
+    int *prompt_tokens = NULL; // the sequence of prompt tokens
+    int num_prompt_tokens = 0; // the total number of prompt tokens
+    if (prompt != NULL) {
+        prompt_tokens = (int*)malloc((strlen(prompt)+1) * sizeof(int));
+        encode(tokenizer, prompt, prompt_tokens, &num_prompt_tokens);
+    }
+
+    // start the main loop
+    long start = 0;  // used to time our code, only initialized after first iteration
+    int next;        // will store the next token in the sequence
+    int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
+    int pos = 0;     // position in the sequence
+    while (pos < steps) {
+
+        // forward the transformer to get logits for the next token
+        float* logits = forward(transformer, token, pos);
+
+        // advance the state state machine
+        if (pos < num_prompt_tokens) {
+            // if we are still processing the input prompt, force the next prompt token
+            next = prompt_tokens[pos];
+        } else {
+            // otherwise sample the next token from the logits
+            next = sample(sampler, logits, temperature, topp);
+        }
+        pos++;
+
+        // data-dependent terminating condition: the BOS (1) token delimits sequences
+        if (next == 1) { break; }
+
+        // print the token as string, decode it with the Tokenizer object
+        char* piece = decode(tokenizer, token, next);
+        printf("%s", piece);
+        fflush(stdout);
+        token = next;
+
+        // init the timer here because the first iteration can be slower
+        if (start == 0) { start = time_in_ms(); }
+    }
+    printf("\n");
+
+    // report achieved tok/s (pos-1 because the timer starts after first iteration)
+    if (pos > 1) {
+        long end = time_in_ms();
+        fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
+    }
+    if (prompt_tokens != NULL) { free(prompt_tokens); }
+
+}
+
+// ----------------------------------------------------------------------------
 // int main
 
 void error_usage() {
@@ -745,56 +801,10 @@ int main(int argc, char *argv[]) {
     Sampler sampler;
     build_sampler(&sampler, transformer.config.vocab_size);
 
-    // encode the (string) prompt into tokens sequence, if any is given
-    int *prompt_tokens = NULL; // the sequence of prompt tokens
-    int num_prompt_tokens = 0; // the total number of prompt tokens
-    if (prompt != NULL) {
-        prompt_tokens = (int*)malloc((strlen(prompt)+1) * sizeof(int));
-        encode(&tokenizer, prompt, prompt_tokens, &num_prompt_tokens);
-    }
-
-    // start the main loop
-    long start = 0;  // used to time our code, only initialized after first iteration
-    int next;        // will store the next token in the sequence
-    int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
-    int pos = 0;     // position in the sequence
-    while (pos < steps) {
-
-        // forward the transformer to get logits for the next token
-        float* logits = forward(&transformer, token, pos);
-
-        // advance the state state machine
-        if (pos < num_prompt_tokens) {
-            // if we are still processing the input prompt, force the next prompt token
-            next = prompt_tokens[pos];
-        } else {
-            // otherwise sample the next token from the logits
-            next = sample(&sampler, logits, temperature, topp);
-        }
-        pos++;
-
-        // data-dependent terminating condition: the BOS (1) token delimits sequences
-        if (next == 1) { break; }
-
-        // print the token as string, decode it with the Tokenizer object
-        char* piece = decode(&tokenizer, token, next);
-        printf("%s", piece);
-        fflush(stdout);
-        token = next;
-
-        // init the timer here because the first iteration can be slower
-        if (start == 0) { start = time_in_ms(); }
-    }
-    printf("\n");
-
-    // report achieved tok/s (pos-1 because the timer starts after first iteration)
-    if (pos > 1) {
-        long end = time_in_ms();
-        fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
-    }
+    // Generate the text based on prompt
+    generate(&transformer, &tokenizer, &sampler, prompt, temperature, steps, topp);
 
     // memory and file handles cleanup
-    if (prompt_tokens != NULL) { free(prompt_tokens); }
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
