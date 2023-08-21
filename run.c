@@ -245,7 +245,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     int head_size = dim / p->n_heads;
 
     // copy the token embedding into x
-    float* content_row = &(w->token_embedding_table[token * dim]);
+    float* content_row = w->token_embedding_table + token * dim;
     memcpy(x, content_row, dim*sizeof(*x));
 
     // forward all the layers
