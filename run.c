@@ -407,16 +407,23 @@ void build_tokenizer(Tokenizer* t, char* tokenizer_path, int vocab_size) {
         t->vocab[i][len] = '\0'; // add the string terminating token
     }
 
-    // sort vocabulary
-    t->sorted_vocab = malloc(t->vocab_size * sizeof(TokenIndex));
-    if (t->sorted_vocab == NULL) { fprintf(stderr, "failed malloc for sorted vocabulary\n"); exit(EXIT_FAILURE); }
-    for (int i = 0; i < t->vocab_size; i++) {
-        t->sorted_vocab[i].str = t->vocab[i];
-        t->sorted_vocab[i].id = i;
-    }
-    qsort(t->sorted_vocab, t->vocab_size, sizeof(TokenIndex), compare_tokens);
+    t->sorted_vocab = NULL;
 
     fclose(file);
+}
+
+void sort_vocabulary(Tokenizer* t) 
+{
+    if (t->sorted_vocab == NULL) {
+        // sort vocabulary
+        t->sorted_vocab = malloc(t->vocab_size * sizeof(TokenIndex));
+        if (t->sorted_vocab == NULL) { fprintf(stderr, "failed malloc for sorted vocabulary\n"); exit(EXIT_FAILURE); }
+        for (int i = 0; i < t->vocab_size; i++) {
+            t->sorted_vocab[i].str = t->vocab[i];
+            t->sorted_vocab[i].id = i;
+        }
+        qsort(t->sorted_vocab, t->vocab_size, sizeof(TokenIndex), compare_tokens);
+    }
 }
 
 void free_tokenizer(Tokenizer* t) {
@@ -452,6 +459,8 @@ int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
 
 void encode(Tokenizer* t, char *text, int *tokens, int *n_tokens) {
     // encode the string text (input) into an upper-bound preallocated tokens[] array
+
+    sort_vocabulary(t);
 
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
     char* str_buffer = malloc((t->max_token_length*2 +1 +2) * sizeof(char)); // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
