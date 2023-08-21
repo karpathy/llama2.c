@@ -736,19 +736,18 @@ int main(int argc, char *argv[]) {
     // build the Transformer via the model .bin file
     Transformer transformer;
     build_transformer(&transformer, checkpoint_path);
-    int vocab_size = transformer.config.vocab_size; // convenience copy
 
     // build the Tokenizer via the tokenizer .bin file
     Tokenizer tokenizer;
-    build_tokenizer(&tokenizer, tokenizer_path, vocab_size);
+    build_tokenizer(&tokenizer, tokenizer_path, transformer.config.vocab_size);
 
     // build the Sampler
     Sampler sampler;
-    build_sampler(&sampler, vocab_size);
+    build_sampler(&sampler, transformer.config.vocab_size);
 
     // encode the (string) prompt into tokens sequence, if any is given
-    int *prompt_tokens = NULL;
-    int num_prompt_tokens = 0;
+    int *prompt_tokens = NULL; // the sequence of prompt tokens
+    int num_prompt_tokens = 0; // the total number of prompt tokens
     if (prompt != NULL) {
         prompt_tokens = (int*)malloc((strlen(prompt)+1) * sizeof(int));
         encode(&tokenizer, prompt, prompt_tokens, &num_prompt_tokens);
