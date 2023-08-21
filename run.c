@@ -751,8 +751,8 @@ void error_usage() {
     fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
     fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
-    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9\n");
+    fprintf(stderr, "  -t <float>  temperature in [0,inf], default 1.0\n");
+    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling in [0,1] default 0.9\n");
     fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
     fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
     fprintf(stderr, "  -i <string> input prompt\n");
@@ -762,7 +762,7 @@ void error_usage() {
 
 int main(int argc, char *argv[]) {
 
-    // default inits
+    // default parameters
     char *checkpoint_path = NULL;  // e.g. out/model.bin
     char *tokenizer_path = "tokenizer.bin";
     float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
@@ -787,7 +787,12 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 'z') { tokenizer_path = argv[i + 1]; }
         else { error_usage(); }
     }
-    if(rng_seed == 0) { rng_seed = (unsigned int)time(NULL);}
+
+    // parameter validation/overrides
+    if (rng_seed <= 0) rng_seed = (unsigned int)time(NULL);
+    if (temperature < 0.0) temperature = 0.0;
+    if (topp < 0.0 || 1.0 < topp) topp = 0.9;
+    if (steps <= 0) steps = 0;
 
     // build the Transformer via the model .bin file
     Transformer transformer;
