@@ -280,7 +280,12 @@ def load_checkpoint(checkpoint):
 
 def load_hf_model(model_path):
 
-    from transformers import AutoModelForCausalLM
+    try:
+        from transformers import AutoModelForCausalLM
+    except ImportError:
+        print("Error: transformers package is required to load huggingface models")
+        print("Please run `pip install transformers` to install it")
+        return None
 
     # load HF model
     hf_model = AutoModelForCausalLM.from_pretrained(model_path)
@@ -356,6 +361,9 @@ if __name__ == "__main__":
         model = load_hf_model(args.hf)
     else:
         parser.error("Input model missing: --checkpoint or --hf is required")
+
+    if model is None:
+        parser.error("Can't load input model!")
 
     # export
     model_export(model, args.filepath, args.version)
