@@ -366,7 +366,7 @@ float* forward(Transformer* transformer, int32_t token, int32_t pos) {
 
     // classifier into logits
     matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
-    return s->logits;t->sorted_vocab
+    return s->logits;
 }
 
 // ----------------------------------------------------------------------------
