@@ -60,9 +60,6 @@ typedef struct {
     uint8_t* w3; // (layer, hidden_dim, dim)
     // final rmsnorm
     uint8_t* rms_final_weight; // (dim,)
-    // freq_cis for RoPE relatively positional embeddings
-    float* freq_cis_real; // (seq_len, head_size/2)
-    float* freq_cis_imag; // (seq_len, head_size/2)
     // (optional) classifier weights for the logits, on the last layer
     uint8_t* wcls;
 } TransformerWeights;
@@ -165,11 +162,6 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, uint8_t* ptr, int
     w->rms_final_weight = ptr;
     ptr += quant_size(1, p->dim);
 
-    w->freq_cis_real = (float*) ptr;
-    ptr += p->seq_len * head_size / 2 * sizeof(float);
-    w->freq_cis_imag = (float*) ptr;
-    ptr += p->seq_len * head_size / 2 * sizeof(float);
-
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
@@ -260,10 +252,6 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     // copy the token embedding into x
     dequantize_token(x, w->token_embedding_table, token, dim);
 
-    // pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
-    float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
-
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
 
@@ -275,7 +263,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->k, s->xb, w->wk, l, dim, kv_dim);
         matmul(s->v, s->xb, w->wv, l, dim, kv_dim);
 
-        // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
+        // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
             int head_dim = i % head_size;
             float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);

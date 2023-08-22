@@ -185,9 +185,6 @@ int convert_weights_q8(TransformerWeights *w, Config *p, int shared_weights){
 
     quantize_weights(file, w->rms_final_weight, 1, p->dim, "rms_final_weight");
 
-    write_weights(file, w->freq_cis_real, 1, p->seq_len * head_size / 2, "freq_cis_real");
-    write_weights(file, w->freq_cis_imag, 1, p->seq_len * head_size / 2, "freq_cis_imag");
-
     if (!shared_weights) {
         quantize_weights(file, w->wcls, 1, p->vocab_size * p->dim, "wcls");
     }
