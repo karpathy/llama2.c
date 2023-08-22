@@ -47,11 +47,11 @@ runompgnu:
 
 .PHONY: cuda
 cuda:
-	nvcc -O3 llama2.cu -o llama2 -Xcudafe --diag_suppress=2464
+	nvcc -O3 run.cu -o run-cuda -Xcudafe --diag_suppress=2464
 
 .PHONY: cuda-q8
 cuda-q8:
-	nvcc -O3 llama2-q8.cu -o llama2-q8 -Xcudafe --diag_suppress=2464
+	nvcc -O3 run-q8.cu -o run-cuda-q8 -Xcudafe --diag_suppress=2464
 
 # run all tests
 .PHONY: test
@@ -65,4 +65,4 @@ testc:
 
 .PHONY: clean
 clean:
-	rm -f run llama2 llama2-q8
+	rm -f run run-cuda run-cuda-q8
