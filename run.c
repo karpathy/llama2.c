@@ -688,15 +688,13 @@ int sample(Sampler* sampler) {
         for (int q=0; q<transformer.config.vocab_size; q++) { transformer.state.logits[q] /= sampler->temperature; }
         // apply softmax to the logits to get the probabilities for next token
         softmax(transformer.state.logits, transformer.config.vocab_size);
-        // flip a (float) coin (this is our source of entropy for sampling)
-        float coin = random_f32(&sampler->rng_state);
         // we sample from this distribution to get the next token
         if (sampler->topp <= 0 || sampler->topp >= 1) {
             // simply sample from the predicted probability distribution
-            next = sample_mult(logits, coin);
+            next = sample_mult(sampler);
        } else {
             // top-p (nucleus) sampling, clamping the least likely tokens to zero
-            next = sample_topp(sampler, coin);
+            next = sample_topp(sampler);
         }
     }
     return next;
