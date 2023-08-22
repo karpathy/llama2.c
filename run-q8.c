@@ -277,20 +277,23 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
         for (int i = 0; i < dim; i+=2) {
+            int head_dim = i % head_size;
+            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+            float val = pos * freq;
+            float fcr = cosf(val);
+            float fci = sinf(val);
+            // rotate q
             float q0 = s->q[i];
             float q1 = s->q[i+1];
-            float fcr = freq_cis_real_row[(i % head_size) / 2];
-            float fci = freq_cis_imag_row[(i % head_size) / 2];
             s->q[i]   = q0 * fcr - q1 * fci;
             s->q[i+1] = q0 * fci + q1 * fcr;
-        }
-        for (int i = 0; i < kv_dim; i+=2) {
-            float k0 = s->k[i];
-            float k1 = s->k[i+1];
-            float fcr = freq_cis_real_row[(i % head_size) / 2];
-            float fci = freq_cis_imag_row[(i % head_size) / 2];
-            s->k[i]   = k0 * fcr - k1 * fci;
-            s->k[i+1] = k0 * fci + k1 * fcr;
+            // rotate k
+            if (i < kv_dim) {
+                float k0 = s->k[i];
+                float k1 = s->k[i+1];
+                s->k[i]   = k0 * fcr - k1 * fci;
+                s->k[i+1] = k0 * fci + k1 * fcr;
+            }
         }
 
         // save key,value at this time step (pos) to our kv cache
