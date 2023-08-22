@@ -458,7 +458,8 @@ void encode(Tokenizer* t, char *text, int *tokens, int *n_tokens) {
     }
 
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
-    char* str_buffer = malloc((t->max_token_length*2 +1 +2) * sizeof(char)); // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
+    // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
+    char* str_buffer = malloc((t->max_token_length*2 +1 +2) * sizeof(char));
     size_t str_len = 0;
 
     // add_dummy_prefix is true by default
@@ -561,21 +562,8 @@ typedef struct {
     uint16_t* probidx; // buffer used in top-p sampling
     float temperature;
     float topp;
+    unsigned long long rng_state;
 } Sampler;
-
-// rng should technically be a state variable of the Sampler
-// leaving it global here for now for convenience, maybe move later
-unsigned long long rng_seed;
-unsigned int random_u32() {
-    // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
-    rng_seed ^= rng_seed >> 12;
-    rng_seed ^= rng_seed << 25;
-    rng_seed ^= rng_seed >> 27;
-    return (rng_seed * 0x2545F4914F6CDD1Dull) >> 32;
-}
-float random_f32() { // random float32 in [0,1)
-    return (random_u32() >> 8) / 16777216.0f;
-}
 
 int sample_argmax() {
     // return the index that has the highest probability
@@ -592,15 +580,15 @@ int sample_argmax() {
     return max_i;
 }
 
-int sample_mult() {
+int sample_mult(Sampler* sampler) {
     // sample index from probabilities (they must sum to 1!)
     uint16_t n = transformer.config.vocab_size;
     const float *probs = transformer.state.logits;
-    float r = random_f32();
+    float coin = random_f32(&sampler->rng_state);
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probs[i];
-        if (r < cdf) {
+        if (coin < cdf) {
             return i;
         }
     }
@@ -621,6 +609,7 @@ uint16_t sample_topp(Sampler* sampler) {
     // top-p sampling (or "nucleus sampling") samples from the smallest set of
     // tokens that exceed probability topp. This way we never sample tokens that
     // have very low probabilities and are less likely to go "off the rails".
+    // coin is a random number in [0, 1), usually from random_f32()
 
     const uint16_t n = transformer.config.vocab_size;
     const float *probs = transformer.state.logits;
@@ -652,7 +641,7 @@ uint16_t sample_topp(Sampler* sampler) {
     }
 
     // sample from the truncated list
-    float r = random_f32() * cumulative_prob;
+    float r = random_f32(&sampler->rng_state) * cumulative_prob;
     float cdf = 0.0f;
     for (int i = 0; i <= last_idx; i++) {
         cdf += probs[probidx[i]];
@@ -663,9 +652,11 @@ uint16_t sample_topp(Sampler* sampler) {
     return probidx[last_idx]; // in case of rounding errors
 }
 
-void build_sampler(Sampler* sampler, float temperature, float topp) {
+
+void build_sampler(Sampler* sampler, float temperature, float topp, unsigned long long rng_seed) {
     sampler->temperature = temperature;
     sampler->topp = topp;
+    sampler->rng_state = rng_seed;
     // buffer only used with nucleus sampling; may not need but it's ~small
     sampler->probidx = (uint16_t*) malloc(transformer.config.vocab_size * sizeof(uint16_t));
 }
@@ -674,7 +665,18 @@ void free_sampler(Sampler* sampler) {
     free(sampler->probidx);
 }
 
-uint16_t sample(Sampler* sampler) {
+unsigned int random_u32(unsigned long long *state) {
+    // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
+    *state ^= *state >> 12;
+    *state ^= *state << 25;
+    *state ^= *state >> 27;
+    return (*state * 0x2545F4914F6CDD1Dull) >> 32;
+}
+float random_f32(unsigned long long *state) { // random float32 in [0,1)
+    return (random_u32(state) >> 8) / 16777216.0f;
+}
+
+int sample(Sampler* sampler) {
     // sample the token given the logits and some hyperparameters
     uint16_t next;
     // const uint16_t vocab_size = transformer.config.vocab_size;
@@ -686,13 +688,15 @@ uint16_t sample(Sampler* sampler) {
         for (int q=0; q<transformer.config.vocab_size; q++) { transformer.state.logits[q] /= sampler->temperature; }
         // apply softmax to the logits to get the probabilities for next token
         softmax(transformer.state.logits, transformer.config.vocab_size);
+        // flip a (float) coin (this is our source of entropy for sampling)
+        float coin = random_f32(&sampler->rng_state);
         // we sample from this distribution to get the next token
         if (sampler->topp <= 0 || sampler->topp >= 1) {
             // simply sample from the predicted probability distribution
-            next = sample_mult();
-        } else {
+            next = sample_mult(logits, coin);
+       } else {
             // top-p (nucleus) sampling, clamping the least likely tokens to zero
-            next = sample_topp(sampler);
+            next = sample_topp(sampler, coin);
         }
     }
     return next;
@@ -787,9 +791,9 @@ int main(int argc, char *argv[]) {
     char *tokenizer_path = "tokenizer.bin";
     float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    rng_seed = 0; // seed rng with time by default
     int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
+    unsigned long long rng_seed = 0; // seed rng with time by default
 
     // poor man's C argparse so we can override the defaults above from the command line
     if (argc >= 2) { checkpoint_path = argv[1]; } else { error_usage(); }
@@ -824,7 +828,7 @@ int main(int argc, char *argv[]) {
 
     // build the Sampler
     Sampler sampler;
-    build_sampler(&sampler, temperature, topp);
+    build_sampler(&sampler, temperature, topp, rng_seed);
 
     // run!
     generate(&transformer, &tokenizer, &sampler, prompt, steps);
