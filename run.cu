@@ -255,23 +255,27 @@ __global__ void vec_mat_kernel(half* output, const half* __restrict__ input, con
 }
 
 // Each block processes a single head
-__global__ void RoPERotation_kernel(half* sq, half* sk, half* f_real, half* f_imag, int num_heads, int num_kv_heads, int head_size) {
+__global__ void RoPERotation_kernel(half* sq, half* sk, int pos, int num_heads, int num_kv_heads, int head_size) {
     int h = blockIdx.x;
 
     half* q = sq + h * head_size;
     half* k = sk + h * head_size;
 
     int i = threadIdx.x * 2;
-    int j = threadIdx.x;
 
-    float fcr = f_real[j];
-    float fci = f_imag[j];
+    int head_dim = i % head_size;
+    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+    float val = pos * freq;
+    float fcr = cosf(val);
+    float fci = sinf(val);
 
+    // rotate q
     float q0 = q[i];
     float q1 = q[i + 1];
     q[i] = q0 * fcr - q1 * fci;
     q[i + 1] = q0 * fci + q1 * fcr;
 
+    // rotate k
     if (h < num_kv_heads) {
         float k0 = k[i];
         float k1 = k[i + 1];
@@ -580,8 +584,8 @@ void matmul(half* xout, half* x, half* w, int n, int d, int batch = 1, int x_str
         mat_vec_kernel <<<grid_dim, block_dim >>> (xout, x, w, n, d, serialLoads, x_stride, w_stride, op_stride, w_row_stride, alpha);
 }
 
-void RoPERotation(half *q, half *k, half *f_real, half *f_imag, int num_heads, int num_kv_heads, int head_size) {
-    RoPERotation_kernel <<<num_heads, head_size / 2 >>> (q, k, f_real, f_imag, num_heads, num_kv_heads, head_size);
+void RoPERotation(half *q, half *k, int pos, int num_heads, int num_kv_heads, int head_size) {
+    RoPERotation_kernel <<< num_heads, head_size / 2 >>> (q, k, pos, num_heads, num_kv_heads, head_size);
 }
 
 void MultiHeadAttention(half *output, half *q, half *key_cache, half *value_cache, half *att, int num_heads, int head_size, int seq_len) {
@@ -613,19 +617,15 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
     //int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
-    int hidden_dim =  p->hidden_dim;
+    int hidden_dim = p->hidden_dim;
     int head_size = dim / p->n_heads;
 
     // copy the token embedding into x
     half* content_row = &(w->token_embedding_table[token * dim]);
     cudaMemcpyAsync(x, content_row, dim * sizeof(half), cudaMemcpyDeviceToDevice);
 
-    // pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    half* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
-    half* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
-
     // forward all the layers
-    for(int l = 0; l < p->n_layers; l++) {
+    for (int l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
@@ -640,9 +640,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(key_cache_row, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
         matmul(value_cache_row, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
-        // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
+        // RoPE relative positional encoding: complex-valued rotate q and k in each head
         // also save the output (key, value) at this time step (pos) to our kv cache
-        RoPERotation(s->q, key_cache_row, freq_cis_real_row, freq_cis_imag_row, p->n_heads, p->n_kv_heads, head_size);
+        RoPERotation(s->q, key_cache_row, pos, p->n_heads, p->n_kv_heads, head_size);
 
         // apply MHA using the query and the key-value cache
         MultiHeadAttention(s->xb, s->q, s->key_cache + loff, s->value_cache + loff, s->att, p->n_heads, head_size, pos+1);

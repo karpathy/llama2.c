@@ -268,7 +268,6 @@ __global__ void RoPERotation_kernel(half* sq, half* sk, int pos, int num_heads, 
     half* k = sk + h * head_size;
 
     int i = threadIdx.x * 2;
-    int j = threadIdx.x;
 
     int head_dim = i % head_size;
     float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
