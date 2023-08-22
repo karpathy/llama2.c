@@ -27,7 +27,6 @@ $ ./run
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
-
 // #define DEBUG
 
 void checkGPUError(int line) {
@@ -41,7 +40,7 @@ void checkGPUError(int line) {
 #ifdef DEBUG
 #define GPU_CHECK() checkGPUError(__LINE__);
 #else
-#define GPU_CHECK() 
+#define GPU_CHECK()
 #endif
 
 typedef struct {
@@ -264,8 +263,8 @@ static const char* shader_sum_vec4 =
     "    }\n"
     "    vec4 va = a.data[insize*idy + idx];\n"
 
-    "    float res0 = va.x + va.y;\n"//step0-0
-    "    float res1 = va.z + va.w;\n"//step0-1
+    "    float res0 = va.x + va.y;\n"  //step0-0
+    "    float res1 = va.z + va.w;\n"  //step0-1
 
     "    b.data[idx + shape0*idy] = res0 + res1;\n"
     "}\n";
@@ -307,7 +306,7 @@ static const char* shader_max_vec4 =
     "layout(binding = 1) writeonly buffer Output0{\n"
     "    float data[];\n"
     "} b;\n"
-    
+
     "const float infinity = 1. / 0.;\n"
 
     "void main(){\n"
@@ -319,8 +318,8 @@ static const char* shader_max_vec4 =
     "    }\n"
     "    vec4 va = a.data[insize*idy + idx];\n"
 
-    "    float res0 = max(va.x , va.y;)\n"//step0-0
-    "    float res1 = max(va.z , va.w;)\n"//step0-1
+    "    float res0 = max(va.x , va.y;)\n"  //step0-0
+    "    float res1 = max(va.z , va.w;)\n"  //step0-1
 
     "    b.data[idx + shape0*idy] = max(res0 , res1);\n"
     "}\n";
@@ -362,7 +361,7 @@ static const char* shader_min_vec4 =
     "layout(binding = 1) writeonly buffer Output0{\n"
     "    float data[];\n"
     "} b;\n"
-    
+
     "const float infinity = 1. / 0.;\n"
 
     "void main(){\n"
@@ -374,8 +373,8 @@ static const char* shader_min_vec4 =
     "    }\n"
     "    vec4 va = a.data[insize*idy + idx];\n"
 
-    "    float res0 = min(va.x , va.y;)\n"//step0-0
-    "    float res1 = min(va.z , va.w;)\n"//step0-1
+    "    float res0 = min(va.x , va.y;)\n"  //step0-0
+    "    float res1 = min(va.z , va.w;)\n"  //step0-1
 
     "    b.data[idx + shape0*idy] = min(res0 , res1);\n"
     "}\n";
@@ -1082,10 +1081,10 @@ void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, i
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, outBuffer);
     glUseProgram(kernel);
 
-    int insize_gpu = glGetUniformLocation(prog->shader_sum, "insize");
+    int insize_gpu = glGetUniformLocation(kernel, "insize");
     glUniform1i(insize_gpu, insize);
 
-    int shape0_gpu = glGetUniformLocation(prog->shader_sum, "shape0");
+    int shape0_gpu = glGetUniformLocation(kernel, "shape0");
     glUniform1i(shape0_gpu, outsize);
 
     glDispatchCompute(outsize, numSeq, 1);
@@ -1100,7 +1099,7 @@ GLuint reduce_iteration(GLuint kernel_step, GLuint data, GLuint cache_1, int ins
     GLuint currentBuffer = cache_1;
     GLuint nextBuffer = data;
     GLuint tmp;
-    
+
     while (nextStepSize != 1) {
         //swap current and next
         tmp = currentBuffer;
@@ -1113,12 +1112,12 @@ GLuint reduce_iteration(GLuint kernel_step, GLuint data, GLuint cache_1, int ins
             nextStepSize += 1;
         }
 
-        if (nextStepSize==1 && outputAt!=NULL){
+        if (nextStepSize == 1 && outputAt != NULL) {
             nextBuffer = *outputAt;
         }
         reduce_step(kernel_step, currentBuffer, currentStepSize, nextBuffer, nextStepSize, numSeq);
     }
-    if (otherBuffer!=NULL){
+    if (otherBuffer != NULL) {
         *otherBuffer = currentBuffer;
     }
     return nextBuffer;
@@ -1128,22 +1127,22 @@ GLuint reduce_iteration_input(GLuint kernel_step, GLuint data, GLuint cache_1, G
     int currentStepSize = insize;
     int nextStepSize = currentStepSize / 2;
     if (currentStepSize % 2 == 1) {
-            nextStepSize += 1;
+        nextStepSize += 1;
     }
 
-    if (nextStepSize==1){
+    if (nextStepSize == 1) {
         GLuint outBuffer = cache_1;
-        if (outputAt!=NULL){
+        if (outputAt != NULL) {
             outBuffer = *outputAt;
         }
-        reduce_step(kernel_step, data, currentStepSize, outBuffer, nextStepSize, size_y);
-        if (otherBuffer!=NULL){
+        reduce_step(kernel_step, data, currentStepSize, outBuffer, nextStepSize, numSeq);
+        if (otherBuffer != NULL) {
             *otherBuffer = cache_2;
         }
         return outBuffer;
-    }else{
-        reduce_step(kernel_step, data, currentStepSize, cache_1, nextStepSize, size_y);
-        return reduce_iteration(kernel_step, cache_1, cache_2, insize, numSeq, otherBuffer);
+    } else {
+        reduce_step(kernel_step, data, currentStepSize, cache_1, nextStepSize, numSeq);
+        return reduce_iteration(kernel_step, cache_1, cache_2, nextStepSize, numSeq, otherBuffer, outputAt);
     }
 }
 
@@ -1182,7 +1181,7 @@ void rmsnorm(GPUProgram* prog, RunState* state, GLuint o, GLuint x, GLuint weigh
     GPU_CHECK();
 
     nextBuffer = reduce_iteration(prog->shader_sum, nextBuffer, currentBuffer, nextStepSize, 1, &currentBuffer, NULL);
-    
+
     if (o == x) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, nextBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, weight);
@@ -1222,7 +1221,7 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     GLuint nextBuffer = state->mulBuffer_2;
     GLuint resBuffer_max;
     GLuint resBuffer_sum;
-    
+
     resBuffer_max = reduce_iteration_input(prog->shader_max, x, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, &currentBuffer, NULL);
 
     // exp
@@ -1471,7 +1470,6 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
 
         // residual connection
         accum(prog, s, x, s->xb, dim);
-
     }
 
     // final rmsnorm
