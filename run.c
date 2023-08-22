@@ -800,7 +800,7 @@ int main(int argc, char *argv[]) {
     }
 
     // memory and file handles cleanup
-    if (prompt_tokens != NULL) { free(prompt_tokens); }
+    free(prompt_tokens);
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
