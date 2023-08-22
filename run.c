@@ -201,7 +201,6 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
 
 void softmax(float* x, uint16_t size) {
     // find max value (for numerical stability)
-
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
         if (x[i] > max_val) {
@@ -580,11 +579,11 @@ int sample_argmax() {
     return max_i;
 }
 
-int sample_mult(Sampler* sampler) {
+int sample_mult(Sampler* sampler, float coin) {
     // sample index from probabilities (they must sum to 1!)
+    // coin is a random number in [0, 1), usually from random_f32()
     uint16_t n = transformer.config.vocab_size;
     const float *probs = transformer.state.logits;
-    float coin = random_f32(&sampler->rng_state);
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probs[i];
@@ -605,7 +604,7 @@ int compare(const void* a, const void* b) {
     return 0;
 }
 
-uint16_t sample_topp(Sampler* sampler) {
+uint16_t sample_topp(Sampler* sampler, float coin) {
     // top-p sampling (or "nucleus sampling") samples from the smallest set of
     // tokens that exceed probability topp. This way we never sample tokens that
     // have very low probabilities and are less likely to go "off the rails".
@@ -622,8 +621,6 @@ uint16_t sample_topp(Sampler* sampler) {
     for (int i = 0; i < n; i++) {
         if (probs[i] >= cutoff) {
             probidx[n0] = i;
-            // probidx[n0].index = i;
-            // probidx[n0].prob = probs[i];
             n0++;
         }
     }
@@ -641,7 +638,7 @@ uint16_t sample_topp(Sampler* sampler) {
     }
 
     // sample from the truncated list
-    float r = random_f32(&sampler->rng_state) * cumulative_prob;
+    float r = coin * cumulative_prob;
     float cdf = 0.0f;
     for (int i = 0; i <= last_idx; i++) {
         cdf += probs[probidx[i]];
@@ -652,13 +649,12 @@ uint16_t sample_topp(Sampler* sampler) {
     return probidx[last_idx]; // in case of rounding errors
 }
 
-
 void build_sampler(Sampler* sampler, float temperature, float topp, unsigned long long rng_seed) {
     sampler->temperature = temperature;
     sampler->topp = topp;
     sampler->rng_state = rng_seed;
     // buffer only used with nucleus sampling; may not need but it's ~small
-    sampler->probidx = (uint16_t*) malloc(transformer.config.vocab_size * sizeof(uint16_t));
+    sampler->probidx = malloc(transformer.config.vocab_size * sizeof(uint16_t));
 }
 
 void free_sampler(Sampler* sampler) {
@@ -688,13 +684,15 @@ int sample(Sampler* sampler) {
         for (int q=0; q<transformer.config.vocab_size; q++) { transformer.state.logits[q] /= sampler->temperature; }
         // apply softmax to the logits to get the probabilities for next token
         softmax(transformer.state.logits, transformer.config.vocab_size);
+        // flip a (float) coin (this is our source of entropy for sampling)
+        float coin = random_f32(&sampler->rng_state);
         // we sample from this distribution to get the next token
         if (sampler->topp <= 0 || sampler->topp >= 1) {
             // simply sample from the predicted probability distribution
-            next = sample_mult(sampler);
+            next = sample_mult(sampler, coin);
        } else {
             // top-p (nucleus) sampling, clamping the least likely tokens to zero
-            next = sample_topp(sampler);
+            next = sample_topp(sampler, coin);
         }
     }
     return next;
