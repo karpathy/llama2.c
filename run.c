@@ -698,7 +698,7 @@ long time_in_ms() {
 // ----------------------------------------------------------------------------
 // generation loop
 
-void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
+void generate(Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
     // encode the (string) prompt into tokens sequence, if any is given
     int *prompt_tokens = NULL; // the sequence of prompt tokens
     int num_prompt_tokens = 0; // the total number of prompt tokens
@@ -715,7 +715,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
-        forward(transformer, token, pos);
+        forward(&transformer, token, pos);
 
         // advance the state state machine
         if (pos < num_prompt_tokens) {
@@ -812,7 +812,7 @@ int main(int argc, char *argv[]) {
     Sampler sampler = {.temperature = temperature, .topp = topp, .rng_state = rng_seed};
 
     // run!
-    generate(&transformer, &tokenizer, &sampler, prompt, steps);
+    generate(&tokenizer, &sampler, prompt, steps);
 
     // memory and file handles cleanup
     free_tokenizer(&tokenizer);
