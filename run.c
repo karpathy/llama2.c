@@ -7,6 +7,7 @@
 #include <math.h>
 #include <string.h>
 #include <fcntl.h>
+#include <stdint.h>
 #if defined _WIN32
     #include "win.h"
 #else
@@ -73,6 +74,7 @@ typedef struct {
     float* data; // memory mapped data pointer
     ssize_t file_size; // size of the checkpoint file in bytes
 } Transformer;
+Transformer transformer;
 
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
@@ -197,8 +199,11 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     }
 }
 
-void softmax(float* x, int size) {
+void softmax() {
     // find max value (for numerical stability)
+    uint16_t size = transformer.config.vocab_size;
+    float *x = transformer.state.logits;
+
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
         if (x[i] > max_val) {
@@ -569,25 +574,29 @@ float random_f32() { // random float32 in [0,1)
     return (random_u32() >> 8) / 16777216.0f;
 }
 
-int sample_argmax(float* probabilities, int n) {
+int sample_argmax() {
     // return the index that has the highest probability
+    const float *probs = transformer.state.logits;
+    const uint16_t n = transformer.config.vocab_size;
     int max_i = 0;
-    float max_p = probabilities[0];
+    float max_p = probs[0];
     for (int i = 1; i < n; i++) {
-        if (probabilities[i] > max_p) {
+        if (probs[i] > max_p) {
             max_i = i;
-            max_p = probabilities[i];
+            max_p = probs[i];
         }
     }
     return max_i;
 }
 
-int sample_mult(float* probabilities, int n) {
+int sample_mult() {
     // sample index from probabilities (they must sum to 1!)
+    uint16_t n = transformer.config.vocab_size;
+    const float *probs = transformer.state.logits;
     float r = random_f32();
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
-        cdf += probabilities[i];
+        cdf += probs[i];
         if (r < cdf) {
             return i;
         }
@@ -596,37 +605,42 @@ int sample_mult(float* probabilities, int n) {
 }
 
 int compare(const void* a, const void* b) {
-    ProbIndex* a_ = (ProbIndex*) a;
-    ProbIndex* b_ = (ProbIndex*) b;
-    if (a_->prob > b_->prob) return -1;
-    if (a_->prob < b_->prob) return 1;
+    uint16_t a_ = *(uint16_t*) a;
+    uint16_t b_ = *(uint16_t*) b;
+    float *probs = transformer.state.logits;
+
+    if (probs[a_]  > probs[b_]) return -1;
+    if (probs[a_]  < probs[b_]) return 1;
     return 0;
 }
 
-int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
+int sample_topp(float topp, uint16_t* probidx) {
     // top-p sampling (or "nucleus sampling") samples from the smallest set of
     // tokens that exceed probability topp. This way we never sample tokens that
     // have very low probabilities and are less likely to go "off the rails".
 
+    uint16_t n = transformer.config.vocab_size;
+    float *probs = transformer.state.logits;
     int n0 = 0;
     // quicksort indices in descending order of probabilities
     // values smaller than (1 - topp) / (n - 1) cannot be part of the result
     // so for efficiency we crop these out as candidates before sorting
     const float cutoff = (1.0f - topp) / (n - 1);
     for (int i = 0; i < n; i++) {
-        if (probabilities[i] >= cutoff) {
-            probindex[n0].index = i;
-            probindex[n0].prob = probabilities[i];
+        if (probs[i] >= cutoff) {
+            probidx[n0] = i;
+            // probidx[n0].index = i;
+            // probidx[n0].prob = probs[i];
             n0++;
         }
     }
-    qsort(probindex, n0, sizeof(ProbIndex), compare);
+    qsort(probidx, n0, sizeof(uint16_t), compare);
 
     // truncate the list where cumulative probability exceeds topp
     float cumulative_prob = 0.0f;
     int last_idx = n0 - 1; // in case of rounding errors consider all elements
     for (int i = 0; i < n0; i++) {
-        cumulative_prob += probindex[i].prob;
+        cumulative_prob += probs[probidx[i]];
         if (cumulative_prob > topp) {
             last_idx = i;
             break; // we've exceeded topp by including last_idx
@@ -637,12 +651,12 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     float r = random_f32() * cumulative_prob;
     float cdf = 0.0f;
     for (int i = 0; i <= last_idx; i++) {
-        cdf += probindex[i].prob;
+        cdf += probs[probidx[i]];
         if (r < cdf) {
-            return probindex[i].index;
+            return probs[probidx[i]];
         }
     }
-    return probindex[last_idx].index; // in case of rounding errors
+    return probidx[last_idx]; // in case of rounding errors
 }
 
 void build_sampler(Sampler* sampler, int vocab_size) {
@@ -655,24 +669,25 @@ void free_sampler(Sampler* sampler) {
     free(sampler->probindex);
 }
 
-int sample(Sampler* sampler, float* logits, float temperature, float topp) {
+int sample(uint16_t* probidx, float temperature, float topp) {
     // sample the token given the logits and some hyperparameters
     int next;
+    const uint16_t vocab_size = transformer.config.vocab_size;
     if (temperature == 0.0f) {
         // greedy argmax sampling: take the token with the highest probability
-        next = sample_argmax(logits, sampler->vocab_size);
+        next = sample_argmax();
     } else {
         // apply the temperature to the logits
-        for (int q=0; q<sampler->vocab_size; q++) { logits[q] /= temperature; }
+        for (int q=0; q<vocab_size; q++) { transformer.state.logits[q] /= temperature; }
         // apply softmax to the logits to get the probabilities for next token
-        softmax(logits, sampler->vocab_size);
+        softmax();
         // we sample from this distribution to get the next token
         if (topp <= 0 || topp >= 1) {
             // simply sample from the predicted probability distribution
-            next = sample_mult(logits, sampler->vocab_size);
+            next = sample_mult();
         } else {
             // top-p (nucleus) sampling, clamping the least likely tokens to zero
-            next = sample_topp(logits, sampler->vocab_size, topp, sampler->probindex);
+            next = sample_topp(topp, probidx);
         }
     }
     return next;
@@ -739,7 +754,6 @@ int main(int argc, char *argv[]) {
     if (steps <= 0) steps = 0;
 
     // build the Transformer via the model .bin file
-    Transformer transformer;
     build_transformer(&transformer, checkpoint_path);
 
     // build the Tokenizer via the tokenizer .bin file
@@ -747,8 +761,9 @@ int main(int argc, char *argv[]) {
     build_tokenizer(&tokenizer, tokenizer_path, transformer.config.vocab_size);
 
     // build the Sampler
-    Sampler sampler;
-    build_sampler(&sampler, transformer.config.vocab_size);
+    // Sampler sampler;
+    // build_sampler(&sampler, transformer.config.vocab_size);
+    uint16_t *probidx = (uint16_t*) malloc(transformer.config.vocab_size * sizeof(uint16_t));
 
     // encode the (string) prompt into tokens sequence, if any is given
     int *prompt_tokens = NULL; // the sequence of prompt tokens
@@ -766,7 +781,7 @@ int main(int argc, char *argv[]) {
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
-        float* logits = forward(&transformer, token, pos);
+        forward(&transformer, token, pos);
 
         // advance the state state machine
         if (pos < num_prompt_tokens) {
@@ -774,7 +789,7 @@ int main(int argc, char *argv[]) {
             next = prompt_tokens[pos];
         } else {
             // otherwise sample the next token from the logits
-            next = sample(&sampler, logits, temperature, topp);
+            next = sample(probidx, temperature, topp);
         }
         pos++;
 
@@ -800,7 +815,8 @@ int main(int argc, char *argv[]) {
 
     // memory and file handles cleanup
     if (prompt_tokens != NULL) { free(prompt_tokens); }
-    free_sampler(&sampler);
+    // free_sampler(&sampler);
+    free(probidx);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
     return 0;
