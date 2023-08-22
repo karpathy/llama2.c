@@ -736,11 +736,12 @@ int main(int argc, char *argv[]) {
     if (rng_seed <= 0) rng_seed = (unsigned int)time(NULL);
     if (temperature < 0.0) temperature = 0.0;
     if (topp < 0.0 || 1.0 < topp) topp = 0.9;
-    if (steps <= 0) steps = 0;
+    if (steps < 0) steps = 0;
 
     // build the Transformer via the model .bin file
     Transformer transformer;
     build_transformer(&transformer, checkpoint_path);
+    if (steps == 0) steps = transformer.config.seq_len; // ovrerride to ~max length
 
     // build the Tokenizer via the tokenizer .bin file
     Tokenizer tokenizer;
