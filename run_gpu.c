@@ -1077,7 +1077,7 @@ void free_gpu_program(GPUProgram* prog) {
     glDeleteProgram(prog->shader_copyBuffer);
 }
 
-void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, int outsize, int numSeq){
+void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, int outsize, int numSeq) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, inBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, outBuffer);
     glUseProgram(kernel);
@@ -1091,6 +1091,60 @@ void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, i
     glDispatchCompute(outsize, numSeq, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
+}
+
+GLuint reduce_iteration(GLuint kernel_step, GLuint data, GLuint cache_1, int insize, int numSeq, GLuint* otherBuffer, GLuint* outputAt) {
+    int currentStepSize = 0;
+    int nextStepSize = insize;
+
+    GLuint currentBuffer = cache_1;
+    GLuint nextBuffer = data;
+    GLuint tmp;
+    
+    while (nextStepSize != 1) {
+        //swap current and next
+        tmp = currentBuffer;
+        currentBuffer = nextBuffer;
+        nextBuffer = tmp;
+
+        currentStepSize = nextStepSize;
+        nextStepSize = currentStepSize / 2;
+        if (currentStepSize % 2 == 1) {
+            nextStepSize += 1;
+        }
+
+        if (nextStepSize==1 && outputAt!=NULL){
+            nextBuffer = *outputAt;
+        }
+        reduce_step(kernel_step, currentBuffer, currentStepSize, nextBuffer, nextStepSize, numSeq);
+    }
+    if (otherBuffer!=NULL){
+        *otherBuffer = currentBuffer;
+    }
+    return nextBuffer;
+}
+
+GLuint reduce_iteration_input(GLuint kernel_step, GLuint data, GLuint cache_1, GLuint cache_2, int insize, int numSeq, GLuint* otherBuffer, GLuint* outputAt) {
+    int currentStepSize = insize;
+    int nextStepSize = currentStepSize / 2;
+    if (currentStepSize % 2 == 1) {
+            nextStepSize += 1;
+    }
+
+    if (nextStepSize==1){
+        GLuint outBuffer = cache_1;
+        if (outputAt!=NULL){
+            outBuffer = *outputAt;
+        }
+        reduce_step(kernel_step, data, currentStepSize, outBuffer, nextStepSize, size_y);
+        if (otherBuffer!=NULL){
+            *otherBuffer = cache_2;
+        }
+        return outBuffer;
+    }else{
+        reduce_step(kernel_step, data, currentStepSize, cache_1, nextStepSize, size_y);
+        return reduce_iteration(kernel_step, cache_1, cache_2, insize, numSeq, otherBuffer);
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -1127,20 +1181,8 @@ void rmsnorm(GPUProgram* prog, RunState* state, GLuint o, GLuint x, GLuint weigh
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 
-    while (nextStepSize != 1) {
-        //swap current and next
-        tmp = currentBuffer;
-        currentBuffer = nextBuffer;
-        nextBuffer = tmp;
-
-        currentStepSize = nextStepSize;
-        nextStepSize = currentStepSize / 2;
-        if (currentStepSize % 2 == 1) {
-            nextStepSize += 1;
-        }
-
-        reduce_step(prog->shader_sum, currentBuffer, currentStepSize, nextBuffer, nextStepSize, 1);
-    }
+    nextBuffer = reduce_iteration(prog->shader_sum, nextBuffer, currentBuffer, nextStepSize, 1, &currentBuffer, NULL);
+    
     if (o == x) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, nextBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, weight);
@@ -1176,37 +1218,12 @@ void rmsnorm(GPUProgram* prog, RunState* state, GLuint o, GLuint x, GLuint weigh
 
 void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y) {
     // find max value (for numerical stability)
-    int currentStepSize = 0;
-    int nextStepSize = size_x;
-
     GLuint currentBuffer = state->mulBuffer_1;
-    GLuint nextBuffer = x;
+    GLuint nextBuffer = state->mulBuffer_2;
     GLuint resBuffer_max;
     GLuint resBuffer_sum;
-    GLuint tmp;
-    int insize, shape0;
-    int first = 1;
-    do {
-        //swap current and next
-        tmp = currentBuffer;
-        currentBuffer = nextBuffer;
-        nextBuffer = tmp;
-
-        currentStepSize = nextStepSize;
-        nextStepSize = currentStepSize / 2;
-        if (currentStepSize % 2 == 1) {
-            nextStepSize += 1;
-        }
-
-        reduce_step(prog->shader_max, currentBuffer, currentStepSize, nextBuffer, nextStepSize, size_y);
-
-        if (first) {
-            currentBuffer = state->mulBuffer_2;
-            first = 0;
-        }
-
-    } while (nextStepSize != 1);
-    resBuffer_max = nextBuffer;
+    
+    resBuffer_max = reduce_iteration_input(prog->shader_max, x, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, &currentBuffer, NULL);
 
     // exp
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
@@ -1218,34 +1235,7 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     GPU_CHECK();
 
     // sum
-    currentStepSize = 0;
-    nextStepSize = size_x;
-
-    currentBuffer = state->mulBuffer_3;
-    nextBuffer = x;
-
-    first = 1;
-    do {
-        //swap current and next
-        tmp = currentBuffer;
-        currentBuffer = nextBuffer;
-        nextBuffer = tmp;
-
-        currentStepSize = nextStepSize;
-        nextStepSize = currentStepSize / 2;
-        if (currentStepSize % 2 == 1) {
-            nextStepSize += 1;
-        }
-
-        reduce_step(prog->shader_sum, currentBuffer, currentStepSize, nextBuffer, nextStepSize, size_y);
-
-        if (first) {
-            currentBuffer = state->mulBuffer_4;
-            first = 0;
-        }
-
-    } while (nextStepSize != 1);
-    resBuffer_sum = nextBuffer;
+    resBuffer_sum = reduce_iteration_input(prog->shader_sum, x, state->mulBuffer_3, state->mulBuffer_4, size_x, size_y, &currentBuffer, NULL);
 
     // normalize
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, resBuffer_sum);
@@ -1253,7 +1243,7 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, x);
     glUseProgram(prog->shader_softmax_normalize);
 
-    shape0 = glGetUniformLocation(prog->shader_softmax_normalize, "shape0");
+    GLuint shape0 = glGetUniformLocation(prog->shader_softmax_normalize, "shape0");
     glUniform1i(shape0, size_x);
 
     glDispatchCompute(size_x, size_y, 1);
@@ -1295,41 +1285,8 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
 }
 void transformer_sum(GPUProgram* prog, RunState* state, GLuint outMat, GLuint inMat, int size_x, int size_y) {
     //prog, s, s->xb, s->mulBuffer_4, pos + 1, head_size, p->n_heads
-    int currentStepSize = 0;
-    int nextStepSize = size_x;
-
-    GLuint currentBuffer = state->mulBuffer_1;
-    GLuint nextBuffer = inMat;
-    GLuint resBuffer_max;
-    GLuint resBuffer_sum;
-    GLuint tmp;
-
-    int first = 1;
-    do {
-        //swap current and next
-        tmp = currentBuffer;
-        currentBuffer = nextBuffer;
-        nextBuffer = tmp;
-
-        currentStepSize = nextStepSize;
-        nextStepSize = currentStepSize / 2;
-        if (currentStepSize % 2 == 1) {
-            nextStepSize += 1;
-        }
-
-        if (nextStepSize == 1) {
-            nextBuffer = outMat;
-        }
-
-        reduce_step(prog->shader_sum, currentBuffer, currentStepSize, nextBuffer, nextStepSize, size_y);
-
-        if (first) {
-            currentBuffer = state->mulBuffer_2;
-            first = 0;
-        }
-
-    } while (nextStepSize != 1);
-    resBuffer_sum = nextBuffer;
+    GLuint res = outMat;
+    reduce_iteration_input(prog->shader_sum, inMat, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, NULL, &res);
 }
 
 void matmul(GPUProgram* prog, RunState* state, GLuint xout, GLuint x, GLuint w, int n, int d, int x_offset, int w_offset) {
