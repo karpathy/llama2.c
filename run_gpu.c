@@ -1077,6 +1077,22 @@ void free_gpu_program(GPUProgram* prog) {
     glDeleteProgram(prog->shader_copyBuffer);
 }
 
+void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, int outsize, int numSeq){
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, inBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, outBuffer);
+    glUseProgram(kernel);
+
+    int insize_gpu = glGetUniformLocation(prog->shader_sum, "insize");
+    glUniform1i(insize_gpu, insize);
+
+    int shape0_gpu = glGetUniformLocation(prog->shader_sum, "shape0");
+    glUniform1i(shape0_gpu, outsize);
+
+    glDispatchCompute(outsize, numSeq, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    GPU_CHECK();
+}
+
 // ----------------------------------------------------------------------------
 // neural net blocks
 
@@ -1123,19 +1139,7 @@ void rmsnorm(GPUProgram* prog, RunState* state, GLuint o, GLuint x, GLuint weigh
             nextStepSize += 1;
         }
 
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
-        glUseProgram(prog->shader_sum);
-
-        int insize = glGetUniformLocation(prog->shader_sum, "insize");
-        glUniform1i(insize, currentStepSize);
-
-        int shape0 = glGetUniformLocation(prog->shader_sum, "shape0");
-        glUniform1i(shape0, nextStepSize);
-
-        glDispatchCompute(nextStepSize, 1, 1);
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-        GPU_CHECK();
+        reduce_step(prog->shader_sum, currentBuffer, currentStepSize, nextBuffer, nextStepSize, 1);
     }
     if (o == x) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, nextBuffer);
@@ -1194,19 +1198,7 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
             nextStepSize += 1;
         }
 
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
-        glUseProgram(prog->shader_max);
-
-        insize = glGetUniformLocation(prog->shader_max, "insize");
-        glUniform1i(insize, currentStepSize);
-
-        shape0 = glGetUniformLocation(prog->shader_max, "shape0");
-        glUniform1i(shape0, nextStepSize);
-
-        glDispatchCompute(nextStepSize, size_y, 1);
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-        GPU_CHECK();
+        reduce_step(prog->shader_max, currentBuffer, currentStepSize, nextBuffer, nextStepSize, size_y);
 
         if (first) {
             currentBuffer = state->mulBuffer_2;
@@ -1245,19 +1237,7 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
             nextStepSize += 1;
         }
 
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
-        glUseProgram(prog->shader_sum);
-
-        insize = glGetUniformLocation(prog->shader_sum, "insize");
-        glUniform1i(insize, currentStepSize);
-
-        shape0 = glGetUniformLocation(prog->shader_sum, "shape0");
-        glUniform1i(shape0, nextStepSize);
-
-        glDispatchCompute(nextStepSize, size_y, 1);
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-        GPU_CHECK();
+        reduce_step(prog->shader_sum, currentBuffer, currentStepSize, nextBuffer, nextStepSize, size_y);
 
         if (first) {
             currentBuffer = state->mulBuffer_4;
@@ -1341,19 +1321,7 @@ void transformer_sum(GPUProgram* prog, RunState* state, GLuint outMat, GLuint in
             nextBuffer = outMat;
         }
 
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, currentBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
-        glUseProgram(prog->shader_sum);
-
-        int insize = glGetUniformLocation(prog->shader_sum, "insize");
-        glUniform1i(insize, currentStepSize);
-
-        int shape0 = glGetUniformLocation(prog->shader_sum, "shape0");
-        glUniform1i(shape0, nextStepSize);
-
-        glDispatchCompute(nextStepSize, size_y, 1);
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-        GPU_CHECK();
+        reduce_step(prog->shader_sum, currentBuffer, currentStepSize, nextBuffer, nextStepSize, size_y);
 
         if (first) {
             currentBuffer = state->mulBuffer_2;
