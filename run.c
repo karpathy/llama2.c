@@ -199,10 +199,8 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     }
 }
 
-void softmax() {
+void softmax(float* x, uint16_t size) {
     // find max value (for numerical stability)
-    const uint16_t size = transformer.config.vocab_size;
-    float *x = transformer.state.logits;
 
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
@@ -679,15 +677,15 @@ void free_sampler(Sampler* sampler) {
 uint16_t sample(Sampler* sampler) {
     // sample the token given the logits and some hyperparameters
     uint16_t next;
-    const uint16_t vocab_size = transformer.config.vocab_size;
+    // const uint16_t vocab_size = transformer.config.vocab_size;
     if (sampler->temperature == 0.0f) {
         // greedy argmax sampling: take the token with the highest probability
         next = sample_argmax();
     } else {
         // apply the temperature to the logits
-        for (int q=0; q<vocab_size; q++) { transformer.state.logits[q] /= sampler->temperature; }
+        for (int q=0; q<transformer.config.vocab_size; q++) { transformer.state.logits[q] /= sampler->temperature; }
         // apply softmax to the logits to get the probabilities for next token
-        softmax();
+        softmax(transformer.state.logits, transformer.config.vocab_size);
         // we sample from this distribution to get the next token
         if (sampler->topp <= 0 || sampler->topp >= 1) {
             // simply sample from the predicted probability distribution
