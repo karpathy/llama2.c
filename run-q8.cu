@@ -52,9 +52,6 @@ typedef struct {
     uint8_t* w3; // (layer, hidden_dim, dim)
     // final rmsnorm
     uint8_t* rms_final_weight; // (dim,)
-    // freq_cis for RoPE relatively positional embeddings
-    half* freq_cis_real; // (seq_len, head_size/2)
-    half* freq_cis_imag; // (seq_len, head_size/2)
     // (optional) classifier weights for the logits, on the last layer
     uint8_t* wcls;
 } TransformerWeights;
@@ -264,7 +261,7 @@ __global__ void vec_mat_kernel(half* output, const half* __restrict__ input, con
 }
 
 // Each block processes a single head
-__global__ void RoPERotation_kernel(half* sq, half* sk, half* f_real, half* f_imag, int num_heads, int num_kv_heads, int head_size) {
+__global__ void RoPERotation_kernel(half* sq, half* sk, int num_heads, int num_kv_heads, int head_size) {
     int h = blockIdx.x;
 
     half* q = sq + h * head_size;
@@ -273,14 +270,19 @@ __global__ void RoPERotation_kernel(half* sq, half* sk, half* f_real, half* f_im
     int i = threadIdx.x * 2;
     int j = threadIdx.x;
 
-    float fcr = f_real[j];
-    float fci = f_imag[j];
+    int head_dim = i % head_size;
+    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+    float val = pos * freq;
+    float fcr = cosf(val);
+    float fci = sinf(val);
 
+    // rotate q
     float q0 = q[i];
     float q1 = q[i + 1];
     q[i] = q0 * fcr - q1 * fci;
     q[i + 1] = q0 * fci + q1 * fcr;
 
+    // rotate k
     if (h < num_kv_heads) {
         float k0 = k[i];
         float k1 = k[i + 1];
@@ -489,9 +491,6 @@ void malloc_weights(TransformerWeights* w, Config* p, int shared_weights) {
     cudaMalloc((void**)&w->w3, quant_size(p->n_layers, p->dim * p->hidden_dim));
     cudaMalloc((void**)&w->rms_final_weight, quant_size(1, p->dim));
 
-    cudaMalloc((void**)&w->freq_cis_real, p->seq_len * head_size / 2 * sizeof(half));
-    cudaMalloc((void**)&w->freq_cis_imag, p->seq_len * head_size / 2 * sizeof(half));
-
     if (shared_weights)
         w->wcls = w->token_embedding_table;
     else
@@ -500,7 +499,7 @@ void malloc_weights(TransformerWeights* w, Config* p, int shared_weights) {
     // ensure all mallocs went fine
     if (!w->token_embedding_table || !w->rms_att_weight || !w->rms_ffn_weight
         || !w->wq || !w->wk || !w->wv || !w->wo || !w->w1 || !w->w2 || !w->w3 ||
-        !w->rms_final_weight || !w->freq_cis_real || !w->freq_cis_imag || !w->wcls) {
+        !w->rms_final_weight || !w->wcls) {
         printf("malloc failed!\n");
         exit(1);
     }
@@ -518,8 +517,6 @@ void free_weights(TransformerWeights* w, int shared_weights) {
     cudaFree(w->w2);
     cudaFree(w->w3);
     cudaFree(w->rms_final_weight);
-    cudaFree(w->freq_cis_real);
-    cudaFree(w->freq_cis_imag);
     if (!shared_weights)
         cudaFree(w->wcls);
 }
@@ -535,15 +532,6 @@ int load_q8_weights(void *w, int size, FILE* f, void *scratchCPU) {
     return 0;
 }
 
-int load_weights(void *w, int elements, FILE* f, void *scratchCPU, void *scratchGPU) {
-    int count = fread(scratchCPU, sizeof(float), elements, f);
-    if (count != elements) return 1;
-    // copy and convert fp32->fp16
-    cudaMemcpyAsync(scratchGPU, scratchCPU, sizeof(float) * elements, cudaMemcpyHostToDevice);
-    convert_fp32_to_fp16 <<< divUp(elements, 1024), 1024 >>> ((half*)w, (float*)scratchGPU, elements);
-    return 0;
-}
-
 // ----------------------------------------------------------------------------
 // initialization: read from checkpoint
 
@@ -553,8 +541,6 @@ int checkpoint_init_weights(TransformerWeights* w, Config* p, FILE* f, int share
     scratch_size = std::max((size_t)p->vocab_size * p->dim, scratch_size);
     scratch_size *= sizeof(float);
     void* scratchCPU = malloc(scratch_size);
-    void* scratchGPU = nullptr;
-    cudaMalloc(&scratchGPU, scratch_size);
 
     if (load_q8_weights(w->token_embedding_table, quant_size(1, p->vocab_size * p->dim), f, scratchCPU)) return 1;
     if (load_q8_weights(w->rms_att_weight, quant_size(p->n_layers, p->dim), f, scratchCPU)) return 1;
@@ -568,13 +554,9 @@ int checkpoint_init_weights(TransformerWeights* w, Config* p, FILE* f, int share
     if (load_q8_weights(w->w3, quant_size(p->n_layers, p->dim * p->hidden_dim), f, scratchCPU)) return 1;
     if (load_q8_weights(w->rms_final_weight, quant_size(1, p->dim), f, scratchCPU)) return 1;
 
-    if (load_weights(w->freq_cis_real, p->seq_len * head_size / 2, f, scratchCPU, scratchGPU)) return 1;
-    if (load_weights(w->freq_cis_imag, p->seq_len * head_size / 2, f, scratchCPU, scratchGPU)) return 1;
-
     if (!shared_weights)
         if (load_q8_weights(w->wcls, quant_size(1, p->vocab_size * p->dim), f, scratchCPU)) return 1;
 
-    cudaFree(scratchGPU);
     free(scratchCPU);
     return 0;
 }
@@ -646,10 +628,6 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     // copy the token embedding into x
     dequantize_token(x, w->token_embedding_table, token, dim);
 
-    // pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    half* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
-    half* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
-
     // forward all the layers
     for (int l = 0; l < p->n_layers; l++) {
 
@@ -666,9 +644,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(key_cache_row, s->xb, w->wk, l, dim, kv_dim);
         matmul(value_cache_row, s->xb, w->wv, l, dim, kv_dim);
 
-        // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
+        // RoPE relative positional encoding: complex-valued rotate q and k in each head
         // also save the output (key, value) at this time step (pos) to our kv cache
-        RoPERotation(s->q, key_cache_row, freq_cis_real_row, freq_cis_imag_row, p->n_heads, p->n_kv_heads, head_size);
+        RoPERotation(s->q, key_cache_row, p->n_heads, p->n_kv_heads, head_size);
 
         // apply MHA using the query and the key-value cache
         MultiHeadAttention(s->xb, s->q, s->key_cache + loff, s->value_cache + loff, s->att, p->n_heads, head_size, pos+1);
