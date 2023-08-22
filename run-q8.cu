@@ -261,7 +261,7 @@ __global__ void vec_mat_kernel(half* output, const half* __restrict__ input, con
 }
 
 // Each block processes a single head
-__global__ void RoPERotation_kernel(half* sq, half* sk, int num_heads, int num_kv_heads, int head_size) {
+__global__ void RoPERotation_kernel(half* sq, half* sk, int pos, int num_heads, int num_kv_heads, int head_size) {
     int h = blockIdx.x;
 
     half* q = sq + h * head_size;
@@ -584,8 +584,8 @@ void matmul(half* xout, half* x, uint8_t *wptr, int l, int n, int d, int batch =
     mat_vec_q8_kernel <<< grid_dim, block_dim >>> (xout, x, q8, n, d, serialElements, x_stride, w_stride, op_stride, w_row_stride, alpha);
 }
 
-void RoPERotation(half *q, half *k, half *f_real, half *f_imag, int num_heads, int num_kv_heads, int head_size) {
-    RoPERotation_kernel <<< num_heads, head_size / 2 >>> (q, k, f_real, f_imag, num_heads, num_kv_heads, head_size);
+void RoPERotation(half *q, half *k, int pos, int num_heads, int num_kv_heads, int head_size) {
+    RoPERotation_kernel <<< num_heads, head_size / 2 >>> (q, k, pos, num_heads, num_kv_heads, head_size);
 }
 
 void MultiHeadAttention(half *output, half *q, half *key_cache, half *value_cache, half *att, int num_heads, int head_size, int seq_len) {
@@ -646,7 +646,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         // also save the output (key, value) at this time step (pos) to our kv cache
-        RoPERotation(s->q, key_cache_row, p->n_heads, p->n_kv_heads, head_size);
+        RoPERotation(s->q, key_cache_row, pos, p->n_heads, p->n_kv_heads, head_size);
 
         // apply MHA using the query and the key-value cache
         MultiHeadAttention(s->xb, s->q, s->key_cache + loff, s->value_cache + loff, s->att, p->n_heads, head_size, pos+1);
