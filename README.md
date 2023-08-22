@@ -243,6 +243,43 @@ $ pytest
 
 This will currently invoke two tests inside `test_all.py`, which forward the model in both C and Python for 200 steps and check the output against a known good expected output. The tests currently run in only a few seconds, but will have to download and cache the stories260K models in a temporary `test` directory (only ~2MB download).
 
+## Chat-UI
+
+You can use the Chat UI to interact with the model on HTML. The Chat Server is made by using libwebsocket.
+
+### libwebsockets Installation Guide
+
+This guide provides step-by-step instructions for installing the libwebsockets library on different operating systems: Mac OS, and Ubuntu.
+
+#### Mac OS
+
+```bash
+$ brew install libwebsockets 
+```
+#### Ubuntu 
+
+```bash
+$ git clone https://github.com/warmcat/libwebsockets.git
+$ cd libwebsockets
+$ mkdir build
+$ cd build
+$ cmake ..
+$ make
+$ sudo make install
+```
+After Installation you can compile the `chat_server.c` by using command
+```bash
+$ gcc -O3 -o chat_run chat_server.c -lm -lwebsockets
+```
+and Finally running the the server. 
+```bash
+$ ./chat_run model.bin
+```
+
+Now you can open the `chat.html` in your web browser and start playing interacting with the model.
+
+I am still making the history and past conversation so that it can have context to reply from making it truly supported for Chatting. Also making parameters updating prompts to setup different arguments from web.
+
 ## ack
 
 I trained the llama2.c storyteller models on a 4X A100 40GB box graciously provided by the excellent [Lambda labs](https://lambdalabs.com/service/gpu-cloud), thank you.

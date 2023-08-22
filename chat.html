@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end; /* Align content at the bottom */
+            height: 100vh;
+            background-color: #f2f2f2;
+        }
+
+        #chat {
+            width: 60%;
+            max-height: 85vh;
+            height: 90vh;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 10px;
+            background-color: #fff;
+            margin-bottom: 20px;
+            border-radius: 10px;
+        }
+
+        #message-container {
+            width: 60%;
+            padding: 10px;
+            background-color: #dcdcdc;
+            margin-bottom: 10px;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column; /* Changed to column */
+            max-height: 300px;
+        }
+
+        #message {
+            flex: 1;
+            font-size: 16px;
+            padding: 10px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            background-color: transparent;
+            overflow-y: auto;
+            line-height: 0.5;
+            resize: none;
+            max-height: 400px;
+            height: 400px;
+            clear: both; /* Clear floating elements */
+            display: inline-block; 
+            
+        }
+
+        #message:focus {
+            outline: none; /* Remove the default focus outline */
+        }
+
+        #send-button {
+            display: flex;
+            justify-content: flex-end; /* Align button to the right */
+        }
+
+        #send-button button {
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 10px 15px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        #send-button button:hover {
+            background-color: #0056b3;
+        }
+
+        .your-message {
+            background-color: rgb(217, 228, 255);
+            padding: 10px;
+            border-radius: 10px;
+            color: black;
+            max-width: 50vw;
+            float: right; /* Float to the right for Your messages */
+            clear: both; 
+            text-align: right;
+        }
+
+        .server-message {
+            background-color: rgba(128, 128, 128, 0.24);
+            padding: 10px;
+            border-radius: 10px;
+            color: black;
+            max-width: 50vw;
+            float: left; /* Float to the left for Your messages */
+            clear: both;
+        }
+
+        .ellipsis {
+            position: absolute;
+            top: 50%; /* Adjust vertically */
+            right: 100%; /* Position before the text */
+            transform: translate(0, -50%); /* Center vertically */
+            padding-right: 4px;
+            color: grey; /* Ellipsis color */
+        }
+    </style>
+</head>
+<body>
+    <h1>LLama2.c Chat UI</h1>
+    <div id="chat"></div>
+    <div id="message-container">
+        <textarea id="message" placeholder="Type a message"></textarea>
+        <div id="send-button">
+            <button onclick="sendMessage()">Send &#10148;</button>
+        </div>
+    </div>
+
+    <script>
+        
+        const socket = new WebSocket("ws://localhost:9002");
+        let currentChat = [];
+        let chatcount = 0;
+        let renderChatTimeout;
+        let makeChat = true;
+
+        socket.onopen = function(event) {
+            console.log("WebSocket connection opened");
+        };
+
+        socket.onmessage = function(event) {
+            try {
+                const response = JSON.parse(event.data);
+                if (response.end === '1') {
+                    currentChat[chatcount]['message'] = currentChat[chatcount]['message'].slice(0, -4);
+                    renderChat();
+                    currentChat[chatcount]['end'] = '1';
+                    chatcount += 1;
+                    makeChat = true;
+                } 
+                else {
+                    if(currentChat[chatcount] == undefined){
+                        currentChat.push({ sender: "Server", message: response.response + ` ...`,  end:"0"});
+                    }
+                    else{
+                        currentChat[chatcount]['message'] = currentChat[chatcount]['message'].slice(0, -4) + response.response + ` ...`;
+                        
+                    }
+                    renderChat();
+                }
+            }
+            catch(error){
+                currentChat[chatcount]['message'] += '\n';
+            }
+            
+        };
+
+        function sendMessage() {
+            const messageInput = document.getElementById("message");
+            const message = messageInput.value;
+            if(makeChat){
+                const jsonMessage = JSON.stringify({ message: message });
+                socket.send(jsonMessage);
+                currentChat.push({ sender: "You", message: message });
+                messageInput.value = "";
+                chatcount += 1;
+                makeChat = false;
+            }
+            
+            renderChat();
+        }
+
+        function renderChat() {
+            clearTimeout(renderChatTimeout);
+            const chatDiv = document.getElementById("chat");
+            chatDiv.innerHTML = "";
+            currentChat.forEach(chat => {
+                const messageElement = document.createElement("p");
+                messageElement.textContent = `${chat.message}`;
+                
+                if (chat.sender === "You") {
+                    messageElement.className = "your-message"; // Add a CSS class for Your messages
+                } else if (chat.sender === "Server") {
+                    messageElement.className = "server-message"; // Add a CSS class for Server messages
+                }
+                
+                chatDiv.appendChild(messageElement);
+            });
+        }
+
+        const messageTextarea = document.getElementById("message");
+        
+         
+
+        messageTextarea.addEventListener("input", function() {
+            this.style.height = "auto"; // Reset the height to auto to recalculate
+            this.style.height = (this.scrollHeight.toString) + "px"; // Set the new height
+            this.style.maxHeight = "1000px";
+
+            
+            const messageCont = document.getElementById("message-container");
+            messageCont.style.height = ((40+this.scrollHeight).toString()) + "px";
+        });
+
+        messageTextarea.addEventListener("keydown", function(event) {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+                const messageCont = document.getElementById("message-container");
+                messageCont.style.height = "80px";
+            } else if (event.key === "Enter" && event.shiftKey) {
+                this.value += "\n";
+            }
+        });
+        
+    </script>
+</body>
+</html>
