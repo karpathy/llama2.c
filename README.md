@@ -316,11 +316,12 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## unsorted todos
 
-- migrate the code to work with the new versions export and deprecate the original .bin files
-- support Llama 2 7B Chat models and tune run.c to Chat UI/UX
+- support Llama 2 7B Chat models with a Chat UI/UX in run.c, very similar to llama.cpp
+- ability to calculate perplexity in run.c, exactly as done in llama.cpp
+- add support in run.c of reading version 1+ files from export, later deprecate "version 0"
+- runq.c (int8 quantization) add
+- run.cu (CUDA) investigate and merge
 - make it easier to add a new dataset with not too much pain
-- int8 quantization
-- llama2.cu investigate and merge
 - (LoRA) finetuning and export of Llama 2 models
 
 ## License
