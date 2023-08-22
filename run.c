@@ -558,10 +558,9 @@ typedef struct {
 } ProbIndex; // struct used when sorting probabilities during top-p sampling
 
 typedef struct {
-    uint16_t* probidx; // buffer used in top-p sampling
     float temperature;
     float topp;
-    unsigned long long rng_state;
+    uint64_t rng_state;
 } Sampler;
 
 int sample_argmax() {
@@ -597,7 +596,7 @@ int sample_mult(Sampler* sampler, float coin) {
 int compare(const void* a, const void* b) {
     uint16_t a_ = *(uint16_t*) a;
     uint16_t b_ = *(uint16_t*) b;
-    float *probs = transformer.state.logits;
+    const float *probs = transformer.state.logits;
 
     if (probs[a_]  > probs[b_]) return -1;
     if (probs[a_]  < probs[b_]) return 1;
@@ -612,7 +611,7 @@ uint16_t sample_topp(Sampler* sampler, float coin) {
 
     const uint16_t n = transformer.config.vocab_size;
     const float *probs = transformer.state.logits;
-    uint16_t* probidx = sampler->probidx;
+    uint16_t* probidx = malloc(n * sizeof(uint16_t));
     int n0 = 0;
     // quicksort indices in descending order of probabilities
     // values smaller than (1 - topp) / (n - 1) cannot be part of the result
@@ -640,35 +639,23 @@ uint16_t sample_topp(Sampler* sampler, float coin) {
     // sample from the truncated list
     float r = coin * cumulative_prob;
     float cdf = 0.0f;
-    for (int i = 0; i <= last_idx; i++) {
+    int i = 0;
+    for (; i <= last_idx && r > cdf; i++) {
         cdf += probs[probidx[i]];
-        if (r < cdf) {
-            return probidx[i];
-        }
     }
-    return probidx[last_idx]; // in case of rounding errors
+    uint16_t idx = probidx[i-1]; // in case of rounding errors, still correct
+    free(probidx);
+    return idx;
 }
 
-void build_sampler(Sampler* sampler, float temperature, float topp, unsigned long long rng_seed) {
-    sampler->temperature = temperature;
-    sampler->topp = topp;
-    sampler->rng_state = rng_seed;
-    // buffer only used with nucleus sampling; may not need but it's ~small
-    sampler->probidx = malloc(transformer.config.vocab_size * sizeof(uint16_t));
-}
-
-void free_sampler(Sampler* sampler) {
-    free(sampler->probidx);
-}
-
-unsigned int random_u32(unsigned long long *state) {
+unsigned int random_u32(uint64_t *state) {
     // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
     *state ^= *state >> 12;
     *state ^= *state << 25;
     *state ^= *state >> 27;
     return (*state * 0x2545F4914F6CDD1Dull) >> 32;
 }
-float random_f32(unsigned long long *state) { // random float32 in [0,1)
+float random_f32(uint64_t *state) { // random float32 in [0,1)
     return (random_u32(state) >> 8) / 16777216.0f;
 }
 
@@ -712,7 +699,6 @@ long time_in_ms() {
 // generation loop
 
 void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
-
     // encode the (string) prompt into tokens sequence, if any is given
     int *prompt_tokens = NULL; // the sequence of prompt tokens
     int num_prompt_tokens = 0; // the total number of prompt tokens
@@ -789,7 +775,7 @@ int main(int argc, char *argv[]) {
     float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
     int steps = 256;          // number of steps to run for
     char *prompt = NULL;      // prompt string
-    unsigned long long rng_seed = 0; // seed rng with time by default
+    uint64_t rng_seed = 0; // seed rng with time by default
 
     // poor man's C argparse so we can override the defaults above from the command line
     if (argc >= 2) { checkpoint_path = argv[1]; } else { error_usage(); }
@@ -823,14 +809,12 @@ int main(int argc, char *argv[]) {
     build_tokenizer(&tokenizer, tokenizer_path, transformer.config.vocab_size);
 
     // build the Sampler
-    Sampler sampler;
-    build_sampler(&sampler, temperature, topp, rng_seed);
+    Sampler sampler = {.temperature = temperature, .topp = topp, .rng_state = rng_seed};
 
     // run!
     generate(&transformer, &tokenizer, &sampler, prompt, steps);
 
     // memory and file handles cleanup
-    free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
     return 0;
