@@ -176,8 +176,8 @@ def legacy_export_half(model, filepath):
     # final rmsnorm
     serialize_half(out_file, model.norm.weight)
     # freqs_cis are no longer needed, let's skip them
-    # serialize_half(out_file, model.freqs_cos[:p.max_seq_len])
-    # serialize_half(out_file, model.freqs_sin[:p.max_seq_len])
+    serialize_half(out_file, model.freqs_cos[:p.max_seq_len])
+    serialize_half(out_file, model.freqs_sin[:p.max_seq_len])
 
     # final classifier weights
     if not shared_classifier:
