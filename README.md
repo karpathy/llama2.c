@@ -243,6 +243,14 @@ $ pytest
 
 This will currently invoke two tests inside `test_all.py`, which forward the model in both C and Python for 200 steps and check the output against a known good expected output. The tests currently run in only a few seconds, but will have to download and cache the stories260K models in a temporary `test` directory (only ~2MB download).
 
+There are also some tests in C, in the file [test.c](test.c). You can run these with `make testcc`, or to see more stuff printed:
+
+```
+make testcc VERBOSITY=1
+```
+
+Call for help: help add more tests.
+
 ## ack
 
 I trained the llama2.c storyteller models on a 4X A100 40GB box graciously provided by the excellent [Lambda labs](https://lambdalabs.com/service/gpu-cloud), thank you.
@@ -319,6 +327,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - support Llama 2 7B Chat models with a Chat UI/UX in run.c, very similar to llama.cpp
 - ability to calculate perplexity in run.c, exactly as done in llama.cpp
 - add support in run.c of reading version 1+ files from export, later deprecate "version 0"
+- add more tests inside [test.c](test.c) (call for help!)
 - runq.c (int8 quantization) add
 - run.cu (CUDA) investigate and merge
 - make it easier to add a new dataset with not too much pain
