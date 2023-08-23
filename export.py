@@ -37,7 +37,10 @@ def serialize(file, tensor, type):
         d = tensor.detach().cpu().view(-1).to(torch.float32).numpy()
         b = struct.pack(f'{len(d)}f', *d)
     elif type == 'fp16':
-        d = tensor.detach().cpu().view(-1).to(torch.half).numpy()
+        d = tensor.detach().cpu().view(-1).to(torch.float16).numpy()
+        b = struct.pack(f'{len(d)}e', *d)
+    elif dtype == 'bfloat16':
+        d = tensor.detach().cpu().view(-1).to(torch.bfloat16).numpy()
         b = struct.pack(f'{len(d)}e', *d)
     elif type == 'int8':
         d = tensor.detach().cpu().view(-1).numpy().astype(np.int8)
@@ -451,7 +454,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("filepath", type=str, help="the output filepath")
     parser.add_argument("--version", default=0, type=int, help="the version to export with")
-    parser.add_argument("--type", default='fp32', type=str, help="the data type to export to. fp32 or fp16")
+    parser.add_argument("--type", default='fp32', type=str, help="the data type to export to (fp32, fp16, bfloat16)")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--checkpoint", type=str, help="model checkpoint, .pt file")
     group.add_argument("--meta-llama", type=str, help="meta llama model path")
