@@ -69,6 +69,12 @@ def quantize_q80(w, group_size):
     maxerr = err.max().item()
     return int8val, scale, maxerr
 
+def serialize_half(file, tensor):
+    """ writes one fp16 tensor to file that is open in wb mode """
+    d = tensor.detach().cpu().view(-1).to(torch.half).numpy()
+    b = struct.pack(f'{len(d)}e', *d)
+    file.write(b)
+
 # -----------------------------------------------------------------------------
 # legacy
 
@@ -121,6 +127,61 @@ def legacy_export(model, filepath):
     # final classifier weights
     if not shared_classifier:
         serialize_fp32(out_file, model.output.weight)
+
+    # write to binary file
+    out_file.close()
+    print(f"wrote {filepath}")
+
+# -----------------------------------------------------------------------------
+def legacy_export_half(model, filepath):
+    """ Original export of llama2.c bin files, i.e. version v0 but with export as fp16 and no freq_cis """
+    out_file = open(filepath, 'wb')
+
+    # first write out the header
+    hidden_dim = model.layers[0].feed_forward.w1.weight.shape[0]
+    p = model.params
+    shared_classifier = torch.equal(model.tok_embeddings.weight, model.output.weight)
+    # legacy format uses negative/positive vocab size as a shared classifier flag
+    if not shared_classifier:
+        p.vocab_size = -p.vocab_size
+    n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
+    header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
+                                    n_kv_heads, p.vocab_size, p.max_seq_len)
+    out_file.write(header)
+
+    # next write out the embedding weights
+    serialize_half(out_file, model.tok_embeddings.weight)
+
+    # now all the layers
+    # attention weights
+    for layer in model.layers:
+        serialize_half(out_file, layer.attention_norm.weight)
+    for layer in model.layers:
+        serialize_half(out_file, layer.attention.wq.weight)
+    for layer in model.layers:
+        serialize_half(out_file, layer.attention.wk.weight)
+    for layer in model.layers:
+        serialize_half(out_file, layer.attention.wv.weight)
+    for layer in model.layers:
+        serialize_half(out_file, layer.attention.wo.weight)
+    # ffn weights
+    for layer in model.layers:
+        serialize_half(out_file, layer.ffn_norm.weight)
+    for layer in model.layers:
+        serialize_half(out_file, layer.feed_forward.w1.weight)
+    for layer in model.layers:
+        serialize_half(out_file, layer.feed_forward.w2.weight)
+    for layer in model.layers:
+        serialize_half(out_file, layer.feed_forward.w3.weight)
+    # final rmsnorm
+    serialize_half(out_file, model.norm.weight)
+    # freqs_cis are no longer needed, let's skip them
+    # serialize_half(out_file, model.freqs_cos[:p.max_seq_len])
+    # serialize_half(out_file, model.freqs_sin[:p.max_seq_len])
+
+    # final classifier weights
+    if not shared_classifier:
+        serialize_half(out_file, model.output.weight)
 
     # write to binary file
     out_file.close()
@@ -411,6 +472,8 @@ def model_export(model, filepath, version):
         version1_export(model, filepath)
     elif version == 2:
         version2_export(model, filepath)
+    elif version == 3:
+        legacy_export_half(model, filepath)
     else:
         raise ValueError(f"unknown version {version}")
 
