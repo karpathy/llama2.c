@@ -166,6 +166,10 @@ static const char* shader_rmsnorm_squares_and_sum =
 
     "void main(){\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
+    "    if(idx*2 < insize){\n"
+    "        b.data[idx] = 0;\n"
+    "        return;\n"
+    "    }\n"
     "    float res = a.data[idx*2]*a.data[idx*2];\n"
     "    if(idx*2+1 < insize){\n"
     "       res += a.data[idx*2+1]*a.data[idx*2+1];\n"
@@ -233,6 +237,10 @@ static const char* shader_sum =
     "void main(){\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    int idy = int(gl_GlobalInvocationID.y);\n"
+    "    if(idx*2 < insize){\n"
+    "        b.data[idx + shape0*idy] = 0;\n"
+    "        return;\n"
+    "    }\n"
     "    float res = a.data[insize*idy + idx*2];\n"
     "    if(idx*2+1 < insize){\n"
     "        res += a.data[insize*idy + idx*2 + 1];\n"
@@ -283,9 +291,15 @@ static const char* shader_max =
     "    float data[];\n"
     "} b;\n"
 
+    "const float infinity = 1. / 0.;\n"
+
     "void main(){\n"
     "    int idx = int(gl_GlobalInvocationID.x);\n"
     "    int idy = int(gl_GlobalInvocationID.y);\n"
+    "    if(idx*2 < insize){\n"
+    "        b.data[idx + shape0*idy] = -infinity;\n"
+    "        return;\n"
+    "    }\n"
     "    if(idx*2+1 < insize){\n"
     "        b.data[idx + shape0*idy] = max(a.data[insize*idy + idx*2] , a.data[insize*idy + idx*2+1]);\n"
     "    }else{\n"
@@ -322,61 +336,6 @@ static const char* shader_max_vec4 =
     "    float res1 = max(va.z , va.w;)\n"  //step0-1
 
     "    b.data[idx + shape0*idy] = max(res0 , res1);\n"
-    "}\n";
-
-static const char* shader_min =
-    "#version 320 es\n"
-    "uniform int insize;\n"
-    "uniform int shape0;\n"
-    "layout(local_size_x = 1 , local_size_y = 1) in;\n"
-
-    "layout(binding = 0) readonly buffer Input0{\n"
-    "    float data[];\n"
-    "} a;\n"
-
-    "layout(binding = 1) writeonly buffer Output0{\n"
-    "    float data[];\n"
-    "} b;\n"
-
-    "void main(){\n"
-    "    int idx = int(gl_GlobalInvocationID.x);\n"
-    "    int idy = int(gl_GlobalInvocationID.y);\n"
-    "    if(idx*2+1 < insize){\n"
-    "        b.data[idx + shape0*idy] = min(a.data[insize*idy + idx*2] , a.data[insize*idy + idx*2+1]);\n"
-    "    }else{\n"
-    "        b.data[idx + shape0*idy] = a.data[insize*idy + idx*2];\n"
-    "    }\n"
-    "}\n";
-
-static const char* shader_min_vec4 =
-    "#version 320 es\n"
-    "uniform int insize;\n"
-    "uniform int shape0;\n"
-    "layout(local_size_x = 1 , local_size_y = 1) in;\n"
-
-    "layout(binding = 0) readonly buffer Input0{\n"
-    "    vec4 data[];\n"
-    "} a;\n"
-
-    "layout(binding = 1) writeonly buffer Output0{\n"
-    "    float data[];\n"
-    "} b;\n"
-
-    "const float infinity = 1. / 0.;\n"
-
-    "void main(){\n"
-    "    int idx = int(gl_GlobalInvocationID.x);\n"
-    "    int idy = int(gl_GlobalInvocationID.y);\n"
-    "    if(idx>=insize){\n"
-    "        b.data[idx + shape0*idy] = infinity;\n"
-    "        return;\n"
-    "    }\n"
-    "    vec4 va = a.data[insize*idy + idx];\n"
-
-    "    float res0 = min(va.x , va.y;)\n"  //step0-0
-    "    float res1 = min(va.z , va.w;)\n"  //step0-1
-
-    "    b.data[idx + shape0*idy] = min(res0 , res1);\n"
     "}\n";
 
 static const char* shader_rmsnorm_normalize_and_scale =
@@ -671,12 +630,13 @@ typedef struct {
     GLuint shader_matmul;
     GLuint shader_rmsnorm_squares_and_sum;
     GLuint shader_sum;
+    GLuint shader_sum_vec4;
     GLuint shader_rmsnorm_normalize_and_scale;
     GLuint shader_rmsnorm_normalize_and_scale_currentPos;
     GLuint shader_accum;
     GLuint shader_positionalEncoding;
     GLuint shader_max;
-    GLuint shader_min;
+    GLuint shader_max_vec4;
     GLuint shader_softmax_exp;
     GLuint shader_softmax_normalize;
     GLuint shader_transformer_silu_and_mulW3;
@@ -848,6 +808,8 @@ void compile_GPUProgram(GPUProgram* program) {
     GPU_CHECK();
     program->shader_sum = createComputeProgram(shader_sum);
     GPU_CHECK();
+    program->shader_sum_vec4 = createComputeProgram(shader_sum);
+    GPU_CHECK();
     program->shader_rmsnorm_normalize_and_scale = createComputeProgram(shader_rmsnorm_normalize_and_scale);
     GPU_CHECK();
     program->shader_rmsnorm_normalize_and_scale_currentPos = createComputeProgram(shader_rmsnorm_normalize_and_scale_currentPos);
@@ -858,7 +820,7 @@ void compile_GPUProgram(GPUProgram* program) {
     GPU_CHECK();
     program->shader_max = createComputeProgram(shader_max);
     GPU_CHECK();
-    program->shader_min = createComputeProgram(shader_min);
+    program->shader_max_vec4 = createComputeProgram(shader_max);
     GPU_CHECK();
     program->shader_softmax_exp = createComputeProgram(shader_softmax_exp);
     GPU_CHECK();
@@ -1064,7 +1026,6 @@ void free_gpu_program(GPUProgram* prog) {
     glDeleteProgram(prog->shader_accum);
     glDeleteProgram(prog->shader_positionalEncoding);
     glDeleteProgram(prog->shader_max);
-    glDeleteProgram(prog->shader_min);
     glDeleteProgram(prog->shader_softmax_exp);
     glDeleteProgram(prog->shader_softmax_normalize);
     glDeleteProgram(prog->shader_transformer_silu_and_mulW3);
@@ -1092,13 +1053,32 @@ void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, i
     GPU_CHECK();
 }
 
-GLuint reduce_iteration(GLuint kernel_step, GLuint data, GLuint cache_1, int insize, int numSeq, GLuint* otherBuffer, GLuint* outputAt) {
+GLuint reduce_iteration(GLuint kernel_step, GLuint kernel_step_v4,
+                        GLuint data, GLuint cache_1, int insize, int numSeq, GLuint* otherBuffer, GLuint* outputAt) {
     int currentStepSize = 0;
     int nextStepSize = insize;
 
     GLuint currentBuffer = cache_1;
     GLuint nextBuffer = data;
     GLuint tmp;
+
+    while (nextStepSize >= 8) {
+        tmp = currentBuffer;
+        currentBuffer = nextBuffer;
+        nextBuffer = tmp;
+
+        currentStepSize = nextStepSize;
+        if (currentStepSize % 4 != 0){
+            break;
+        }
+        nextStepSize = currentStepSize / 4;
+        if (nextStepSize % 4 != 0 && //currentStepSize一定是4的倍数，让nextStepSize也是4的倍数，保证迭代能进行
+            nextStepSize > 2) {//nextStepSize为2时，此次迭代后将结束循环
+            nextStepSize = ((nextStepSize/4)+1)*4;//补全到4的倍数
+        }
+
+        reduce_step(kernel_step_v4, currentBuffer, currentStepSize/4, nextBuffer, nextStepSize, numSeq);
+    }
 
     while (nextStepSize != 1) {
         //swap current and next
@@ -1123,7 +1103,8 @@ GLuint reduce_iteration(GLuint kernel_step, GLuint data, GLuint cache_1, int ins
     return nextBuffer;
 }
 
-GLuint reduce_iteration_input(GLuint kernel_step, GLuint data, GLuint cache_1, GLuint cache_2, int insize, int numSeq, GLuint* otherBuffer, GLuint* outputAt) {
+GLuint reduce_iteration_input(GLuint kernel_step, GLuint kernel_step_v4, GLuint kernel_step_input,
+                              GLuint data, GLuint cache_1, GLuint cache_2, int insize, int numSeq, GLuint* otherBuffer, GLuint* outputAt) {
     int currentStepSize = insize;
     int nextStepSize = currentStepSize / 2;
     if (currentStepSize % 2 == 1) {
@@ -1141,8 +1122,12 @@ GLuint reduce_iteration_input(GLuint kernel_step, GLuint data, GLuint cache_1, G
         }
         return outBuffer;
     } else {
-        reduce_step(kernel_step, data, currentStepSize, cache_1, nextStepSize, numSeq);
-        return reduce_iteration(kernel_step, cache_1, cache_2, nextStepSize, numSeq, otherBuffer, outputAt);
+        int nextStepSize_v4 = nextStepSize;
+        if (nextStepSize % 4 != 0 && nextStepSize > 8) {
+            nextStepSize = ((nextStepSize/4)+1)*4;//补全到4的倍数
+        }
+        reduce_step(kernel_step_input, data, currentStepSize, cache_1, nextStepSize_v4, numSeq);
+        return reduce_iteration(kernel_step, GLuint kernel_step_v4, cache_1, cache_2, nextStepSize, numSeq, otherBuffer, outputAt);
     }
 }
 
@@ -1174,13 +1159,24 @@ void rmsnorm(GPUProgram* prog, RunState* state, GLuint o, GLuint x, GLuint weigh
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nextBuffer);
     glUseProgram(prog->shader_rmsnorm_squares_and_sum);
+    
     int insize = glGetUniformLocation(prog->shader_rmsnorm_squares_and_sum, "insize");
     glUniform1i(insize, currentStepSize);
+    
+    int shape0_gpu = glGetUniformLocation(prog->shader_rmsnorm_squares_and_sum, "shape0");
+    glUniform1i(shape0_gpu, nextStepSize);
+
+    if (nextStepSize % 4 != 0 && nextStepSize > 8) {
+        nextStepSize = ((nextStepSize/4)+1)*4;//补全到4的倍数
+    }
+
     glDispatchCompute(nextStepSize, 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 
-    nextBuffer = reduce_iteration(prog->shader_sum, nextBuffer, currentBuffer, nextStepSize, 1, &currentBuffer, NULL);
+    nextBuffer = reduce_iteration(
+        prog->shader_sum, prog->shader_sum_vec4,
+        nextBuffer, currentBuffer, nextStepSize, 1, &currentBuffer, NULL);
 
     if (o == x) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, nextBuffer);
@@ -1222,7 +1218,9 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     GLuint resBuffer_max;
     GLuint resBuffer_sum;
 
-    resBuffer_max = reduce_iteration_input(prog->shader_max, x, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, &currentBuffer, NULL);
+    resBuffer_max = reduce_iteration_input(
+        prog->shader_max, prog->shader_max_vec4, prog->shader_max,
+        x, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, &currentBuffer, NULL);
 
     // exp
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
@@ -1234,7 +1232,9 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     GPU_CHECK();
 
     // sum
-    resBuffer_sum = reduce_iteration_input(prog->shader_sum, x, state->mulBuffer_3, state->mulBuffer_4, size_x, size_y, &currentBuffer, NULL);
+    resBuffer_sum = reduce_iteration_input(
+        prog->shader_sum, prog->shader_sum_vec4, prog->shader_sum,
+        x, state->mulBuffer_3, state->mulBuffer_4, size_x, size_y, &currentBuffer, NULL);
 
     // normalize
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, resBuffer_sum);
@@ -1285,7 +1285,9 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
 void transformer_sum(GPUProgram* prog, RunState* state, GLuint outMat, GLuint inMat, int size_x, int size_y) {
     //prog, s, s->xb, s->mulBuffer_4, pos + 1, head_size, p->n_heads
     GLuint res = outMat;
-    reduce_iteration_input(prog->shader_sum, inMat, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, NULL, &res);
+    reduce_iteration_input(
+        prog->shader_sum, prog->shader_sum_vec4, prog->shader_sum, 
+        inMat, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, NULL, &res);
 }
 
 void matmul(GPUProgram* prog, RunState* state, GLuint xout, GLuint x, GLuint w, int n, int d, int x_offset, int w_offset) {
