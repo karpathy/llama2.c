@@ -37,7 +37,7 @@ void test_prompt_encoding(Tokenizer* tokenizer, char* prompt, int* expected_toke
     free(prompt_tokens);
 }
 
-void text_prompt_encodings() {
+void test_prompt_encodings() {
     // let's verify that the Tokenizer works as expected
 
     char *tokenizer_path = "tokenizer.bin";
@@ -76,6 +76,6 @@ void text_prompt_encodings() {
 }
 
 int main(int argc, char *argv[]) {
-    text_prompt_encodings();
+    test_prompt_encodings();
     printf("ALL OK\n");
 }
