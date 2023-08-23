@@ -36,10 +36,10 @@ def serialize(file, tensor, type):
     if type == 'fp32':
         d = tensor.detach().cpu().view(-1).to(torch.float32).numpy()
         b = struct.pack(f'{len(d)}f', *d)
-    else if type == 'fp16':
+    elif type == 'fp16':
         d = tensor.detach().cpu().view(-1).to(torch.half).numpy()
         b = struct.pack(f'{len(d)}e', *d)
-    else if type == 'int8':
+    elif type == 'int8':
         d = tensor.detach().cpu().view(-1).numpy().astype(np.int8)
         b = struct.pack(f'{len(d)}b', *d)
     file.write(b)
