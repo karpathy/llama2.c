@@ -1,6 +1,4 @@
-﻿/*
-Inference for Llama-2 Transformer model in C + CUDA.
-*/
+/* Inference for Llama-2 Transformer model in C + CUDA */
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
@@ -9,13 +7,23 @@ Inference for Llama-2 Transformer model in C + CUDA.
 #include <time.h>
 #include <math.h>
 #include <string.h>
-#include <time.h>
+#include <fcntl.h>
+#if defined _WIN32
+    #include "win.h"
+#else
+    #include <unistd.h>
+    #include <sys/mman.h>
+#endif
 #include <cuda_runtime_api.h>
 #include <cuda_fp16.h>
 #include <cub/cub.cuh>
 
+int divUp(int a, int b) {
+    return (a - 1) / b + 1;
+}
+
 // ----------------------------------------------------------------------------
-// Transformer and RunState structs
+// Transformer model
 
 typedef struct {
     int dim; // transformer dimension
@@ -57,11 +65,6 @@ typedef struct {
 } TransformerWeights;
 
 typedef struct {
-    float prob;
-    int index;
-} ProbIndex; // struct used when sorting probabilities during top-p sampling
-
-typedef struct {
     // current wave of activations
     half* x; // activation at current time stamp (dim,)
     half* xb; // same, but inside a residual branch (dim,)
@@ -73,11 +76,159 @@ typedef struct {
     half* logits_gpu16; // output logits
     float* logits_gpu32; // logits in GPU memory converted to float
     float* logits; // logits copied CPU side
-    ProbIndex *probindex; // buffer used in top-p sampling
     // kv cache
     half* key_cache;   // (layer, seq_len, dim)
     half* value_cache; // (layer, seq_len, dim)
 } RunState;
+
+typedef struct {
+    Config config; // the hyperparameters of the architecture (the blueprint)
+    TransformerWeights weights; // the weights of the model
+    RunState state; // buffers for the "wave" of activations in the forward pass
+    // some more state needed to properly clean up the memory mapping (sigh)
+    int fd; // file descriptor for memory mapping
+    uint8_t* data; // memory mapped data pointer
+    ssize_t file_size; // size of the checkpoint file in bytes
+} Transformer;
+
+void malloc_run_state(RunState* s, Config* p) {
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+
+    // allocated on the GPU
+    cudaMalloc((void**)&s->x, p->dim * sizeof(half));
+    cudaMalloc((void**)&s->xb, p->dim * sizeof(half));
+    cudaMalloc((void**)&s->xb2, p->dim * sizeof(half));
+    cudaMalloc((void**)&s->hb, p->hidden_dim * sizeof(half));
+    cudaMalloc((void**)&s->hb2, p->hidden_dim * sizeof(half));
+    cudaMalloc((void**)&s->q, p->dim * sizeof(half));
+    cudaMalloc((void**)&s->att, p->n_heads * p->dim * sizeof(half));
+    cudaMalloc((void**)&s->logits_gpu16, p->vocab_size * sizeof(half));
+    cudaMalloc((void**)&s->logits_gpu32, p->vocab_size * sizeof(float));
+    cudaMalloc((void**)&s->key_cache, p->n_layers * p->seq_len * kv_dim * sizeof(half));    // potentially huge allocs
+    cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * kv_dim * sizeof(half));
+
+    // allocated on the CPU
+    s->logits = (float*)malloc(p->vocab_size * sizeof(float));
+
+    // ensure all mallocs went fine
+    if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
+     || !s->att || !s->key_cache || !s->value_cache
+     || !s->logits_gpu16 || !s->logits_gpu32 || !s->logits) {
+        fprintf(stderr, "malloc failed!\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void free_run_state(RunState* s) {
+    cudaFree(s->x);
+    cudaFree(s->xb);
+    cudaFree(s->xb2);
+    cudaFree(s->hb);
+    cudaFree(s->hb2);
+    cudaFree(s->q);
+    cudaFree(s->att);
+    cudaFree(s->logits_gpu16);
+    cudaFree(s->logits_gpu32);
+    cudaFree(s->key_cache);
+    cudaFree(s->value_cache);
+    free(s->logits);
+}
+
+void free_weights(TransformerWeights* w, int shared_weights) {
+    cudaFree(w->token_embedding_table);
+    cudaFree(w->rms_att_weight);
+    cudaFree(w->rms_ffn_weight);
+    cudaFree(w->wq);
+    cudaFree(w->wk);
+    cudaFree(w->wv);
+    cudaFree(w->wo);
+    cudaFree(w->w1);
+    cudaFree(w->w2);
+    cudaFree(w->w3);
+    cudaFree(w->rms_final_weight);
+    if (!shared_weights)
+        cudaFree(w->wcls);
+}
+
+uint8_t* load_q8_weights(int num_layers, int layer_size, uint8_t** pptr) {
+    int size = quant_size(num_layers, layer_size);
+    uint8_t* w = NULL;
+    cudaMalloc((void**)&w, size);
+    if (!w) {
+        fprintf(stderr, "malloc failed!\n");
+        exit(EXIT_FAILURE);
+    }
+    cudaMemcpyAsync(w, *pptr, size, cudaMemcpyHostToDevice);
+    *pptr += size;
+    return w;
+}
+
+void load_checkpoint_weights(TransformerWeights* w, Config* p, uint8_t* ptr, int shared_weights) {
+    int head_size = p->dim / p->n_heads;
+
+    w->token_embedding_table = load_q8_weights(1, p->vocab_size * p->dim, &ptr);
+
+    w->rms_att_weight = load_q8_weights(p->n_layers, p->dim, &ptr);
+
+    w->wq = load_q8_weights(p->n_layers, p->dim * (p->n_heads * head_size), &ptr);
+    w->wk = load_q8_weights(p->n_layers, p->dim * (p->n_kv_heads * head_size), &ptr);
+    w->wv = load_q8_weights(p->n_layers, p->dim * (p->n_kv_heads * head_size), &ptr);
+    w->wo = load_q8_weights(p->n_layers, (p->n_heads * head_size) * p->dim, &ptr);
+
+    w->rms_ffn_weight = load_q8_weights(p->n_layers, p->dim, &ptr);
+
+    w->w1 = load_q8_weights(p->n_layers, p->dim * p->hidden_dim, &ptr);
+    w->w2 = load_q8_weights(p->n_layers, p->hidden_dim * p->dim, &ptr);
+    w->w3 = load_q8_weights(p->n_layers, p->dim * p->hidden_dim, &ptr);
+
+    w->rms_final_weight = load_q8_weights(1, p->dim, &ptr);
+
+    ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
+    ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
+
+    if (shared_weights)
+        w->wcls = w->token_embedding_table;
+    else
+        w->wcls = load_q8_weights(1, p->vocab_size * p->dim, &ptr);
+
+}
+
+void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights,
+                     int* fd, uint8_t** data, ssize_t* file_size) {
+    FILE *file = fopen(checkpoint, "rb");
+    if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); exit(EXIT_FAILURE); }
+    // read in the config header
+    if (fread(config, sizeof(Config), 1, file) != 1) { exit(EXIT_FAILURE); }
+    // negative vocab size is hacky way of signaling unshared weights. bit yikes.
+    int shared_weights = config->vocab_size > 0 ? 1 : 0;
+    config->vocab_size = abs(config->vocab_size);
+    // figure out the file size
+    fseek(file, 0, SEEK_END); // move file pointer to end of file
+    *file_size = ftell(file); // get the file size, in bytes
+    fclose(file);
+    // memory map the Transformer weights into the data pointer
+    *fd = open(checkpoint, O_RDONLY); // open in read only mode
+    if (*fd == -1) { fprintf(stderr, "open failed!\n"); exit(EXIT_FAILURE); }
+    *data = (uint8_t*) mmap(NULL, *file_size, PROT_READ, MAP_PRIVATE, *fd, 0);
+    if (*data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); exit(EXIT_FAILURE); }
+    uint8_t* weights_ptr = *data + sizeof(Config);
+    load_checkpoint_weights(weights, config, weights_ptr, shared_weights);
+}
+
+void build_transformer(Transformer *t, char* checkpoint_path) {
+    // read in the Config and the Weights from the checkpoint
+    read_checkpoint(checkpoint_path, &t->config, &t->weights, &t->fd, &t->data, &t->file_size);
+    // allocate the RunState buffers
+    malloc_run_state(&t->state, &t->config);
+}
+
+void free_transformer(Transformer* t) {
+    // close the memory mapping
+    if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
+    if (t->fd != -1) { close(t->fd); }
+    // free the RunState buffers
+    free_run_state(&t->state);
+}
 
 // ----------------------------------------------------------------------------
 // GPU kernels
@@ -427,141 +578,9 @@ __global__ void dequantize_token_kernel(half* x, q8data* q8, int token, int dim)
     }
 }
 
-// ----------------------------------------------------------------------------
-// Memory management functions
-
-void malloc_run_state(RunState* s, Config* p) {
-    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-
-    // allocated on the GPU
-    cudaMalloc((void**)&s->x, p->dim * sizeof(half));
-    cudaMalloc((void**)&s->xb, p->dim * sizeof(half));
-    cudaMalloc((void**)&s->xb2, p->dim * sizeof(half));
-    cudaMalloc((void**)&s->hb, p->hidden_dim * sizeof(half));
-    cudaMalloc((void**)&s->hb2, p->hidden_dim * sizeof(half));
-    cudaMalloc((void**)&s->q, p->dim * sizeof(half));
-    cudaMalloc((void**)&s->att, p->n_heads * p->dim * sizeof(half));
-    cudaMalloc((void**)&s->logits_gpu16, p->vocab_size * sizeof(half));
-    cudaMalloc((void**)&s->key_cache, p->n_layers * p->seq_len * kv_dim * sizeof(half));    // potentially huge allocs
-    cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * kv_dim * sizeof(half));
-    cudaMalloc((void**)&s->logits_gpu32, p->vocab_size * sizeof(float));
-
-    // allocated on the CPU
-    s->logits = (float*)malloc(p->vocab_size * sizeof(float));
-    s->probindex = (ProbIndex*)calloc(p->vocab_size, sizeof(ProbIndex));
-
-    // ensure all mallocs went fine
-    if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-        || !s->att || !s->key_cache || !s->value_cache
-        || !s->logits_gpu16 || !s->logits_gpu32 || !s->logits || !s->probindex) {
-        printf("malloc failed!\n");
-        exit(1);
-    }
-}
-
-void free_run_state(RunState* s) {
-    cudaFree(s->x);
-    cudaFree(s->xb);
-    cudaFree(s->xb2);
-    cudaFree(s->hb);
-    cudaFree(s->hb2);
-    cudaFree(s->q);
-    cudaFree(s->att);
-    cudaFree(s->logits_gpu16);
-    cudaFree(s->logits_gpu32);
-    cudaFree(s->key_cache);
-    cudaFree(s->value_cache);
-    free(s->logits);
-    free(s->probindex);
-}
-
-void malloc_weights(TransformerWeights* w, Config* p, int shared_weights) {
-    int head_size = p->dim / p->n_heads;
-
-    cudaMalloc((void**)&w->token_embedding_table, quant_size(1, p->vocab_size * p->dim));
-    cudaMalloc((void**)&w->rms_att_weight, quant_size(p->n_layers, p->dim));
-    cudaMalloc((void**)&w->rms_ffn_weight, quant_size(p->n_layers, p->dim));
-    cudaMalloc((void**)&w->wq, quant_size(p->n_layers, p->dim * (p->n_heads * head_size)));
-    cudaMalloc((void**)&w->wk, quant_size(p->n_layers, p->dim * (p->n_kv_heads * head_size)));
-    cudaMalloc((void**)&w->wv, quant_size(p->n_layers, p->dim * (p->n_kv_heads * head_size)));
-    cudaMalloc((void**)&w->wo, quant_size(p->n_layers, (p->n_heads * head_size) * p->dim));
-    cudaMalloc((void**)&w->w1, quant_size(p->n_layers, p->dim * p->hidden_dim));
-    cudaMalloc((void**)&w->w2, quant_size(p->n_layers, p->hidden_dim * p->dim));
-    cudaMalloc((void**)&w->w3, quant_size(p->n_layers, p->dim * p->hidden_dim));
-    cudaMalloc((void**)&w->rms_final_weight, quant_size(1, p->dim));
-
-    if (shared_weights)
-        w->wcls = w->token_embedding_table;
-    else
-        cudaMalloc((void**)&w->wcls, quant_size(1, p->vocab_size * p->dim));
-
-    // ensure all mallocs went fine
-    if (!w->token_embedding_table || !w->rms_att_weight || !w->rms_ffn_weight
-        || !w->wq || !w->wk || !w->wv || !w->wo || !w->w1 || !w->w2 || !w->w3 ||
-        !w->rms_final_weight || !w->wcls) {
-        printf("malloc failed!\n");
-        exit(1);
-    }
-}
-
-void free_weights(TransformerWeights* w, int shared_weights) {
-    cudaFree(w->token_embedding_table);
-    cudaFree(w->rms_att_weight);
-    cudaFree(w->rms_ffn_weight);
-    cudaFree(w->wq);
-    cudaFree(w->wk);
-    cudaFree(w->wv);
-    cudaFree(w->wo);
-    cudaFree(w->w1);
-    cudaFree(w->w2);
-    cudaFree(w->w3);
-    cudaFree(w->rms_final_weight);
-    if (!shared_weights)
-        cudaFree(w->wcls);
-}
-
-int divUp(int a, int b) {
-    return (a - 1) / b + 1;
-}
-
-int load_q8_weights(void *w, int size, FILE* f, void *scratchCPU) {
-    int count = fread(scratchCPU, sizeof(int8_t), size, f);
-    if (count != size) return 1;
-    cudaMemcpyAsync(w, scratchCPU, size, cudaMemcpyHostToDevice);
-    return 0;
-}
 
 // ----------------------------------------------------------------------------
-// initialization: read from checkpoint
-
-int checkpoint_init_weights(TransformerWeights* w, Config* p, FILE* f, int shared_weights) {
-    int head_size = p->dim / p->n_heads;
-    size_t scratch_size = p->n_layers * std::max(p->dim, p->hidden_dim) * p->dim;
-    scratch_size = std::max((size_t)p->vocab_size * p->dim, scratch_size);
-    scratch_size *= sizeof(float);
-    void* scratchCPU = malloc(scratch_size);
-
-    if (load_q8_weights(w->token_embedding_table, quant_size(1, p->vocab_size * p->dim), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->rms_att_weight, quant_size(p->n_layers, p->dim), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->wq, quant_size(p->n_layers, p->dim * (p->n_heads * head_size)), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->wk, quant_size(p->n_layers, p->dim * (p->n_kv_heads * head_size)), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->wv, quant_size(p->n_layers, p->dim * (p->n_kv_heads * head_size)), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->wo, quant_size(p->n_layers, (p->n_heads * head_size) * p->dim), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->rms_ffn_weight, quant_size(p->n_layers, p->dim), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->w1, quant_size(p->n_layers, p->dim * p->hidden_dim), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->w2, quant_size(p->n_layers, p->hidden_dim * p->dim), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->w3, quant_size(p->n_layers, p->dim * p->hidden_dim), f, scratchCPU)) return 1;
-    if (load_q8_weights(w->rms_final_weight, quant_size(1, p->dim), f, scratchCPU)) return 1;
-
-    if (!shared_weights)
-        if (load_q8_weights(w->wcls, quant_size(1, p->vocab_size * p->dim), f, scratchCPU)) return 1;
-
-    free(scratchCPU);
-    return 0;
-}
-
-// ----------------------------------------------------------------------------
-// neural net blocks
+// neural net blocks; the dynamics of the Transformer
 
 void accum(half* a, half* b, int size) {
     int blocks = divUp(size, 1024);
@@ -614,10 +633,13 @@ void dequantize_token(half* x, uint8_t* wptr, int token, int dim) {
     dequantize_token_kernel <<<divUp(dim, 1024), 1024>>> (x, q8, token, dim);
 }
 
-void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
+void forward(Transformer* transformer, int token, int pos) {
 
     // a few convenience variables
-    half* x = s->x;
+    Config* p = &transformer->config;
+    TransformerWeights* w = &transformer->weights;
+    RunState* s = &transformer->state;
+    half *x = s->x;
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
     //int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
@@ -685,15 +707,71 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 }
 
 // ----------------------------------------------------------------------------
-// byte pair encoding (BPE) tokenizer, encodes strings into tokens so we can prompt
+// The Byte Pair Encoding (BPE) Tokenizer that translates strings <-> tokens
 
 typedef struct {
     char *str;
     int id;
 } TokenIndex;
 
+typedef struct {
+    char** vocab;
+    float* vocab_scores;
+    TokenIndex *sorted_vocab;
+    int vocab_size;
+    unsigned int max_token_length;
+    char byte_piece[2];
+} Tokenizer;
+
 int compare_tokens(const void *a, const void *b) {
     return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
+}
+
+void build_tokenizer(Tokenizer* t, char* tokenizer_path, int vocab_size) {
+    // i should have written the vocab_size into the tokenizer file... sigh
+    t->vocab_size = vocab_size;
+    // malloc space to hold the scores and the strings
+    t->vocab = (char**)malloc(vocab_size * sizeof(char*));
+    t->vocab_scores = (float*)malloc(vocab_size * sizeof(float));
+    t->byte_piece[1] = '\0'; // null terminate the byte_piece string
+    t->sorted_vocab = NULL; // initialized lazily
+    // read in the file
+    FILE *file = fopen(tokenizer_path, "rb");
+    if (!file) { fprintf(stderr, "couldn't load %s\n", tokenizer_path); exit(EXIT_FAILURE); }
+    if (fread(&t->max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+    int len;
+    for (int i = 0; i < vocab_size; i++) {
+        if (fread(t->vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE);}
+        if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+        t->vocab[i] = (char *)malloc(len + 1);
+        if (fread(t->vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+        t->vocab[i][len] = '\0'; // add the string terminating token
+    }
+    fclose(file);
+}
+
+void free_tokenizer(Tokenizer* t) {
+    for (int i = 0; i < t->vocab_size; i++) { free(t->vocab[i]); }
+    free(t->vocab);
+    free(t->vocab_scores);
+    free(t->sorted_vocab);
+}
+
+char* decode(Tokenizer* t, int prev_token, int token) {
+    char *piece = t->vocab[token];
+    // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
+    if (prev_token == 1 && piece[0] == ' ') { piece++; }
+    // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
+    unsigned char byte_val;
+    if (sscanf(piece, "<0x%02hhX>", &byte_val) == 1) {
+        // ok this token is a raw byte token, careful to only print printable chars or whitespace
+        // some of the other bytes can be various control codes, backspace, etc. => skip
+        if (isprint(byte_val) || isspace(byte_val)) {
+            t->byte_piece[0] = byte_val;
+            piece = &t->byte_piece[0];
+        }
+    }
+    return piece;
 }
 
 int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
@@ -703,22 +781,26 @@ int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     return res != NULL ? res->id : -1;
 }
 
-void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
+void encode(Tokenizer* t, char *text, int *tokens, int *n_tokens) {
+    // encode the string text (input) into an upper-bound preallocated tokens[] array
 
-    // sort vocabulary
-    TokenIndex *sorted_vocab = (TokenIndex*) malloc(vocab_size * sizeof(TokenIndex));
-    for (int i = 0; i < vocab_size; i++) {
-        sorted_vocab[i].str = vocab[i];
-        sorted_vocab[i].id = i;
+    if (t->sorted_vocab == NULL) {
+        // lazily malloc and sort the vocabulary
+        t->sorted_vocab = (TokenIndex*) malloc(t->vocab_size * sizeof(TokenIndex));
+        for (int i = 0; i < t->vocab_size; i++) {
+            t->sorted_vocab[i].str = t->vocab[i];
+            t->sorted_vocab[i].id = i;
+        }
+        qsort(t->sorted_vocab, t->vocab_size, sizeof(TokenIndex), compare_tokens);
     }
-    qsort(sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
 
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
-    char* str_buffer = (char*) malloc((max_token_length*2 +1 +2) * sizeof(char)); // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
+    // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
+    char* str_buffer = (char*) malloc((t->max_token_length*2 +1 +2) * sizeof(char));
     size_t str_len = 0;
 
     // add_dummy_prefix is true by default
-    tokens[0] = str_lookup(" ", sorted_vocab, vocab_size);
+    tokens[0] = str_lookup(" ", t->sorted_vocab, t->vocab_size);
     *n_tokens = 1; // the number of tokens
 
     // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
@@ -754,7 +836,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
         }
 
         // ok c+1 is not a continuation byte, so we've read in a full codepoint
-        int id = str_lookup(str_buffer, sorted_vocab, vocab_size);
+        int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
 
         if (id != -1) {
             // we found this codepoint in vocab, add it as a token
@@ -778,11 +860,11 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
 
         for (int i=0; i < (*n_tokens-1); i++) {
             // check if we can merge the pair (tokens[i], tokens[i+1])
-            sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i+1]]);
-            int id = str_lookup(str_buffer, sorted_vocab, vocab_size);
-            if (id != -1 && vocab_scores[id] > best_score) {
+            sprintf(str_buffer, "%s%s", t->vocab[tokens[i]], t->vocab[tokens[i+1]]);
+            int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
+            if (id != -1 && t->vocab_scores[id] > best_score) {
                 // this merge pair exists in vocab! record its score and position
-                best_score = vocab_scores[id];
+                best_score = t->vocab_scores[id];
                 best_id = id;
                 best_idx = i;
             }
@@ -802,35 +884,26 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
     }
 
     free(str_buffer);
-    free(sorted_vocab);
 }
 
 // ----------------------------------------------------------------------------
-// utilities: time / rng
-
-long time_in_ms() {
-    // return time in milliseconds, for benchmarking the model speed
-    struct timespec time;
-    timespec_get(&time, TIME_UTC);
-    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
-}
-
-unsigned long long rng_seed;
-unsigned int random_u32() {
-    // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
-    rng_seed ^= rng_seed >> 12;
-    rng_seed ^= rng_seed << 25;
-    rng_seed ^= rng_seed >> 27;
-    return (rng_seed * 0x2545F4914F6CDD1Dull) >> 32;
-}
-float random_f32() { // random float32 in [0,1)
-    return (random_u32() >> 8) / 16777216.0f;
-}
-
-// ----------------------------------------------------------------------------
+// The Sampler, which takes logits and returns a sampled token
 // sampling can be done in a few ways: greedy argmax, sampling, top-p sampling
 
-int argmax(float* probabilities, int n) {
+typedef struct {
+    float prob;
+    int index;
+} ProbIndex; // struct used when sorting probabilities during top-p sampling
+
+typedef struct {
+    int vocab_size;
+    ProbIndex* probindex; // buffer used in top-p sampling
+    float temperature;
+    float topp;
+    unsigned long long rng_state;
+} Sampler;
+
+int sample_argmax(float* probabilities, int n) {
     // return the index that has the highest probability
     int max_pos;
     int *pmax_pos;
@@ -850,13 +923,13 @@ int argmax(float* probabilities, int n) {
     return max_pos;
 }
 
-int sample(float* probabilities, int n) {
+int sample_mult(float* probabilities, int n, float coin) {
     // sample index from probabilities (they must sum to 1!)
-    float r = random_f32();
+    // coin is a random number in [0, 1), usually from random_f32()
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probabilities[i];
-        if (r < cdf) {
+        if (coin < cdf) {
             return i;
         }
     }
@@ -871,10 +944,11 @@ int compare(const void* a, const void* b) {
     return 0;
 }
 
-int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
+int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex, float coin) {
     // top-p sampling (or "nucleus sampling") samples from the smallest set of
     // tokens that exceed probability topp. This way we never sample tokens that
     // have very low probabilities and are less likely to go "off the rails".
+    // coin is a random number in [0, 1), usually from random_f32()
 
     int n0 = 0;
     // quicksort indices in descending order of probabilities
@@ -902,7 +976,7 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     }
 
     // sample from the truncated list
-    float r = random_f32() * cumulative_prob;
+    float r = coin * cumulative_prob;
     float cdf = 0.0f;
     for (int i = 0; i <= last_idx; i++) {
         cdf += probindex[i].prob;
@@ -913,100 +987,79 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     return probindex[last_idx].index; // in case of rounding errors
 }
 
-
-// ----------------------------------------------------------------------------
-// int main
-
-void error_usage() {
-    fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
-    fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
-    fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
-    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9\n");
-    fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
-    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
-    fprintf(stderr, "  -i <string> input prompt\n");
-    fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
-    exit(EXIT_FAILURE);
+void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed) {
+    sampler->vocab_size = vocab_size;
+    sampler->temperature = temperature;
+    sampler->topp = topp;
+    sampler->rng_state = rng_seed;
+    // buffer only used with nucleus sampling; may not need but it's ~small
+    sampler->probindex = (ProbIndex*) malloc(sampler->vocab_size * sizeof(ProbIndex));
 }
 
-int main(int argc, char *argv[]) {
+void free_sampler(Sampler* sampler) {
+    free(sampler->probindex);
+}
 
-    // default inits
-    char *checkpoint = NULL;  // e.g. out/model.bin
-    char *tokenizer = "tokenizer.bin";
-    float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-    float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    rng_seed = 0; // seed rng with time by default
-    int steps = 256;          // number of steps to run for
-    char *prompt = NULL;      // prompt string
+unsigned int random_u32(unsigned long long *state) {
+    // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
+    *state ^= *state >> 12;
+    *state ^= *state << 25;
+    *state ^= *state >> 27;
+    return (*state * 0x2545F4914F6CDD1Dull) >> 32;
+}
+float random_f32(unsigned long long *state) { // random float32 in [0,1)
+    return (random_u32(state) >> 8) / 16777216.0f;
+}
 
-    // poor man's C argparse so we can override the defaults above from the command line
-    if (argc >= 2) { checkpoint = argv[1]; } else { error_usage(); }
-    for (int i = 2; i < argc; i+=2) {
-        // do some basic validation
-        if (i + 1 >= argc) { error_usage(); } // must have arg after flag
-        if (argv[i][0] != '-') { error_usage(); } // must start with dash
-        if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
-        // read in the args
-        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
-        else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
-        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
-        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
-        else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
-        else if (argv[i][1] == 'z') { tokenizer = argv[i + 1]; }
-        else { error_usage(); }
-    }
-    if(rng_seed == 0) { rng_seed =  (unsigned int)time(NULL);}
-
-    // read in the model.bin file
-    Config config;
-    TransformerWeights weights;
-    int shared_weights;
-    {
-        FILE *file = fopen(checkpoint, "rb");
-        if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); return 1; }
-        // read in the config header
-        if (fread(&config, sizeof(Config), 1, file) != 1) { return 1; }
-        // negative vocab size is hacky way of signaling unshared weights. bit yikes.
-        shared_weights = config.vocab_size > 0 ? 1 : 0;
-        config.vocab_size = abs(config.vocab_size);
-        // read in the Transformer weights
-        malloc_weights(&weights, &config, shared_weights);
-        if (checkpoint_init_weights(&weights, &config, file, shared_weights)) { return 1; }
-    }
-    // right now we cannot run for more than config.seq_len steps
-    if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
-
-    // read in the tokenizer .bin file
-    char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
-    float* vocab_scores = (float*)malloc(config.vocab_size * sizeof(float));
-    unsigned int max_token_length;
-    {
-        FILE *file = fopen(tokenizer, "rb");
-        if (!file) { fprintf(stderr, "couldn't load %s\n", tokenizer); return 1; }
-        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-        int len;
-        for (int i = 0; i < config.vocab_size; i++) {
-            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1;}
-            if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-            vocab[i] = (char *)malloc(len + 1);
-            if (fread(vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-            vocab[i][len] = '\0'; // add the string terminating token
+int sample(Sampler* sampler, RunState* state) {
+    // sample the token given the logits and some hyperparameters
+    int next;
+    if (sampler->temperature == 0.0f) {
+        // greedy argmax sampling: take the token with the highest probability
+        next = sample_argmax(state->logits_gpu32, sampler->vocab_size);
+    } else {
+        // apply the temperature to the logits
+        float inv_temperature = 1.0f / sampler->temperature;
+        scalar_mul32_kernel <<< divUp(sampler->vocab_size, 256), 256 >>> (state->logits_gpu32, inv_temperature, sampler->vocab_size);
+        // apply softmax to the logits to get the probabilities for next token
+        softmax32_kernel <<< 1, 1024 >>> (state->logits_gpu32, sampler->vocab_size);
+        // copy the logits from GPU to the CPU
+        cudaMemcpy(state->logits, state->logits_gpu32, sampler->vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
+        // flip a (float) coin (this is our source of entropy for sampling)
+        float coin = random_f32(&sampler->rng_state);
+        // we sample from this distribution to get the next token
+        if (sampler->topp <= 0 || sampler->topp >= 1) {
+            // simply sample from the predicted probability distribution
+            next = sample_mult(state->logits, sampler->vocab_size, coin);
+        } else {
+            // top-p (nucleus) sampling, clamping the least likely tokens to zero
+            next = sample_topp(state->logits, sampler->vocab_size, sampler->topp, sampler->probindex, coin);
         }
-        fclose(file);
     }
+    return next;
+}
 
-    // create and init the application RunState
-    RunState state;
-    malloc_run_state(&state, &config);
+// ----------------------------------------------------------------------------
+// utilities: time
 
-    // process the prompt, if any
-    int *prompt_tokens = NULL;
-    int num_prompt_tokens = 0;
+long time_in_ms() {
+    // return time in milliseconds, for benchmarking the model speed
+    struct timespec time;
+    clock_gettime(CLOCK_REALTIME, &time);
+    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+}
+
+// ----------------------------------------------------------------------------
+// generation loop
+
+void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
+
+    // encode the (string) prompt into tokens sequence, if any is given
+    int *prompt_tokens = NULL; // the sequence of prompt tokens
+    int num_prompt_tokens = 0; // the total number of prompt tokens
     if (prompt != NULL) {
         prompt_tokens = (int*)malloc((strlen(prompt)+1) * sizeof(int));
-        bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
+        encode(tokenizer, prompt, prompt_tokens, &num_prompt_tokens);
     }
 
     // start the main loop
@@ -1017,56 +1070,24 @@ int main(int argc, char *argv[]) {
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
-        transformer(token, pos, &config, &state, &weights);
+        forward(transformer, token, pos);
 
         // advance the state state machine
-        if(pos < num_prompt_tokens) {
+        if (pos < num_prompt_tokens) {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos];
         } else {
-            // sample the next token
-            if (temperature == 0.0f) {
-                // greedy argmax sampling: take the token with the highest probability
-                next = argmax(state.logits_gpu32, config.vocab_size);
-            } else {
-                // apply the temperature to the logits
-                float inv_temperature = 1.0f / temperature;
-                scalar_mul32_kernel <<< divUp(config.vocab_size, 256), 256 >>> (state.logits_gpu32, inv_temperature, config.vocab_size);
-                // apply softmax to the logits to get the probabilities for next token
-                softmax32_kernel <<< 1, 1024 >>> (state.logits_gpu32, config.vocab_size);
-                // copy the logits from GPU to the CPU
-                cudaMemcpy(state.logits, state.logits_gpu32, config.vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
-                // we sample from this distribution to get the next token
-                if (topp <= 0 || topp >= 1) {
-                    // simply sample from the predicted probability distribution
-                    next = sample(state.logits, config.vocab_size);
-                } else {
-                    // top-p (nucleus) sampling, clamping the least likely tokens to zero
-                    next = sample_topp(state.logits, config.vocab_size, topp, state.probindex);
-                }
-            }
+            // otherwise sample the next token from the logits
+            next = sample(sampler, &transformer->state);
         }
         pos++;
 
         // data-dependent terminating condition: the BOS (1) token delimits sequences
         if (next == 1) { break; }
 
-        // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
-        char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
-        // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
-        unsigned char byte_val;
-        if (sscanf(token_str, "<0x%02hhX>", &byte_val) == 1) {
-            // ok this token is a raw byte token, carefuly to only print printable chars or whitespace
-            // some of the other bytes can be various control codes, backspace, etc. => skip
-            if (isprint(byte_val) || isspace(byte_val)) {
-                char byte_piece[2];
-                byte_piece[0] = byte_val;
-                byte_piece[1] = '\0';
-                printf("%s", byte_piece);
-            }
-        } else {
-            printf("%s", token_str);
-        }
+        // print the token as string, decode it with the Tokenizer object
+        char* piece = decode(tokenizer, token, next);
+        printf("%s", piece);
         fflush(stdout);
         token = next;
 
@@ -1081,12 +1102,78 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
     }
 
+    free(prompt_tokens);
+}
+
+// ----------------------------------------------------------------------------
+// int main
+
+void error_usage() {
+    fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
+    fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -t <float>  temperature in [0,inf], default 1.0\n");
+    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling in [0,1] default 0.9\n");
+    fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
+    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
+    fprintf(stderr, "  -i <string> input prompt\n");
+    fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
+    exit(EXIT_FAILURE);
+}
+
+int main(int argc, char *argv[]) {
+
+    // default parameters
+    char *checkpoint_path = NULL;  // e.g. out/model.bin
+    char *tokenizer_path = "tokenizer.bin";
+    float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
+    float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+    int steps = 256;          // number of steps to run for
+    char *prompt = NULL;      // prompt string
+    unsigned long long rng_seed = 0; // seed rng with time by default
+
+    // poor man's C argparse so we can override the defaults above from the command line
+    if (argc >= 2) { checkpoint_path = argv[1]; } else { error_usage(); }
+    for (int i = 2; i < argc; i+=2) {
+        // do some basic validation
+        if (i + 1 >= argc) { error_usage(); } // must have arg after flag
+        if (argv[i][0] != '-') { error_usage(); } // must start with dash
+        if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
+        // read in the args
+        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
+        else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
+        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
+        else if (argv[i][1] == 'z') { tokenizer_path = argv[i + 1]; }
+        else { error_usage(); }
+    }
+
+    // parameter validation/overrides
+    if (rng_seed <= 0) rng_seed = (unsigned int)time(NULL);
+    if (temperature < 0.0) temperature = 0.0;
+    if (topp < 0.0 || 1.0 < topp) topp = 0.9;
+    if (steps < 0) steps = 0;
+
+    // build the Transformer via the model .bin file
+    Transformer transformer;
+    build_transformer(&transformer, checkpoint_path);
+    if (steps == 0) steps = transformer.config.seq_len; // ovrerride to ~max length
+
+    // build the Tokenizer via the tokenizer .bin file
+    Tokenizer tokenizer;
+    build_tokenizer(&tokenizer, tokenizer_path, transformer.config.vocab_size);
+
+    // build the Sampler
+    Sampler sampler;
+    build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
+
+    // run!
+    generate(&transformer, &tokenizer, &sampler, prompt, steps);
+
     // memory and file handles cleanup
-    free_run_state(&state);
-    free_weights(&weights, shared_weights);
-    for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
-    free(vocab);
-    free(vocab_scores);
-    if (prompt_tokens != NULL) free(prompt_tokens);
+    free_sampler(&sampler);
+    free_tokenizer(&tokenizer);
+    free_transformer(&transformer);
     return 0;
 }
