@@ -81,6 +81,7 @@ typedef struct {
     int fd; // file descriptor for memory mapping
     float* data; // memory mapped data pointer
     ssize_t file_size; // size of the checkpoint file in bytes
+    int shared_weights;
 } Transformer;
 
 void malloc_run_state(RunState* s, Config* p) {
@@ -195,13 +196,13 @@ void load_checkpoint_weights(TransformerWeights* w, Config* p, float* ptr, int s
 }
 
 void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights,
-                     int* fd, float** data, ssize_t* file_size) {
+                     int* fd, float** data, ssize_t* file_size, int *shared_weights) {
     FILE *file = fopen(checkpoint, "rb");
     if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); exit(EXIT_FAILURE); }
     // read in the config header
     if (fread(config, sizeof(Config), 1, file) != 1) { exit(EXIT_FAILURE); }
     // negative vocab size is hacky way of signaling unshared weights. bit yikes.
-    int shared_weights = config->vocab_size > 0 ? 1 : 0;
+    *shared_weights = config->vocab_size > 0 ? 1 : 0;
     config->vocab_size = abs(config->vocab_size);
     // figure out the file size
     fseek(file, 0, SEEK_END); // move file pointer to end of file
@@ -213,12 +214,12 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
     *data = (float*) mmap(NULL, *file_size, PROT_READ, MAP_PRIVATE, *fd, 0);
     if (*data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); exit(EXIT_FAILURE); }
     float* weights_ptr = *data + sizeof(Config)/sizeof(float);
-    load_checkpoint_weights(weights, config, weights_ptr, shared_weights);
+    load_checkpoint_weights(weights, config, weights_ptr, *shared_weights);
 }
 
 void build_transformer(Transformer *t, char* checkpoint_path) {
     // read in the Config and the Weights from the checkpoint
-    read_checkpoint(checkpoint_path, &t->config, &t->weights, &t->fd, &t->data, &t->file_size);
+    read_checkpoint(checkpoint_path, &t->config, &t->weights, &t->fd, &t->data, &t->file_size, &t->shared_weights);
     // allocate the RunState buffers
     malloc_run_state(&t->state, &t->config);
 }
@@ -229,6 +230,8 @@ void free_transformer(Transformer* t) {
     if (t->fd != -1) { close(t->fd); }
     // free the RunState buffers
     free_run_state(&t->state);
+    // free the transformer weights
+    free_weights(&t->weights, t->shared_weights);
 }
 
 // ----------------------------------------------------------------------------
