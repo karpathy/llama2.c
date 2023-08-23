@@ -17,6 +17,7 @@ class ModelArgs:
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
     vocab_size: int = 32000
+    hidden_dim: Optional[int] = None
     multiple_of: int = 256  # MLP hidden layer size will be multiple of
     norm_eps: float = 1e-5
     max_seq_len: int = 2048
@@ -166,8 +167,10 @@ class Attention(nn.Module):
 class FeedForward(nn.Module):
     def __init__(self, dim: int, hidden_dim: int, multiple_of: int, dropout: float):
         super().__init__()
-        hidden_dim = int(2 * hidden_dim / 3)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+        if hidden_dim is None:
+            hidden_dim = 4 * dim
+            hidden_dim = int(2 * hidden_dim / 3)
+            hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
@@ -186,7 +189,7 @@ class TransformerBlock(nn.Module):
         self.attention = Attention(args)
         self.feed_forward = FeedForward(
             dim=args.dim,
-            hidden_dim=4 * args.dim,
+            hidden_dim=args.hidden_dim,
             multiple_of=args.multiple_of,
             dropout=args.dropout,
         )
@@ -338,55 +341,3 @@ class Transformer(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
-
-    def export(self, filepath='model.bin'):
-        """export the model weights in fp32 into .bin file to be read from C"""
-        f = open(filepath, 'wb')
-
-        def serialize(t):
-            d = t.detach().cpu().view(-1).numpy().astype(np.float32)
-            b = struct.pack(f'{len(d)}f', *d)
-            f.write(b)
-
-        # first write out the header
-        hidden_dim = self.layers[0].feed_forward.w1.weight.shape[0]
-        p = self.params
-        n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
-        header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
-                                       n_kv_heads, p.vocab_size, p.max_seq_len)
-        f.write(header)
-
-        # next write out the embedding weights
-        serialize(self.tok_embeddings.weight)
-
-        # now all the layers
-        # attention weights
-        for layer in self.layers:
-            serialize(layer.attention_norm.weight)
-        for layer in self.layers:
-            serialize(layer.attention.wq.weight)
-        for layer in self.layers:
-            serialize(layer.attention.wk.weight)
-        for layer in self.layers:
-            serialize(layer.attention.wv.weight)
-        for layer in self.layers:
-            serialize(layer.attention.wo.weight)
-        # ffn weights
-        for layer in self.layers:
-            serialize(layer.ffn_norm.weight)
-        for layer in self.layers:
-            serialize(layer.feed_forward.w1.weight)
-        for layer in self.layers:
-            serialize(layer.feed_forward.w2.weight)
-        for layer in self.layers:
-            serialize(layer.feed_forward.w3.weight)
-        # final rmsnorm
-        serialize(self.norm.weight)
-        # note: no need to write final classifier weights due to weight sharing
-        # freqs_cis
-        serialize(self.freqs_cos[:p.max_seq_len])
-        serialize(self.freqs_sin[:p.max_seq_len])
-
-        # write to binary file
-        f.close()
-        print(f"wrote {filepath}")

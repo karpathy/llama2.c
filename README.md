@@ -65,13 +65,13 @@ Quick note on sampling, the recommendation for ~best results is to sample with `
 ## Meta's Llama 2 models
 
 As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). So Step 1, get the Llama 2 checkpoints by following the [Meta instructions](https://github.com/facebookresearch/llama). Once we have those checkpoints, we have to convert them into the llama2.c format.
-For this we need to install the python dependencies (`pip install -r requirements.txt`) and then use the `export_meta_llama_bin.py` file, e.g. for 7B model:
+For this we need to install the python dependencies (`pip install -r requirements.txt`) and then use the `export.py` file, e.g. for 7B model:
 
 ```bash
-python export_meta_llama_bin.py path/to/llama/model/7B llama2_7b.bin
+python export.py llama2_7b.bin --meta-llama path/to/llama/model/7B
 ```
 
-The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts, the 13B export currently doesn't work for unknown reasons (accepting PRs for fix). We can run the model as normal:
+The export will take ~10 minutes or so and generate a 26GB file (the weights of the 7B model in float32) called `llama2_7b.bin` in the current directory. It has been [reported](https://github.com/karpathy/llama2.c/pull/85) that despite efforts. I would not attempt to run anything above 7B right now for two reasons: first, 13B+ currently doesn't work because of integer flow in pointer arithmetic, which is yet to be fixed, and second, even if it were fixed, this repo is doing float32 inference right now, so it would be fairly unusably slow. Once the export is done, we can run it:
 
 ```bash
 ./run llama2_7b.bin
@@ -82,6 +82,10 @@ This ran at about 4 tokens/s compiled with [OpenMP](#OpenMP) on 96 threads on my
 > The purpose of this document is to highlight the state-of-the-art of CoO generation technologies, both recent developments and those in commercial use. The focus is on the technologies with the highest merit to become the dominating processes of the future and therefore to be technologies of interest to S&amp;T ... R&amp;D. As such, CoO generation technologies developed in Russia, Japan and Europe are described in some depth. The document starts with an introduction to cobalt oxides as complex products and a short view on cobalt as an essential material. The document continues with the discussion of the available CoO generation processes with respect to energy and capital consumption as well as to environmental damage.
 
 base models... ¯\\_(ツ)_/¯. Since we can inference the base model, it should be possible to also inference the chat model quite easily, and have a conversation with it. And if we can find a way to run 7B more efficiently, we can start adding LoRA to our training script, and going wild with finetunes all within the repo!
+
+## hugginface models
+
+We can load any huggingface models that use the Llama 2 architecture. See the script [export.py](export.py) and the `--hf` flag to export the model .bin file.
 
 ## models
 
@@ -217,7 +221,8 @@ When you run inference make sure to use OpenMP flags to set the number of thread
 OMP_NUM_THREADS=4 ./run out/model.bin
 ```
 
-Depending on your system resources you may want to tweak these hyperparameters and use more threads. But more is not always better, usually this is a bit U shaped.
+Depending on your system resources you may want to tweak these hyperparameters and use more threads. But more is not always better, usually this is a bit U shaped. In particular, if your CPU has SMT (multithreading), try setting the number of threads to the number of physical cores rather than logical cores. The performance difference can be large due to cache thrashing and communication overhead. The PyTorch documentation [CPU specific optimizations
+](https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html#cpu-specific-optimizations) has some good information that applies here too.
 
 ## platforms
 
@@ -271,6 +276,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2.rs](https://github.com/leo-du/llama2.rs) by @[leo-du](https://github.com/leo-du): A Rust port of this project
   - [llama2-rs](https://github.com/danielgrittner/llama2-rs) by @[danielgrittner](https://github.com/danielgrittner): a Rust port of this project
   - [llama2.rs](https://github.com/lintian06/llama2.rs) by @[lintian06](https://github.com/lintian06): A Rust port of this project
+  - [pecca.rs](https://github.com/rahoua/pecca-rs) by @[rahoua](https://github.com/rahoua): A Rust port leveraging [ndarray](https://github.com/rust-ndarray/ndarray), supports BLAS.
 - Go
   - [go-llama2](https://github.com/tmc/go-llama2) by @[tmc](https://github.com/tmc): a Go port of this project
   - [llama2.go](https://github.com/nikolaydubina/llama2.go) by @[nikolaydubina](https://github.com/nikolaydubina): a Go port of this project
@@ -301,6 +307,8 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2.py](https://github.com/tairov/llama2.py) by @[tairov](https://github.com/tairov): a simple one file pure Python port of this project with zero dependencies
 - C#
   - [llama2.cs](https://github.com/trrahul/llama2.cs) by @[trrahul](https://github.com/trrahul): a C# port of this project
+- Dart
+  - [llama2.dart](https://github.com/yiminghan/llama2.dart) by @[yiminghan](https://github.com/yiminghan/llama2.dart): one-file dart port of this project, works with Flutter!
 - WebAssembly
   - [icpp-llm](https://github.com/icppWorld/icpp-llm): LLMs for the Internet Computer
 - [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @[trholding](https://github.com/trholding): Standalone, Bootable & Portable Binary Llama 2
@@ -308,12 +316,12 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## unsorted todos
 
+- support Llama 2 7B Chat models with a Chat UI/UX in run.c, very similar to llama.cpp
+- ability to calculate perplexity in run.c, exactly as done in llama.cpp
+- add support in run.c of reading version 1+ files from export, later deprecate "version 0"
+- runq.c (int8 quantization) add
+- run.cu (CUDA) investigate and merge
 - make it easier to add a new dataset with not too much pain
-- should calculate freq_cis online in the script run.c instead of loading them
-- int4/8 quantization
-- export the model in a more sensible output format with a proper header, etc.
-- support Llama 2 7B Chat models and tune run.c to Chat UI/UX
-- llama2.cu investigate and merge
 - (LoRA) finetuning and export of Llama 2 models
 
 ## License
