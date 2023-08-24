@@ -327,9 +327,10 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - support Llama 2 7B Chat models with a Chat UI/UX in run.c, very similar to llama.cpp
 - ability to calculate perplexity in run.c, exactly as done in llama.cpp
 - add support in run.c of reading version 1+ files from export, later deprecate "version 0"
-- add more tests inside [test.c](test.c) (call for help!)
+- add more tests in [test.c](test.c)
 - runq.c (int8 quantization) add
 - run.cu (CUDA) investigate and merge
+- add an Engine class that serves the model ~efficiently but in PyTorch (see [Issue 346](https://github.com/karpathy/llama2.c/issues/346))
 - make it easier to add a new dataset with not too much pain
 - (LoRA) finetuning and export of Llama 2 models
 
