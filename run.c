@@ -14,7 +14,7 @@
     #include <sys/mman.h>
 #endif
 // ----------------------------------------------------------------------------
-// Transformer and RunState structs, and related memory management
+// Transformer model
 
 typedef struct {
     int dim; // transformer dimension
@@ -64,6 +64,16 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
+typedef struct {
+    Config config; // the hyperparameters of the architecture (the blueprint)
+    TransformerWeights weights; // the weights of the model
+    RunState state; // buffers for the "wave" of activations in the forward pass
+    // some more state needed to properly clean up the memory mapping (sigh)
+    int fd; // file descriptor for memory mapping
+    float* data; // memory mapped data pointer
+    ssize_t file_size; // size of the checkpoint file in bytes
+} Transformer;
+
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
@@ -103,10 +113,7 @@ void free_run_state(RunState* s) {
     free(s->value_cache);
 }
 
-// ----------------------------------------------------------------------------
-// initialization: read from checkpoint
-
-void checkpoint_init_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights) {
+void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights) {
     int head_size = p->dim / p->n_heads;
     w->token_embedding_table = ptr;
     ptr += p->vocab_size * p->dim;
@@ -154,11 +161,26 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
     *data = mmap(NULL, *file_size, PROT_READ, MAP_PRIVATE, *fd, 0);
     if (*data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); exit(EXIT_FAILURE); }
     float* weights_ptr = *data + sizeof(Config)/sizeof(float);
-    checkpoint_init_weights(weights, config, weights_ptr, shared_weights);
+    memory_map_weights(weights, config, weights_ptr, shared_weights);
+}
+
+void build_transformer(Transformer *t, char* checkpoint_path) {
+    // read in the Config and the Weights from the checkpoint
+    read_checkpoint(checkpoint_path, &t->config, &t->weights, &t->fd, &t->data, &t->file_size);
+    // allocate the RunState buffers
+    malloc_run_state(&t->state, &t->config);
+}
+
+void free_transformer(Transformer* t) {
+    // close the memory mapping
+    if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
+    if (t->fd != -1) { close(t->fd); }
+    // free the RunState buffers
+    free_run_state(&t->state);
 }
 
 // ----------------------------------------------------------------------------
-// neural net blocks
+// neural net blocks; the dynamics of the Transformer
 
 void rmsnorm(float* o, float* x, float* weight, int size) {
     // calculate sum of squares
@@ -209,9 +231,12 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     }
 }
 
-void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w) {
+float* forward(Transformer* transformer, int token, int pos) {
 
     // a few convenience variables
+    Config* p = &transformer->config;
+    TransformerWeights* w = &transformer->weights;
+    RunState* s = &transformer->state;
     float *x = s->x;
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
@@ -220,7 +245,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     int head_size = dim / p->n_heads;
 
     // copy the token embedding into x
-    float* content_row = &(w->token_embedding_table[token * dim]);
+    float* content_row = w->token_embedding_table + token * dim;
     memcpy(x, content_row, dim*sizeof(*x));
 
     // forward all the layers
@@ -314,14 +339,14 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
-        // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
+        // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
-            s->hb[i] = s->hb[i] * (1.0f / (1.0f + expf(-s->hb[i])));
-        }
-
-        // elementwise multiply with w3(x)
-        for (int i = 0; i < hidden_dim; i++) {
-            s->hb[i] = s->hb[i] * s->hb2[i];
+            float val = s->hb[i];
+            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+            val *= (1.0f / (1.0f + expf(-val)));
+            // elementwise multiply with w3(x)
+            val *= s->hb2[i];
+            s->hb[i] = val;
         }
 
         // final matmul to get the output of the ffn
@@ -338,18 +363,88 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
     // classifier into logits
     matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
+    return s->logits;
 }
 
 // ----------------------------------------------------------------------------
-// byte pair encoding (BPE) tokenizer, encodes strings into tokens so we can prompt
+// The Byte Pair Encoding (BPE) Tokenizer that translates strings <-> tokens
 
 typedef struct {
     char *str;
     int id;
 } TokenIndex;
 
+typedef struct {
+    char** vocab;
+    float* vocab_scores;
+    TokenIndex *sorted_vocab;
+    int vocab_size;
+    unsigned int max_token_length;
+    unsigned char byte_pieces[512]; // stores all single-byte strings
+} Tokenizer;
+
 int compare_tokens(const void *a, const void *b) {
     return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
+}
+
+void build_tokenizer(Tokenizer* t, char* tokenizer_path, int vocab_size) {
+    // i should have written the vocab_size into the tokenizer file... sigh
+    t->vocab_size = vocab_size;
+    // malloc space to hold the scores and the strings
+    t->vocab = (char**)malloc(vocab_size * sizeof(char*));
+    t->vocab_scores = (float*)malloc(vocab_size * sizeof(float));
+    t->sorted_vocab = NULL; // initialized lazily
+    for (int i = 0; i < 256; i++) {
+        t->byte_pieces[i * 2] = (unsigned char)i;
+        t->byte_pieces[i * 2 + 1] = '\0';
+    }
+    // read in the file
+    FILE *file = fopen(tokenizer_path, "rb");
+    if (!file) { fprintf(stderr, "couldn't load %s\n", tokenizer_path); exit(EXIT_FAILURE); }
+    if (fread(&t->max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+    int len;
+    for (int i = 0; i < vocab_size; i++) {
+        if (fread(t->vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE);}
+        if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+        t->vocab[i] = (char *)malloc(len + 1);
+        if (fread(t->vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+        t->vocab[i][len] = '\0'; // add the string terminating token
+    }
+    fclose(file);
+}
+
+void free_tokenizer(Tokenizer* t) {
+    for (int i = 0; i < t->vocab_size; i++) { free(t->vocab[i]); }
+    free(t->vocab);
+    free(t->vocab_scores);
+    free(t->sorted_vocab);
+}
+
+char* decode(Tokenizer* t, int prev_token, int token) {
+    char *piece = t->vocab[token];
+    // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
+    if (prev_token == 1 && piece[0] == ' ') { piece++; }
+    // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
+    // parse this and convert and return the actual byte
+    unsigned char byte_val;
+    if (sscanf(piece, "<0x%02hhX>", &byte_val) == 1) {
+        piece = (char*)t->byte_pieces + byte_val * 2;
+    }
+    return piece;
+}
+
+void safe_printf(char *piece) {
+    // piece might be a raw byte token, and we only want to print printable chars or whitespace
+    // because some of the other bytes can be various control codes, backspace, etc.
+    if (piece == NULL) { return; }
+    if (piece[0] == '\0') { return; }
+    if (piece[1] == '\0') {
+        unsigned char byte_val = piece[0];
+        if (!(isprint(byte_val) || isspace(byte_val))) {
+            return; // bad byte, don't print it
+        }
+    }
+    printf("%s", piece);
 }
 
 int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
@@ -359,23 +454,40 @@ int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     return res != NULL ? res->id : -1;
 }
 
-void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, unsigned int max_token_length, int *tokens, int *n_tokens) {
+void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens) {
+    // encode the string text (input) into an upper-bound preallocated tokens[] array
+    // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
+    if (text == NULL) { fprintf(stderr, "cannot encode NULL text\n"); exit(EXIT_FAILURE); }
 
-    // sort vocabulary
-    TokenIndex *sorted_vocab = malloc(vocab_size * sizeof(TokenIndex));
-    for (int i = 0; i < vocab_size; i++) {
-        sorted_vocab[i].str = vocab[i];
-        sorted_vocab[i].id = i;
+    if (t->sorted_vocab == NULL) {
+        // lazily malloc and sort the vocabulary
+        t->sorted_vocab = malloc(t->vocab_size * sizeof(TokenIndex));
+        for (int i = 0; i < t->vocab_size; i++) {
+            t->sorted_vocab[i].str = t->vocab[i];
+            t->sorted_vocab[i].id = i;
+        }
+        qsort(t->sorted_vocab, t->vocab_size, sizeof(TokenIndex), compare_tokens);
     }
-    qsort(sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
 
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
-    char* str_buffer = malloc((max_token_length*2 +1 +2) * sizeof(char)); // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_lenght is 1)
+    // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_length is 1)
+    char* str_buffer = malloc((t->max_token_length*2 +1 +2) * sizeof(char));
     size_t str_len = 0;
 
+    // start at 0 tokens
+    *n_tokens = 0;
+
+    // add optional BOS (=1) token, if desired
+    if (bos) tokens[(*n_tokens)++] = 1;
+
     // add_dummy_prefix is true by default
-    tokens[0] = str_lookup(" ", sorted_vocab, vocab_size);
-    *n_tokens = 1; // the number of tokens
+    // so prepend a dummy prefix token to the input string, but only if text != ""
+    // TODO: pretty sure this isn't correct in the general case but I don't have the
+    // energy to read more of the sentencepiece code to figure out what it's doing
+    if (text[0] != '\0') {
+        int dummy_prefix = str_lookup(" ", t->sorted_vocab, t->vocab_size);
+        tokens[(*n_tokens)++] = dummy_prefix;
+    }
 
     // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
     // Code point ↔ UTF-8 conversion
@@ -410,7 +522,7 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
         }
 
         // ok c+1 is not a continuation byte, so we've read in a full codepoint
-        int id = str_lookup(str_buffer, sorted_vocab, vocab_size);
+        int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
 
         if (id != -1) {
             // we found this codepoint in vocab, add it as a token
@@ -434,11 +546,11 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
 
         for (int i=0; i < (*n_tokens-1); i++) {
             // check if we can merge the pair (tokens[i], tokens[i+1])
-            sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i+1]]);
-            int id = str_lookup(str_buffer, sorted_vocab, vocab_size);
-            if (id != -1 && vocab_scores[id] > best_score) {
+            sprintf(str_buffer, "%s%s", t->vocab[tokens[i]], t->vocab[tokens[i+1]]);
+            int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
+            if (id != -1 && t->vocab_scores[id] > best_score) {
                 // this merge pair exists in vocab! record its score and position
-                best_score = vocab_scores[id];
+                best_score = t->vocab_scores[id];
                 best_id = id;
                 best_idx = i;
             }
@@ -457,33 +569,14 @@ void bpe_encode(char *text, char **vocab, float *vocab_scores, int vocab_size, u
         (*n_tokens)--; // token length decreased
     }
 
+    // add optional EOS (=2) token, if desired
+    if (eos) tokens[(*n_tokens)++] = 2;
+
     free(str_buffer);
-    free(sorted_vocab);
 }
 
 // ----------------------------------------------------------------------------
-// utilities: time / rng
-
-long time_in_ms() {
-    // return time in milliseconds, for benchmarking the model speed
-    struct timespec time;
-    clock_gettime(CLOCK_REALTIME, &time);
-    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
-}
-
-unsigned long long rng_seed;
-unsigned int random_u32() {
-    // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
-    rng_seed ^= rng_seed >> 12;
-    rng_seed ^= rng_seed << 25;
-    rng_seed ^= rng_seed >> 27;
-    return (rng_seed * 0x2545F4914F6CDD1Dull) >> 32;
-}
-float random_f32() { // random float32 in [0,1)
-    return (random_u32() >> 8) / 16777216.0f;
-}
-
-// ----------------------------------------------------------------------------
+// The Sampler, which takes logits and returns a sampled token
 // sampling can be done in a few ways: greedy argmax, sampling, top-p sampling
 
 typedef struct {
@@ -491,7 +584,15 @@ typedef struct {
     int index;
 } ProbIndex; // struct used when sorting probabilities during top-p sampling
 
-int argmax(float* probabilities, int n) {
+typedef struct {
+    int vocab_size;
+    ProbIndex* probindex; // buffer used in top-p sampling
+    float temperature;
+    float topp;
+    unsigned long long rng_state;
+} Sampler;
+
+int sample_argmax(float* probabilities, int n) {
     // return the index that has the highest probability
     int max_i = 0;
     float max_p = probabilities[0];
@@ -504,13 +605,13 @@ int argmax(float* probabilities, int n) {
     return max_i;
 }
 
-int sample(float* probabilities, int n) {
+int sample_mult(float* probabilities, int n, float coin) {
     // sample index from probabilities (they must sum to 1!)
-    float r = random_f32();
+    // coin is a random number in [0, 1), usually from random_f32()
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probabilities[i];
-        if (r < cdf) {
+        if (coin < cdf) {
             return i;
         }
     }
@@ -525,10 +626,11 @@ int compare(const void* a, const void* b) {
     return 0;
 }
 
-int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
+int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex, float coin) {
     // top-p sampling (or "nucleus sampling") samples from the smallest set of
     // tokens that exceed probability topp. This way we never sample tokens that
     // have very low probabilities and are less likely to go "off the rails".
+    // coin is a random number in [0, 1), usually from random_f32()
 
     int n0 = 0;
     // quicksort indices in descending order of probabilities
@@ -556,7 +658,7 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     }
 
     // sample from the truncated list
-    float r = random_f32() * cumulative_prob;
+    float r = coin * cumulative_prob;
     float cdf = 0.0f;
     for (int i = 0; i <= last_idx; i++) {
         cdf += probindex[i].prob;
@@ -567,150 +669,105 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex) {
     return probindex[last_idx].index; // in case of rounding errors
 }
 
-
-// ----------------------------------------------------------------------------
-// int main
-
-void error_usage() {
-    fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
-    fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
-    fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -t <float>  temperature, default 1.0\n");
-    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling. default 0.9\n");
-    fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
-    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
-    fprintf(stderr, "  -i <string> input prompt\n");
-    fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
-    exit(EXIT_FAILURE);
+void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed) {
+    sampler->vocab_size = vocab_size;
+    sampler->temperature = temperature;
+    sampler->topp = topp;
+    sampler->rng_state = rng_seed;
+    // buffer only used with nucleus sampling; may not need but it's ~small
+    sampler->probindex = malloc(sampler->vocab_size * sizeof(ProbIndex));
 }
 
-int main(int argc, char *argv[]) {
+void free_sampler(Sampler* sampler) {
+    free(sampler->probindex);
+}
 
-    // default inits
-    char *checkpoint = NULL;  // e.g. out/model.bin
-    char *tokenizer = "tokenizer.bin";
-    float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-    float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    rng_seed = 0; // seed rng with time by default
-    int steps = 256;          // number of steps to run for
-    char *prompt = NULL;      // prompt string
+unsigned int random_u32(unsigned long long *state) {
+    // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
+    *state ^= *state >> 12;
+    *state ^= *state << 25;
+    *state ^= *state >> 27;
+    return (*state * 0x2545F4914F6CDD1Dull) >> 32;
+}
+float random_f32(unsigned long long *state) { // random float32 in [0,1)
+    return (random_u32(state) >> 8) / 16777216.0f;
+}
 
-    // poor man's C argparse so we can override the defaults above from the command line
-    if (argc >= 2) { checkpoint = argv[1]; } else { error_usage(); }
-    for (int i = 2; i < argc; i+=2) {
-        // do some basic validation
-        if (i + 1 >= argc) { error_usage(); } // must have arg after flag
-        if (argv[i][0] != '-') { error_usage(); } // must start with dash
-        if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
-        // read in the args
-        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
-        else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
-        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
-        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
-        else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
-        else if (argv[i][1] == 'z') { tokenizer = argv[i + 1]; }
-        else { error_usage(); }
-    }
-    if(rng_seed == 0) { rng_seed =  (unsigned int)time(NULL);}
-
-    // read in the model.bin file
-    Config config;
-    TransformerWeights weights;
-    int fd = 0;         // file descriptor for memory mapping
-    float* data = NULL; // memory mapped data pointer
-    ssize_t file_size;  // size of the checkpoint file in bytes
-    read_checkpoint(checkpoint, &config, &weights, &fd, &data, &file_size);
-
-    // right now we cannot run for more than config.seq_len steps
-    if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
-
-    // read in the tokenizer .bin file
-    char** vocab = (char**)malloc(config.vocab_size * sizeof(char*));
-    float* vocab_scores = (float*)malloc(config.vocab_size * sizeof(float));
-    unsigned int max_token_length;
-    {
-        FILE *file = fopen(tokenizer, "rb");
-        if (!file) { fprintf(stderr, "couldn't load %s\n", tokenizer); return 1; }
-        if (fread(&max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-        int len;
-        for (int i = 0; i < config.vocab_size; i++) {
-            if (fread(vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1;}
-            if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-            vocab[i] = (char *)malloc(len + 1);
-            if (fread(vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); return 1; }
-            vocab[i][len] = '\0'; // add the string terminating token
+int sample(Sampler* sampler, float* logits) {
+    // sample the token given the logits and some hyperparameters
+    int next;
+    if (sampler->temperature == 0.0f) {
+        // greedy argmax sampling: take the token with the highest probability
+        next = sample_argmax(logits, sampler->vocab_size);
+    } else {
+        // apply the temperature to the logits
+        for (int q=0; q<sampler->vocab_size; q++) { logits[q] /= sampler->temperature; }
+        // apply softmax to the logits to get the probabilities for next token
+        softmax(logits, sampler->vocab_size);
+        // flip a (float) coin (this is our source of entropy for sampling)
+        float coin = random_f32(&sampler->rng_state);
+        // we sample from this distribution to get the next token
+        if (sampler->topp <= 0 || sampler->topp >= 1) {
+            // simply sample from the predicted probability distribution
+            next = sample_mult(logits, sampler->vocab_size, coin);
+        } else {
+            // top-p (nucleus) sampling, clamping the least likely tokens to zero
+            next = sample_topp(logits, sampler->vocab_size, sampler->topp, sampler->probindex, coin);
         }
-        fclose(file);
     }
+    return next;
+}
 
-    // create and init the application RunState
-    RunState state;
-    malloc_run_state(&state, &config);
-    ProbIndex *probindex = malloc(config.vocab_size * sizeof(ProbIndex)); // buffer used in top-p sampling
+// ----------------------------------------------------------------------------
+// utilities: time
 
-    // process the prompt, if any
-    int *prompt_tokens = NULL;
+long time_in_ms() {
+    // return time in milliseconds, for benchmarking the model speed
+    struct timespec time;
+    clock_gettime(CLOCK_REALTIME, &time);
+    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+}
+
+// ----------------------------------------------------------------------------
+// generation loop
+
+void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
+
+    // encode the (string) prompt into tokens sequence
     int num_prompt_tokens = 0;
-    if (prompt != NULL) {
-        prompt_tokens = (int*)malloc((strlen(prompt)+1) * sizeof(int));
-        bpe_encode(prompt, vocab, vocab_scores, config.vocab_size, max_token_length, prompt_tokens, &num_prompt_tokens);
+    int* prompt_tokens = (int*)malloc((strlen(prompt)+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
+    encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+    if (num_prompt_tokens < 1) {
+        fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+        exit(EXIT_FAILURE);
     }
 
     // start the main loop
     long start = 0;  // used to time our code, only initialized after first iteration
     int next;        // will store the next token in the sequence
-    int token = 1;   // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
+    int token = prompt_tokens[0]; // kick off with the first token in the prompt
     int pos = 0;     // position in the sequence
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
-        transformer(token, pos, &config, &state, &weights);
+        float* logits = forward(transformer, token, pos);
 
         // advance the state state machine
-        if(pos < num_prompt_tokens) {
+        if (pos < num_prompt_tokens - 1) {
             // if we are still processing the input prompt, force the next prompt token
-            next = prompt_tokens[pos];
+            next = prompt_tokens[pos + 1];
         } else {
-            // sample the next token
-            if (temperature == 0.0f) {
-                // greedy argmax sampling: take the token with the highest probability
-                next = argmax(state.logits, config.vocab_size);
-            } else {
-                // apply the temperature to the logits
-                for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
-                // apply softmax to the logits to get the probabilities for next token
-                softmax(state.logits, config.vocab_size);
-                // we sample from this distribution to get the next token
-                if (topp <= 0 || topp >= 1) {
-                    // simply sample from the predicted probability distribution
-                    next = sample(state.logits, config.vocab_size);
-                } else {
-                    // top-p (nucleus) sampling, clamping the least likely tokens to zero
-                    next = sample_topp(state.logits, config.vocab_size, topp, probindex);
-                }
-            }
+            // otherwise sample the next token from the logits
+            next = sample(sampler, logits);
         }
         pos++;
 
-        // data-dependent terminating condition: the BOS (1) token delimits sequences
+        // data-dependent terminating condition: the BOS (=1) token delimits sequences
         if (next == 1) { break; }
 
-        // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
-        char *token_str = (token == 1 && vocab[next][0] == ' ') ? vocab[next]+1 : vocab[next];
-        // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
-        unsigned char byte_val;
-        if (sscanf(token_str, "<0x%02hhX>", &byte_val) == 1) {
-            // ok this token is a raw byte token, carefuly to only print printable chars or whitespace
-            // some of the other bytes can be various control codes, backspace, etc. => skip
-            if (isprint(byte_val) || isspace(byte_val)) {
-                char byte_piece[2];
-                byte_piece[0] = byte_val;
-                byte_piece[1] = '\0';
-                printf("%s", byte_piece);
-            }
-        } else {
-            printf("%s", token_str);
-        }
+        // print the token as string, decode it with the Tokenizer object
+        char* piece = decode(tokenizer, token, next);
+        safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
         fflush(stdout);
         token = next;
 
@@ -725,14 +782,80 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
     }
 
+    free(prompt_tokens);
+}
+
+// ----------------------------------------------------------------------------
+// CLI, include only if not testing
+#ifndef TESTING
+
+void error_usage() {
+    fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
+    fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -t <float>  temperature in [0,inf], default 1.0\n");
+    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling in [0,1] default 0.9\n");
+    fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
+    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
+    fprintf(stderr, "  -i <string> input prompt\n");
+    fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
+    exit(EXIT_FAILURE);
+}
+
+int main(int argc, char *argv[]) {
+
+    // default parameters
+    char *checkpoint_path = NULL;  // e.g. out/model.bin
+    char *tokenizer_path = "tokenizer.bin";
+    float temperature = 1.0f; // 0.0 = greedy deterministic. 1.0 = original. don't set higher
+    float topp = 0.9f;        // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+    int steps = 256;          // number of steps to run for
+    char *prompt = "";        // prompt string
+    unsigned long long rng_seed = 0; // seed rng with time by default
+
+    // poor man's C argparse so we can override the defaults above from the command line
+    if (argc >= 2) { checkpoint_path = argv[1]; } else { error_usage(); }
+    for (int i = 2; i < argc; i+=2) {
+        // do some basic validation
+        if (i + 1 >= argc) { error_usage(); } // must have arg after flag
+        if (argv[i][0] != '-') { error_usage(); } // must start with dash
+        if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
+        // read in the args
+        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
+        else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
+        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
+        else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
+        else if (argv[i][1] == 'z') { tokenizer_path = argv[i + 1]; }
+        else { error_usage(); }
+    }
+
+    // parameter validation/overrides
+    if (rng_seed <= 0) rng_seed = (unsigned int)time(NULL);
+    if (temperature < 0.0) temperature = 0.0;
+    if (topp < 0.0 || 1.0 < topp) topp = 0.9;
+    if (steps < 0) steps = 0;
+
+    // build the Transformer via the model .bin file
+    Transformer transformer;
+    build_transformer(&transformer, checkpoint_path);
+    if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; // ovrerride to ~max length
+
+    // build the Tokenizer via the tokenizer .bin file
+    Tokenizer tokenizer;
+    build_tokenizer(&tokenizer, tokenizer_path, transformer.config.vocab_size);
+
+    // build the Sampler
+    Sampler sampler;
+    build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
+
+    // run!
+    generate(&transformer, &tokenizer, &sampler, prompt, steps);
+
     // memory and file handles cleanup
-    free_run_state(&state);
-    free(probindex);
-    for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
-    free(vocab);
-    free(vocab_scores);
-    if (prompt_tokens != NULL) free(prompt_tokens);
-    if (data != MAP_FAILED) munmap(data, file_size);
-    if (fd != -1) close(fd);
+    free_sampler(&sampler);
+    free_tokenizer(&tokenizer);
+    free_transformer(&transformer);
     return 0;
 }
+#endif
