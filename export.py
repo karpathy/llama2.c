@@ -43,6 +43,12 @@ def serialize_int8(file, tensor):
     b = struct.pack(f'{len(d)}b', *d)
     file.write(b)
 
+def serialize_half(file, tensor):
+    """ writes one fp16 tensor to file that is open in wb mode """
+    d = tensor.detach().cpu().view(-1).to(torch.half).numpy()
+    b = struct.pack(f'{len(d)}e', *d)
+    file.write(b)
+
 def quantize_q80(w, group_size):
     """
     takes a tensor and returns the Q8_0 quantized version
@@ -68,12 +74,6 @@ def quantize_q80(w, group_size):
     # find the max error across all groups
     maxerr = err.max().item()
     return int8val, scale, maxerr
-
-def serialize_half(file, tensor):
-    """ writes one fp16 tensor to file that is open in wb mode """
-    d = tensor.detach().cpu().view(-1).to(torch.half).numpy()
-    b = struct.pack(f'{len(d)}e', *d)
-    file.write(b)
 
 # -----------------------------------------------------------------------------
 # legacy
