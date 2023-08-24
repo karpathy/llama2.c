@@ -18,56 +18,12 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from tokenizer import Tokenizer
+import dataset
 
 DATA_CACHE_DIR = "data"
 
-def download_file(url: str, fname: str, chunk_size=1024):
-    """Helper function to download a file from a given url"""
-    resp = requests.get(url, stream=True)
-    total = int(resp.headers.get("content-length", 0))
-    with open(fname, "wb") as file, tqdm(
-        desc=fname,
-        total=total,
-        unit="iB",
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as bar:
-        for data in resp.iter_content(chunk_size=chunk_size):
-            size = file.write(data)
-            bar.update(size)
 
-
-def download():
-    """Downloads the TinyStories dataset to DATA_CACHE_DIR"""
-    os.makedirs(DATA_CACHE_DIR, exist_ok=True)
-
-    # download the TinyStories dataset, unless it's already downloaded
-    data_url = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStories_all_data.tar.gz"
-    data_filename = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data.tar.gz")
-    if not os.path.exists(data_filename):
-        print(f"Downloading {data_url} to {data_filename}...")
-        download_file(data_url, data_filename)
-    else:
-        print(f"{data_filename} already exists, skipping download...")
-
-    # unpack the tar.gz file into all the data shards (json files)
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir, exist_ok=True)
-        print(f"Unpacking {data_filename}...")
-        os.system(f"tar -xzf {data_filename} -C {data_dir}")
-    else:
-        print(f"{data_dir} already exists, skipping unpacking...")
-
-    # print a single example just for debugging and such
-    shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
-    with open(shard_filenames[0], "r") as f:
-        data = json.load(f)
-    print("Download done.")
-    print(f"Number of shards: {len(shard_filenames)}")
-    print(f"Example story:\n{data[0]}")
-
-def train_vocab(vocab_size):
+def train_vocab(dataset:dataset.Dataset, vocab_size):
     """
     Trains a custom sentencepiece tokenizer on the TinyStories dataset.
     The custom tokenizer files will be saved in DATA_CACHE_DIR/tok{N} directories,
@@ -83,16 +39,12 @@ def train_vocab(vocab_size):
 
     # 1) export a large chunk of text as a single text file tiny.txt
     tiny_file = os.path.join(DATA_CACHE_DIR, "tiny.txt")
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
-    shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+    shard_filenames = dataset.list_files()
 
     print(f"Writing temporary file {tiny_file} with {num_shards} shards...")
     with open(tiny_file, "w") as of:
         for shard in tqdm(shard_filenames[:num_shards]):
-            with open(shard, "r") as f:
-                data = json.load(f)
-            for example in data:
-                text = example["story"]
+            for text in dataset.examples_of(shard):
                 text = text.strip()
                 of.write(text + "\n")
     print(f"Size is: {os.path.getsize(tiny_file) / 1024 / 1024:.2f} MB")
@@ -118,30 +70,25 @@ def train_vocab(vocab_size):
     print("Done.")
 
 
-def process_shard(args, vocab_size):
+def process_shard(args, dataset, vocab_size):
     shard_id, shard = args
     tokenizer_model = get_tokenizer_model_path(vocab_size)
     enc = Tokenizer(tokenizer_model)
-    with open(shard, "r") as f:
-        data = json.load(f)
+    data = dataset.examples_of(shard)
     all_tokens = []
     for example in tqdm(data, position=shard_id):
-        text = example["story"]
+        text = example
         text = text.strip()  # get rid of leading/trailing whitespace
         tokens = enc.encode(text, bos=True, eos=False)  # encode the text, use BOS
         all_tokens.extend(tokens)
     # convert to uint16 nparray
     all_tokens = np.array(all_tokens, dtype=np.uint16)
     # calculate the output filename
-    if vocab_size == 0:
-        # if we're using Llama 2, just save the tokenized file in the same dir
-        tokenized_filename = shard.replace(".json", ".bin")
-    else:
-        # save .bin files into a new tok{N} directory
-        bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
-        shard_basename = os.path.basename(shard)
-        bin_basename = shard_basename.replace(".json", ".bin")
-        tokenized_filename = os.path.join(bin_dir, bin_basename)
+    bin_dir = os.path.join(DATA_CACHE_DIR, get_tokenized_dirname(vocab_size))
+    shard_basename = os.path.basename(shard)
+    bin_basename = f"{shard_basename}.bin"
+    # save .bin files into a new tok{N} directory
+    tokenized_filename = os.path.join(bin_dir, bin_basename)
     # write the bytes
     with open(tokenized_filename, "wb") as f:
         f.write(all_tokens.tobytes())
@@ -150,17 +97,15 @@ def process_shard(args, vocab_size):
     print(f"Saved {tokenized_filename}, average seqlen: {avg_seq_len:.2f}")
 
 
-def pretokenize(vocab_size):
+def pretokenize(dataset: dataset.Dataset, vocab_size):
     # iterate the shards and tokenize all of them one by one
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
-    shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
-    if vocab_size > 0:
-        # .bin files will be saved into tok{N} directory, create it once here
-        bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
-        os.makedirs(bin_dir, exist_ok=True)
+    shard_filenames = dataset.list_files()
+    # .bin files will be saved into tokenized_{N} directory, create it once here
+    bin_dir = os.path.join(DATA_CACHE_DIR, get_tokenized_dirname(vocab_size))
+    os.makedirs(bin_dir, exist_ok=True)
 
     # process all the shards in a process pool
-    fun = partial(process_shard, vocab_size=vocab_size)
+    fun = partial(process_shard, vocab_size=vocab_size, dataset=dataset)
     with ProcessPoolExecutor() as executor:
         executor.map(fun, enumerate(shard_filenames))
     print("Done.")
@@ -175,6 +120,7 @@ class PretokDataset(torch.utils.data.IterableDataset):
         self.max_seq_len = max_seq_len
         self.vocab_size = vocab_size
         self.vocab_source = vocab_source
+        self.dataset = dataset
 
     def __iter__(self):
         # get worker info within a DataLoader
@@ -186,15 +132,8 @@ class PretokDataset(torch.utils.data.IterableDataset):
         seed = 42 + worker_id + 1337 * rank
         rng = random.Random(seed)
         print(f"Created a PretokDataset with rng seed {seed}")
-        if self.vocab_source == "llama2":
-            # the .bin files are right along the .json files
-            bin_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
-            shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
-        elif self.vocab_source == "custom":
-            # the .bin files are in tok{N} directory
-            bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{self.vocab_size}")
-            shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
-        # train/test split. let's use only shard 0 for test split, rest train
+        bin_dir = os.path.join(DATA_CACHE_DIR, get_tokenized_dirname(self.vocab_size if self.vocab_source != "llama2" else 0))
+        shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
         shard_filenames = shard_filenames[1:] if self.split == "train" else shard_filenames[:1]
         assert len(shard_filenames)>0, f"No bin files found in {bin_dir}"
         while True:
@@ -219,6 +158,7 @@ class PretokDataset(torch.utils.data.IterableDataset):
 # -----------------------------------------------------------------------------
 # public interface functions
 
+
 def get_tokenizer_model_path(vocab_size):
     """
     Returns path to the sentencepiece tokenizer model for a given vocab size
@@ -229,6 +169,18 @@ def get_tokenizer_model_path(vocab_size):
         return None
     else:
         return os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}.model")
+
+
+def get_tokenized_dirname(vocab_size:int):
+    """
+    Returns dir name for a given vocab size.
+    For example, it returns:
+        tokenized_3000
+        tokenized_15000
+        tokenized_llama2
+    """
+    suffix = str(vocab_size) if vocab_size > 0 else 'llama2'
+    return f'tokenized_{suffix}'
 
 class Task:
 
@@ -264,12 +216,15 @@ if __name__ == "__main__":
     parser.add_argument("--vocab_size", type=int, default=0, help="pretokenization vocab size. 0 = use Llama 2 tokenizer.")
     args = parser.parse_args()
 
+    ds = dataset.TinyStories(cache_dir=DATA_CACHE_DIR)
+    # ds = dataset.SQLCreateContext(cache_dir=DATA_CACHE_DIR)
+
     # depending on the stage call the appropriate function
     if args.stage == "download":
-        download()
+        ds.download()
     elif args.stage == "train_vocab":
-        train_vocab(vocab_size=args.vocab_size)
+        train_vocab(dataset=ds, vocab_size=args.vocab_size)
     elif args.stage == "pretokenize":
-        pretokenize(vocab_size=args.vocab_size)
+        pretokenize(dataset=ds, vocab_size=args.vocab_size)
     else:
         raise ValueError(f"Unknown stage {args.stage}")
