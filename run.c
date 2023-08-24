@@ -798,6 +798,9 @@ void read_stdin(const char* guide, char* buffer, size_t bufsize) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// chat loop
+
 void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
           char *cli_user_prompt, char *cli_system_prompt, int steps) {
 
@@ -840,7 +843,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
             }
             // render user/system prompts into the Llama 2 Chat schema
             if (pos == 0 && system_prompt[0] != '\0') {
-                char system_template[] = "[INST] <<SYS>>\n%s\n<</SYS>>\n\n%s\n[/INST]";
+                char system_template[] = "[INST] <<SYS>>\n%s\n<</SYS>>\n\n%s [/INST]";
                 sprintf(rendered_prompt, system_template, system_prompt, user_prompt);
             } else {
                 char user_template[] = "[INST] %s [/INST]";
