@@ -100,7 +100,6 @@ def train_vocab(vocab_size):
 
     # 2) train the sentencepiece model
     print("Will now train the vocab...")
-
     spm.SentencePieceTrainer.train(input=tiny_file,
                                    model_prefix=prefix,
                                    model_type="bpe",
@@ -108,6 +107,7 @@ def train_vocab(vocab_size):
                                    self_test_sample_size=0,
                                    input_format="text",
                                    character_coverage=1.0,
+                                   num_threads=os.cpu_count(),
                                    split_digits=True,
                                    allow_whitespace_only_pieces=True,
                                    byte_fallback=True,
