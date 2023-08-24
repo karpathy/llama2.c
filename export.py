@@ -134,7 +134,7 @@ def legacy_export(model, filepath):
 
 # -----------------------------------------------------------------------------
 def legacy_export_half(model, filepath):
-    """ Original export of llama2.c bin files, i.e. version v0 but with export as fp16 and no freq_cis """
+    """ Original export of llama2.c bin files, i.e. version v0 but with export as fp16"""
     out_file = open(filepath, 'wb')
 
     # first write out the header
