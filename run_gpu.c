@@ -27,7 +27,7 @@ $ ./run
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
-#define DEBUG
+// #define DEBUG
 
 void checkGPUError(int line) {
     GLenum err = glGetError();
@@ -1039,7 +1039,6 @@ void free_gpu_program(GPUProgram* prog) {
 }
 
 void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, int outsize, int numSeq) {
-    // printf("reduce_step:%d %d %d %d %d\n", inBuffer, insize, outBuffer, outsize, numSeq);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, inBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, outBuffer);
     glUseProgram(kernel);
@@ -1056,15 +1055,12 @@ void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, i
 }
 
 GLuint reduce_iteration(GLuint kernel_step, GLuint kernel_step_v4, GLuint data, GLuint cache_1, int insize, int numSeq, GLuint* otherBuffer, GLuint* outputAt) {
-    // printf("reduce_iteration:\n");
     int currentStepSize = 0;
     int nextStepSize = insize;
 
     GLuint currentBuffer = cache_1;
     GLuint nextBuffer = data;
     GLuint tmp;
-
-    // printf("nextStepSize=%d\n", nextStepSize);
 
     while (nextStepSize >= 8) {
         tmp = currentBuffer;
@@ -1081,8 +1077,6 @@ GLuint reduce_iteration(GLuint kernel_step, GLuint kernel_step_v4, GLuint data, 
             nextStepSize = ((nextStepSize / 4) + 1) * 4;  //补全到4的倍数
         }
         reduce_step(kernel_step_v4, currentBuffer, currentStepSize / 4, nextBuffer, nextStepSize, numSeq);
-        // printf("it v4:");
-        // dumpGPUArray(nextBuffer, 0, nextStepSize * numSeq);
     }
 
     while (nextStepSize != 1) {
@@ -1101,8 +1095,6 @@ GLuint reduce_iteration(GLuint kernel_step, GLuint kernel_step_v4, GLuint data, 
             nextBuffer = *outputAt;
         }
         reduce_step(kernel_step, currentBuffer, currentStepSize, nextBuffer, nextStepSize, numSeq);
-        // printf("it:");
-        // dumpGPUArray(nextBuffer, 0, nextStepSize * numSeq);
     }
     if (otherBuffer != NULL) {
         *otherBuffer = currentBuffer;
@@ -1111,8 +1103,6 @@ GLuint reduce_iteration(GLuint kernel_step, GLuint kernel_step_v4, GLuint data, 
 }
 
 GLuint reduce_iteration_input(GLuint kernel_step, GLuint kernel_step_v4, GLuint kernel_step_input, GLuint data, GLuint cache_1, GLuint cache_2, int insize, int numSeq, GLuint* otherBuffer, GLuint* outputAt) {
-    // printf("reduce_iteration_input:\n");
-    // dumpGPUArray(data, 0, insize * numSeq);
     int currentStepSize = insize;
     int nextStepSize = currentStepSize / 2;
     if (currentStepSize % 2 == 1) {
@@ -1124,24 +1114,18 @@ GLuint reduce_iteration_input(GLuint kernel_step, GLuint kernel_step_v4, GLuint 
         if (outputAt != NULL) {
             outBuffer = *outputAt;
         }
-        // printf("it input:");
-        // dumpGPUArray(data, 0, currentStepSize * numSeq);
         reduce_step(kernel_step, data, currentStepSize, outBuffer, nextStepSize, numSeq);
-        // printf("it input step:");
-        // dumpGPUArray(outBuffer, 0, nextStepSize * numSeq);
         if (otherBuffer != NULL) {
             *otherBuffer = cache_2;
         }
         return outBuffer;
     } else {
         int nextStepSize_v4 = nextStepSize;
-        if (nextStepSize % 4 != 0 && nextStepSize > 8) {
-            nextStepSize = ((nextStepSize / 4) + 1) * 4;  //补全到4的倍数
+        if (nextStepSize_v4 % 4 != 0 && nextStepSize > 8) {
+            nextStepSize_v4 = ((nextStepSize_v4 / 4) + 1) * 4;  //补全到4的倍数
         }
         reduce_step(kernel_step_input, data, currentStepSize, cache_1, nextStepSize_v4, numSeq);
-        // printf("it v4:");
-        // dumpGPUArray(cache_1, 0, nextStepSize_v4 * numSeq);
-        return reduce_iteration(kernel_step, kernel_step_v4, cache_1, cache_2, nextStepSize, numSeq, otherBuffer, outputAt);
+        return reduce_iteration(kernel_step, kernel_step_v4, cache_1, cache_2, nextStepSize_v4, numSeq, otherBuffer, outputAt);
     }
 }
 
@@ -1188,9 +1172,6 @@ void rmsnorm(GPUProgram* prog, RunState* state, GLuint o, GLuint x, GLuint weigh
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 
-    // printf("nextBuffer:");
-    // dumpGPUArray(nextBuffer, 0, nextStepSize);
-    // printf("sum(rmsnorm)\n");
     nextBuffer = reduce_iteration(
         prog->shader_sum, prog->shader_sum_vec4,
         nextBuffer, currentBuffer, nextStepSize, 1, &currentBuffer, NULL);
@@ -1235,7 +1216,6 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     GLuint resBuffer_max;
     GLuint resBuffer_sum;
 
-    // printf("max\n");
     resBuffer_max = reduce_iteration_input(
         prog->shader_max, prog->shader_max_vec4, prog->shader_max,
         x, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, &currentBuffer, NULL);
@@ -1250,7 +1230,6 @@ void softmax(GPUProgram* prog, RunState* state, GLuint x, int size_x, int size_y
     GPU_CHECK();
 
     // sum
-    // printf("sum\n");
     resBuffer_sum = reduce_iteration_input(
         prog->shader_sum, prog->shader_sum_vec4, prog->shader_sum,
         x, state->mulBuffer_3, state->mulBuffer_4, size_x, size_y, &currentBuffer, NULL);
@@ -1304,7 +1283,6 @@ void transformer_softmax(GPUProgram* prog, RunState* state, GLuint x, int pos, i
 void transformer_sum(GPUProgram* prog, RunState* state, GLuint outMat, GLuint inMat, int size_x, int size_y) {
     //prog, s, s->xb, s->mulBuffer_4, pos + 1, head_size, p->n_heads
     GLuint res = outMat;
-    // printf("transformer_sum\n");
     reduce_iteration_input(
         prog->shader_sum, prog->shader_sum_vec4, prog->shader_sum,
         inMat, state->mulBuffer_1, state->mulBuffer_2, size_x, size_y, NULL, &res);
