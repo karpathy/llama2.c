@@ -586,12 +586,12 @@ void f_silu_elementwise_mul_w3(RunState *s, int hidden_dim) {
 #else
 void f_silu_elementwise_mul_w3(RunState *s, int hidden_dim) {
     for (int i = 0; i < hidden_dim; i++) {
-        s->hb[i] = s->hb[i] * (1.0f / (1.0f + expf(-s->hb[i])));
-    }
-
-    // elementwise multiply with w3(x)
-    for (int i = 0; i < hidden_dim; i++) {
-        s->hb[i] = s->hb[i] * s->hb2[i];
+        float val = s->hb[i];
+        // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+        val *= (1.0f / (1.0f + expf(-val)));
+        // elementwise multiply with w3(x)
+        val *= s->hb2[i];
+        s->hb[i] = val;
     }
 }
 #endif
