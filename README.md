@@ -83,6 +83,18 @@ This ran at about 4 tokens/s compiled with [OpenMP](#OpenMP) on 96 threads on my
 
 base models... ¯\\_(ツ)_/¯. Since we can inference the base model, it should be possible to also inference the chat model quite easily, and have a conversation with it. And if we can find a way to run 7B more efficiently, we can start adding LoRA to our training script, and going wild with finetunes all within the repo!
 
+You can also chat with the Llama Chat models. Export the chat model exactly as above:
+
+```bash
+python export.py llama2_7b_chat.bin --meta-llama /path/to/7B-chat
+```
+
+Then chat with it by specifying the chat mode using the `-m` flag, e.g.:
+
+```bash
+./run llama2_7b_chat.bin -m chat
+```
+
 ## hugginface models
 
 We can load any huggingface models that use the Llama 2 architecture. See the script [export.py](export.py) and the `--hf` flag to export the model .bin file.
@@ -207,8 +219,7 @@ You can also experiment with replacing `gcc` with `clang`.
 
 If compiling with gcc, try experimenting with `-funroll-all-loops`, see PR [#183](https://github.com/karpathy/llama2.c/pull/183)
 
-### OpenMP
-Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention, allowing the work in the loops to be split up over multiple processors.
+**OpenMP**. Big improvements can also be achieved by compiling with OpenMP, which "activates" the `#pragma omp parallel for` inside the matmul and attention, allowing the work in the loops to be split up over multiple processors.
 You'll need to install the OpenMP library and the clang compiler first (e.g. `apt install clang libomp-dev` on ubuntu). Then you can compile with `make runomp`, which does:
 
 ```bash
@@ -324,13 +335,11 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## unsorted todos
 
-- support Llama 2 7B Chat models with a Chat UI/UX in run.c, very similar to llama.cpp
-- ability to calculate perplexity in run.c, exactly as done in llama.cpp
 - add support in run.c of reading version 1+ files from export, later deprecate "version 0"
-- add more tests in [test.c](test.c)
 - runq.c (int8 quantization) add
 - run.cu (CUDA) investigate and merge
-- add an Engine class that serves the model ~efficiently but in PyTorch (see [Issue 346](https://github.com/karpathy/llama2.c/issues/346))
+- add more tests inside [test.c](test.c)
+- add Engine class for use in sample.py that does efficient inference in PyTorch, e.g. KV cache keeping
 - make it easier to add a new dataset with not too much pain
 - (LoRA) finetuning and export of Llama 2 models
 
