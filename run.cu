@@ -497,7 +497,9 @@ __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, flo
 
     // weighted sum of the values, store back into xb
 #if 0
-    // FIXME something is wrong with this code...
+    // using llama2.cu code below in place of this code
+    // this code will require adding a recuction sum of xb[i] across 
+    // all threads.  Instead the code below is very reasonable.
     float* xb = sxb + h * head_size;
     if(threadIdx.x == 0) {
         memset(xb, 0, head_size * sizeof(float));
@@ -513,7 +515,6 @@ __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, flo
             xb[i] += a * v[i];
         }
     }
-    __syncthreads();  // FIXME necessary or not?
 #else
     // llama2.cu reversed the for loops & refactored...
     for (int i = threadIdx.x; i < head_size; i += blockDim.x) {
