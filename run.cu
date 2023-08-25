@@ -16,7 +16,8 @@
 #endif
 
 #ifdef USE_CUDA
-#include <cuda_runtime_api.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
 #include <cub/cub.cuh>
 #endif
 
@@ -227,7 +228,7 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
     // copy mmap data to the gpu first
     float* weights_ptr;
     size_t weights_size = *file_size - sizeof(Config);
-    CUCHK(cudaMalloc((void**)&weights_ptr, weights_size));
+    CUCHK(cudaMalloc((void**)&weights_ptr, weights_size)); // FIXME cudaFree
     CUCHK(cudaMemcpy(weights_ptr, *data + sizeof(Config)/sizeof(float), weights_size, cudaMemcpyHostToDevice));
 #else
     float* weights_ptr = *data + sizeof(Config)/sizeof(float);
@@ -280,7 +281,7 @@ int divUp(int a, int b) {
 void rmsnorm(float* o, float* x, float* weight, int size) {
     int elementsPerThread = divUp(size, 1024);
     rmsnorm_kernel <<<1, 1024 >>> (o, x, weight, size, elementsPerThread);
-}
+    }
 #else
 void rmsnorm(float* o, float* x, float* weight, int size) {
     // calculate sum of squares
@@ -452,7 +453,7 @@ __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, flo
     float* att = satt + h * seq_len;
     // iterate over all timesteps, including the current one 
     // In CUDA, each thread does a small portion of the calc
-    for (int t = threadIdx.x; t < pos; t += blockDim.x) {
+    for (int t = threadIdx.x; t <= pos; t += blockDim.x) {
         // get the key vector for this head and at this timestep
         float* k = key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
         // calculate the attention score as the dot product of q and k
@@ -472,9 +473,11 @@ __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, flo
     __syncthreads();
 
     // weighted sum of the values, store back into xb
+#if 0
+    // FIXME something is wrong with this code...
     float* xb = sxb + h * head_size;
     memset(xb, 0, head_size * sizeof(float));
-    for (int t = threadIdx.x; t < pos; t += blockDim.x) {
+    for (int t = threadIdx.x; t <= pos; t += blockDim.x) {
         // get the value vector for this head and at this timestep
         float* v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
         // get the attention weight for this timestep
@@ -485,6 +488,16 @@ __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, flo
         }
     }
     __syncthreads();  // FIXME necessary or not?
+#else
+    // llama2.cu reversed the for loops & refactored...
+    for (int i = threadIdx.x; i < head_size; i += blockDim.x) {
+        float val = 0.0f;
+        for (int t = 0; t <= pos; t++) {
+            val += att[t] * value_cache[loff + t * kv_dim + (h / kv_mul) * head_size + i];
+        }
+        sxb[h * head_size + i] = val;
+    }
+#endif
 }
 void multi_head_attention(int pos, Config* p, RunState* s, int kv_dim, int kv_mul, int head_size, int loff) {
     multi_head_attention_kernel <<<p->n_heads, 1024>>> (pos, p->seq_len, s->q, s->att, s->xb, s->key_cache, s->value_cache, kv_dim, kv_mul, head_size, loff);

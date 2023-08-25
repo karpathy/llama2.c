@@ -1,6 +1,6 @@
-run
-stories*bin
-save/
-llama2.cu
-RALLEN.txt
 .vscode/
+save/
+run
+run1
+stories*bin
+llama2.cu
