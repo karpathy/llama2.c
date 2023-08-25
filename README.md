@@ -1,3 +1,26 @@
+## llama2.cu
+
+This is a work-in-progress port of llama2.c to CUDA.
+
+I was inspired & have used some code from https://github.com/ankan-ban/llama2.cu, but I noticed the `run.c` code had progressed and updated and the `llama2.cu` code was no longer working after just a week.  So, I tried to implement CUDA code in a way that `run.cu` could be more easily kept up-to-date via `diff` and also the CUDA code could be compared directly to the C code for educational purposes.  We'll see how easy that really is since the original `run.c` code continues to be updated.
+
+Coding CUDA for the highest performance is a significant effort and outside the scope of this repository.  I'm thinking that this repository is more for seeing the basics of porting to C to CUDA for educational purposes and for hopefully noticing a significant performance increase over C.  That said, performance improvements that do not dramatically affect the code structure are fine.
+
+To give you and idea of performance improvement at the moment (with no perf analysis), here are some representative results from my 14-core Intel RTX 4050 laptop:
+
+```
+Runs e.g.
+make runomp runcuda
+./run stories110M.bin -s 111 -i "One day, Lily met a Dragon" 
+./runcuda stories110M.bin -s 111 -i "One day, Lily met a Dragon" 
+
+tok/s        15M    42M    111M
+----------- -----  -----  -----
+runomp        350    120     53
+runcuda       770    500    292
+speedup       2.2    4.2    5.5
+```
+
 ## llama2.c
 
 <p align="center">
