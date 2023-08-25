@@ -60,12 +60,12 @@ testc:
 # run cuda
 .PHONY: runcuda
 runcuda: run.c
-	$(NVCC) -DUSE_CUDA --compiler-options -Wall -O3 -o run run.cu -lm
+	$(NVCC) -DUSE_CUDA -O3 -o runcuda run.cu -lm
 
 # run debug cuda
 .PHONY: rundebugcuda
 rundebugcuda: run.c
-	$(NVCC) -DUSE_CUDA --compiler-options -Wall -g -o run run.cu -lm
+	$(NVCC) -DUSE_CUDA -g -o runcuda run.cu -lm
 
 .PHONY: clean
 clean:

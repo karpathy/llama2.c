@@ -476,7 +476,10 @@ __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, flo
 #if 0
     // FIXME something is wrong with this code...
     float* xb = sxb + h * head_size;
-    memset(xb, 0, head_size * sizeof(float));
+    if(threadIdx.x == 0) {
+        memset(xb, 0, head_size * sizeof(float));
+    }
+    __syncthreads();
     for (int t = threadIdx.x; t <= pos; t += blockDim.x) {
         // get the value vector for this head and at this timestep
         float* v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;

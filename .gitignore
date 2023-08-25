@@ -1,6 +1,6 @@
 .vscode/
 save/
 run
-run1
+runcuda
 stories*bin
 llama2.cu
