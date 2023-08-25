@@ -800,16 +800,20 @@ void read_stdin(const char* guide, char* buffer, size_t bufsize) {
 
 // ----------------------------------------------------------------------------
 // chat loop
+// I manually inspected the tokens for a few chat conversations compared to
+// python reference and that seemed ok, but this was not thoroughly tested and
+// is not safely implemented, it's more a proof of concept atm.
 
 void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
           char *cli_user_prompt, char *cli_system_prompt, int steps) {
 
     // buffers for reading the system prompt and user prompt from stdin
+    // you'll notice they are soomewhat haphazardly and unsafely set atm
     char system_prompt[512];
     char user_prompt[512];
-    char rendered_prompt[512];
+    char rendered_prompt[1152];
     int num_prompt_tokens = 0;
-    int* prompt_tokens = (int*)malloc(512 * sizeof(int));
+    int* prompt_tokens = (int*)malloc(1152 * sizeof(int));
     int user_idx;
 
     // start the main loop
