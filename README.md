@@ -134,6 +134,22 @@ Then chat with it by specifying the chat mode using the `-m` flag, e.g.:
 ./run llama2_7b_chat.bin -m chat
 ```
 
+You can also try Meta's Code Llama models even if support for them is incomplete. In particular, some hyperparameters changed (e.g. the constant in RoPE layer), so the inference is not exactly correct and a bit buggy right now. Looking into fixes. Make sure to build the tokenizer for the plain and instruct variants and pass it when doing inference.
+
+```bash
+python export.py codellama2_7b.bin --meta-llama /path/to/CodeLlama-7b
+python tokenizer.py --tokenizer-model=/path/to/CodeLlama-7b/tokenizer.model
+./run codellama2_7b.bin -z /path/to/CodeLlama-7b/tokenizer.bin
+```
+
+Chat with Code Llama Instruct:
+
+```bash
+python export.py codellama2_7b_instruct.bin --meta-llama /path/to/CodeLlama-7b-Instruct
+python tokenizer.py --tokenizer-model=/path/to/CodeLlama-7b-Instruct/tokenizer.model
+./run codellama2_7b_instruct.bin -m chat -z /path/to/CodeLlama-7b-Instruct/tokenizer.bin
+```
+
 ## hugginface models
 
 We can load any huggingface models that use the Llama 2 architecture. See the script [export.py](export.py) and the `--hf` flag to export the model .bin file.
