@@ -57,6 +57,14 @@ test:
 testc:
 	pytest -k runc
 
+# run the C tests, without touching pytest / python
+# to increase verbosity level run e.g. as `make testcc VERBOSITY=1`
+VERBOSITY ?= 0
+.PHONY: testcc
+testcc:
+	$(CC) -DVERBOSITY=$(VERBOSITY) -O3 -o testc test.c -lm
+	./testc
+
 # run cuda
 .PHONY: runcuda
 runcuda: run.c
