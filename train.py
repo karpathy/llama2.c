@@ -271,7 +271,7 @@ while True:
                         "loss/val": losses["val"],
                         "lr": lr,
                         "mfu": running_mfu * 100,  # convert to percentage
-                    }
+                    }, step = iter_num
                 )
             except Exception as e:
                 print(f"logging to wandb failed: {e}")
