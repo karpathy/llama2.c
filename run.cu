@@ -52,6 +52,12 @@ typedef struct {
     int seq_len; // max sequence length
 } Config;
 
+// CUDA NOTE: The TransformerWeights structure will be stored on the host, 
+// but all of the pointers in the structure will point to data on the GPU.
+// The checkpoint file is mmap-ed to the host and the weights portion 
+// is allocated on and copied to the GPU.  Then, memory_map_weights() updates  
+// these structure pointers to point to the proper location.  Happily, this
+// function is the same for both C and CUDA.
 typedef struct {
     // token embedding table
     float* token_embedding_table;    // (vocab_size, dim)
@@ -73,6 +79,11 @@ typedef struct {
     float* wcls;
 } TransformerWeights;
 
+// CUDA NOTE: The RunState structure will be stored on the host, but all of the
+// pointers in the structure will point to data on the GPU, created via
+// cudaMalloc.  The exception is logits which is the final result of the
+// transformer & is copied from the GPU as the last step in the transformer
+// and is used by the host.
 typedef struct {
     // current wave of activations
     float *x; // activation at current time stamp (dim,)
@@ -104,7 +115,6 @@ typedef struct {
 } Transformer;
 
 #ifdef USE_CUDA
-// RunState is stored on GPU
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
@@ -236,10 +246,12 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
     *data = (float *)mmap(NULL, *file_size, PROT_READ, MAP_PRIVATE, *fd, 0);
     if (*data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); exit(EXIT_FAILURE); }
 #ifdef USE_CUDA
-    // copy mmap data to the gpu first
+    // allocate & copy mmap data to the gpu first
+    // TODO: allocate & copy just a portion to the GPU if the weights are too big
+    // to fit in the GPU, then copy the data only as needed while running.
     float* weights_ptr;
     size_t weights_size = *file_size - sizeof(Config);
-    CUCHK(cudaMalloc((void**)&weights_ptr, weights_size)); // FIXME cudaFree
+    CUCHK(cudaMalloc((void**)&weights_ptr, weights_size));
     CUCHK(cudaMemcpy(weights_ptr, *data + sizeof(Config)/sizeof(float), weights_size, cudaMemcpyHostToDevice));
 #else
     float* weights_ptr = *data + sizeof(Config)/sizeof(float);
@@ -258,6 +270,11 @@ void free_transformer(Transformer* t) {
     // close the memory mapping
     if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
     if (t->fd != -1) { close(t->fd); }
+#ifdef USE_CUDA
+    // we cudaMalloc a region of memory, then hand the address to
+    // the token_embedding_table field.  Free it here.
+    CUCHK(cudaFree(t->weights.token_embedding_table));
+#endif
     // free the RunState buffers
     free_run_state(&t->state);
 }
