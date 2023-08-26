@@ -95,8 +95,7 @@ Then chat with it by specifying the chat mode using the `-m` flag, e.g.:
 ./run llama2_7b_chat.bin -m chat
 ```
 
-You can also try Meta's Code Llama models even if support for them is incomplete.
-Make sure to build the tokenizer for the plain and instruct variants and pass it when doing inference.
+You can also try Meta's Code Llama models even if support for them is incomplete. In particular, some hyperparameters changed (e.g. the constant in RoPE layer), so the inference is not exactly correct and a bit buggy right now. Looking into fixes. Make sure to build the tokenizer for the plain and instruct variants and pass it when doing inference.
 
 ```bash
 python export.py codellama2_7b.bin --meta-llama /path/to/CodeLlama-7b
