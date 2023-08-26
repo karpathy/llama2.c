@@ -46,49 +46,7 @@ def RMSNorm_forward(self, x):
             kv_cache[id(self)] = output
         return output
 
-RMSNorm.forward = RMSNorm_forward
-# class KVC_RMSNorm(RMSNorm):
-#     def forward(self, x):
-#         if not kv_cache.get(id(self)):
-#             output = self._norm(x.float()).type_as(x)
-#             output = output * self.weight
-#             kv_cache[id(self)] = output
-#         else:
-#             output = self._norm(x[-1:].float()).type_as(x)
-#             output = output * self.weight
-#             kv_cache[id(self)] = kv_cache[id(self)].cat(output, dim=0)
-#         return output * self.weight
-
-# class KVC_TransformerBlock(TransformerBlock):
-#     def __init__(self, layer_id: int, args: ModelArgs):
-#         super().__init__(layer_id, args)
-#         self.attention_norm = KVC_RMSNorm(args.dim, eps=args.norm_eps)
-
-#     def forward(self, x, freqs_cos, freqs_sin):
-#         h = x + self.attention.forward(self.attention_norm(x), freqs_cos, freqs_sin)
-#         out = h + self.feed_forward.forward(self.ffn_norm(h))
-#         return out
-
 kv_cache = {}
-# class Engine(Transformer):
-
-#     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
-#         _bsz, seqlen = tokens.shape
-#         h = self.tok_embeddings(tokens)
-#         freqs_cos = self.freqs_cos[:tokens.shape[1]]
-#         freqs_sin = self.freqs_sin[:tokens.shape[1]]
-
-#         for layer in self.layers:
-#             h = layer(h, freqs_cos, freqs_sin)
-
-#         h = self.norm(h)
-
-#         logits = self.output(h[:, [-1], :])
-#         self.last_loss = None
-
-#         return logits
-
-
 
 # init from a model saved in a specific directory
 checkpoint_dict = torch.load(checkpoint, map_location=device)
@@ -127,7 +85,7 @@ start_ids = enc.encode(start, bos=True, eos=False)
 x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 
 # run generation
-with torch.no_grad():
+with torch.no_grad():#fixme not needed, generate has @torch.inference_mode()
     with ctx:
         for k in range(num_samples):
             y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
