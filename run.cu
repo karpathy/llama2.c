@@ -1,5 +1,9 @@
-/* Inference for Llama-2 Transformer model in pure C */
-/* With CUDA support that draws heavily from https://github.com/ankan-ban/llama2.cu/blob/master/llama2.cu */
+/* Inference for Llama-2 Transformer model in pure C
+ * With added CUDA support initially drawing from
+ * https://github.com/ankan-ban/llama2.cu/blob/master/llama2.cu
+ * and structured in a way that hopefully makes keeping it
+ * up-to-date straightforward.
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,12 +20,13 @@
 #endif
 
 #ifdef USE_CUDA
-#include <cuda.h>
+#include <cuda.h>             // TODO potentially simplify headers, remove CUB?
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 #endif
 
 #ifdef USE_CUDA
+// Each CUDA function call should be checked for errors.
 #define CUCHK(err) cuda_check((err), __FILE__, __LINE__)
 inline void cuda_check(cudaError_t error_code, const char *file, int line)
 {
@@ -33,7 +38,6 @@ inline void cuda_check(cudaError_t error_code, const char *file, int line)
     }
 }
 #endif
-
 
 // ----------------------------------------------------------------------------
 // Transformer model
