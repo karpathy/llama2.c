@@ -1,6 +1,6 @@
 # stories260K
 
-[Stories260K huggginface link](https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260K)
+[Stories260K huggginface link](https://huggingface.co/karpathy/tinyllamas)
 
 The 260K model is a tiny model used for testing, and was trained as follows:
 
