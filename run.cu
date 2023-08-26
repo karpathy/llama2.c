@@ -788,7 +788,13 @@ void safe_printf(char *piece) {
 
 int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
     // efficiently find the perfect match for str in vocab, return its index or -1 if not found
+#if defined USE_CUDA && defined _WIN32
+    // CUDA on Windows was not capable of handling the syntax below
+    TokenIndex tok;
+    tok.str = str;
+#else
     TokenIndex tok = { .str = str }; // acts as the key to search for
+#endif
     TokenIndex *res = (TokenIndex *)bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
     return res != NULL ? res->id : -1;
 }

@@ -23,7 +23,7 @@ speedup       2.2    4.2    5.5
 
 To Do:
 * keep up-to-date with llama.c repo...seems like this is going to iterate for a bit longer
-* [ ] get windows build working
+* [x] get windows build working
 * [ ] look over the existing cuda kernels and make them look like the C code if it doesn't hurt perf too bad.
 * [ ] write a basic description of the conversion process, maybe a blog post
 

@@ -3,6 +3,12 @@ save/
 llama_env/
 __pycache__/
 run
+run.exe
+run.obj
+win.obj
 runcuda
+runcuda.exe
+runcuda.exp
+runcuda.lib
 stories*bin
 llama2.cu
