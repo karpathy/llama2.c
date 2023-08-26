@@ -406,6 +406,12 @@ def load_hf_model(model_path):
 # API entrypoint
 
 def model_export(model, filepath, version):
+    """
+    Versions docs:
+    v0: legacy llama2.c float format, DEPRECATED
+    v1: float32 export
+    v2: int8 quantized Q8_0 export, similar to llama.cpp, in groups
+    """
     if version == 0:
         legacy_export(model, filepath)
     elif version == 1:
