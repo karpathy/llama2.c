@@ -1,6 +1,6 @@
 ## llama2.cu
 
-This is a work-in-progress port of llama2.c to CUDA.
+This is a port of llama2.c to CUDA.
 
 I was inspired & have used code from https://github.com/ankan-ban/llama2.cu as a starting point.  But, I noticed the `run.c` code had progressed and updated and their `llama2.cu` code was no longer working.  So, I tried to implement CUDA code in a way that `run.cu` could be more easily kept up-to-date via `diff` and also the CUDA code could be compared directly to the C code for educational purposes.  We'll see how easy that really is since the original `run.c` code continues to be updated.
 
