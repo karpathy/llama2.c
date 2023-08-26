@@ -46,7 +46,7 @@ def test_runc():
 
     model_path = os.path.join(test_ckpt_dir, "stories260K.bin")
     tokenizer_path = os.path.join(test_ckpt_dir, "tok512.bin")
-    command = ["./run", model_path, "-z", tokenizer_path, "-t", "0.0", "-n", "200"]
+    command = ["./../run", model_path, "-z", tokenizer_path, "-t", "0.0", "-n", "200"]
     with open('err.txt', mode='wb') as fe:
         with open('stdout.txt', mode='wb') as fo:
             proc = subprocess.Popen(command, stdout=fo, stderr=fe)  #pipe in windows terminal does funny things like replacing \n with \r\n
