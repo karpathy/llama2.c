@@ -67,13 +67,18 @@ testcc:
 
 # run cuda
 .PHONY: runcuda
-runcuda: run.c
+runcuda: run.cu
 	$(NVCC) -DUSE_CUDA -O3 -o runcuda run.cu -lm -lcublas
 
 # run debug cuda
 .PHONY: rundebugcuda
-rundebugcuda: run.c
+rundebugcuda: run.cu
 	$(NVCC) -DUSE_CUDA -g -o runcuda run.cu -lm -lcublas
+
+# run cuda source file, but use only CPU code to compare with run target.
+.PHONY: runnotcuda
+runnotcuda: run.cu
+	$(NVCC) -O3 -o runcuda run.cu -lm
 
 .PHONY: clean
 clean:
