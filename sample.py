@@ -45,6 +45,7 @@ def RMSNorm_forward(self, x):
             output = torch.cat((kv_cache[id(self)], output), dim=-2)
             kv_cache[id(self)] = output
         return output
+RMSNorm.forward = RMSNorm_forward
 
 kv_cache = {}
 
