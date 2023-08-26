@@ -34,10 +34,84 @@ device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.aut
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
+class KVC_Attention(Attention):
+    def __init__(self, args: ModelArgs):
+        super().__init__(args)
+        self.kv_cache = None
+
+    def forward(self, x: torch.Tensor, freqs_cos: torch.Tensor, freqs_sin: torch.Tensor):
+        # Existing implementation ...
+        # ...
+
+        # Cache the keys and values for future use
+        self.kv_cache = (xk.detach(), xv.detach())
+
+        return output
+
+    def set_cache(self, kv_cache):
+        self.kv_cache = kv_cache
+
+    def get_cache(self):
+        return self.kv_cache
+
+
+class Engine(Transformer):
+    def __init__(self, params: ModelArgs):
+        super().__init__(params)
+        self.kv_caches = [{'k':[], 'v':[]} for _ in range(self.n_layers)]
+
+    def forward(self, tokenS: torch.Tensor) -> torch.Tensor:
+        _bsz, seqlen = self.kv_caches[0][0].shape[:2]
+        h = self.tok_embeddings(tokenS)
+        freqs_cos = self.freqs_cos[:tokenS.shape[1]]#fixme
+        freqs_sin = self.freqs_sin[:tokenS.shape[1]]
+
+        for i, layer in enumerate(self.layers):
+                h = layer(h, freqs_cos, freqs_sin, self.kv_caches[i])
+
+        h = self.norm(h)
+
+        logits = self.output(h[:, [-1], :])#fixme
+        self.last_loss = None#fixme
+
+        return logits
+
+    @torch.inference_mode()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
+        the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        Also note this is a super inefficient version of sampling with no key/value cache.
+        """
+        for _ in range(max_new_tokens):
+            # if the sequence context is growing too long we must crop it at block_size
+            idx_cond = idx if idx.size(1) <= self.params.max_seq_len else idx[:, -self.params.max_seq_len:]
+            # forward the model to get the logits for the index in the sequence
+            logits = self(idx_cond[:, -1])
+            logits = logits[:, -1, :] # crop to just the final time step
+            if temperature == 0.0:
+                # "sample" the single most likely index
+                _, idx_next = torch.topk(logits, k=1, dim=-1)
+            else:
+                # pluck the logits at the final step and scale by desired temperature
+                logits = logits / temperature
+                # optionally crop the logits to only the top k options
+                if top_k is not None:
+                    v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                    logits[logits < v[:, [-1]]] = -float('Inf')
+                # apply softmax to convert logits to (normalized) probabilities
+                probs = F.softmax(logits, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
+            # append sampled index to the running sequence and continue
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx
+
 # init from a model saved in a specific directory
 checkpoint_dict = torch.load(checkpoint, map_location=device)
 gptconf = ModelArgs(**checkpoint_dict['model_args'])
-model = Transformer(gptconf)
+model = Engine(gptconf)
 state_dict = checkpoint_dict['model']
 unwanted_prefix = '_orig_mod.'
 for k,v in list(state_dict.items()):
