@@ -9,4 +9,3 @@ runcuda
 *.exp
 *.lib
 *.bin
-llama2.cu
