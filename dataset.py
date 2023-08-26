@@ -14,19 +14,23 @@ class Dataset(abc.ABC):
 
     @abc.abstractmethod
     def download(self):
-        """Download and unpack dataset to local directory"""
+        """Download, unpack and custom preprocess dataset to local directory"""
         pass
 
     @abc.abstractmethod
     def list_files(self) -> List[str]:
-        """Return list of files"""
+        """
+        Returns a list of files belonging to the dataset.
+        These are raw files that belong to the original dataset distributive. Not are pre-tokenized files.
+        """
         raise NotImplemented()
 
     @abc.abstractmethod
     def examples_of(self, filepath: str) -> Iterator[str]:
         """
-        Return list of files.
-        That is a raw files that belong to original dataset distributive. Not a pretokenized files.
+        Returns an iterator over examples of specified file.
+        Should return one example per iteration.
+        List of files can be got by self.files() method.
         """
         raise NotImplemented()
 
@@ -102,6 +106,7 @@ class TinyStories(Dataset):
 
         for row in data:
             yield row['story']
+
 
 class SQLCreateContext(Dataset):
     data_url = "https://huggingface.co/datasets/b-mc2/sql-create-context/resolve/main/sql_create_context_v4.json"
