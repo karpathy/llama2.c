@@ -20,7 +20,6 @@
 #endif
 
 #ifdef USE_CUDA
-#include <cuda.h>             // TODO potentially simplify headers, remove CUB?
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 #endif
@@ -283,19 +282,25 @@ void free_transformer(Transformer* t) {
 // neural net blocks; the dynamics of the Transformer
 
 #ifdef USE_CUDA
-// Single block - not enough parallelism for the GPU, but it's just 1% of total time
+// Utility routine to divide a into ceiling of b parts
+int divUp(int a, int b) {
+    return (a - 1) / b + 1;
+}
+
+const int rmsnorm_num_threads = 1024;
 __global__ void rmsnorm_kernel(float* o, float* x, float* weight, int size, int elementsPerThread) {
+    // parallel reduction of sum of squares via CUB
     float ss = 0.0f;
     for (int i = 0; i < elementsPerThread; i++) {
-        int index = threadIdx.x + i * 1024;
-        if (index < size)
-            ss += (float)x[index];
+        int j = threadIdx.x + i * rmsnorm_num_threads;
+        if (j < size)
+            ss += x[j] * x[j];
     }
-
-    using BlockReduce = cub::BlockReduce<float, 1024>;
+    using BlockReduce = cub::BlockReduce<float, rmsnorm_num_threads>;
     __shared__ typename BlockReduce::TempStorage temp;
-    ss = BlockReduce(temp).Sum(ss * ss);
+    ss = BlockReduce(temp).Sum(ss);
 
+    // serialization point to calculate normalization factor 
     __shared__ float shared_ss;
     if (threadIdx.x == 0) {
         ss /= size;
@@ -306,26 +311,18 @@ __global__ void rmsnorm_kernel(float* o, float* x, float* weight, int size, int 
     __syncthreads();
     ss = shared_ss;
 
-    // normalize
+    // normalize and scale
     for (int i = 0; i < elementsPerThread; i++) {
-        int index = threadIdx.x + i * 1024;
-        if (index < size) {
-            float val = (float)x[index];
-            val *= ss * (float)weight[index];
-            o[index] = val;
+        int j = threadIdx.x + i * rmsnorm_num_threads;
+        if (j < size) {
+            o[j] = weight[j] * (ss * x[j]);
         }
     }
 }
-
-// divide a into ceiling of b parts
-int divUp(int a, int b) {
-    return (a - 1) / b + 1;
-}
-
 void rmsnorm(float* o, float* x, float* weight, int size) {
-    int elementsPerThread = divUp(size, 1024);
-    rmsnorm_kernel <<<1, 1024 >>> (o, x, weight, size, elementsPerThread);
-    }
+    int elementsPerThread = divUp(size, rmsnorm_num_threads);
+    rmsnorm_kernel <<<1, rmsnorm_num_threads >>> (o, x, weight, size, elementsPerThread);
+}
 #else
 void rmsnorm(float* o, float* x, float* weight, int size) {
     // calculate sum of squares
@@ -344,6 +341,7 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
 #endif
 
 #ifdef USE_CUDA
+// TODO check vs C code
 __device__ void softmax_gpu(float* __restrict__ x, int size) {
     using BlockReduce = cub::BlockReduce<float, 1024>;
     __shared__ typename BlockReduce::TempStorage temp;
@@ -403,6 +401,8 @@ void softmax(float* x, int size) {
 }
 
 #ifdef USE_CUDA
+// TODO check vs C code
+
 // one output per warp so that we can parallelize the dot product across the warp
 // Note that ~95% of total time is spent here, so optimizing this is important
 __global__ void mat_vec_kernel(float* output, float* input, float* weight, int n, int d, int numSerialElements) {
@@ -489,6 +489,7 @@ void RoPe_rotation(int pos, RunState* s, int dim, int kv_dim, int head_size) { /
 #endif
 
 #ifdef USE_CUDA
+// TODO refactor vs C code
 __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, float *satt, float *sxb, float *key_cache, float *value_cache, int kv_dim, int kv_mul, int head_size, int loff) {
     int h = blockIdx.x;
     // get the query vector for this head
@@ -594,6 +595,7 @@ void multi_head_attention(int pos, Config* p, RunState* s, int kv_dim, int kv_mu
 #endif
 
 #ifdef USE_CUDA
+// TODO check vs C code
 __global__ void f_silu_elementwise_mul_w3_kernel(float *shb, float *shb2, int hidden_dim) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < hidden_dim) {
