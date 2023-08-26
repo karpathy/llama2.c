@@ -38,6 +38,20 @@ inline void cuda_check(cudaError_t error_code, const char *file, int line)
 
 cublasHandle_t g_cublas_handle = nullptr;
 
+void create_cublas_handle() {
+    cublasStatus_t stat = cublasCreate(&g_cublas_handle);  // FIXME cublasDestroy
+    if (stat != CUBLAS_STATUS_SUCCESS) {
+        printf ("CUBLAS initialization failed\n");
+        exit(EXIT_FAILURE);
+    }
+}
+void destroy_cublas_handle() {
+    cublasStatus_t stat = cublasDestroy(g_cublas_handle);
+    if (stat != CUBLAS_STATUS_SUCCESS) {
+        printf ("CUBLAS initialization failed\n");
+        exit(EXIT_FAILURE);
+    }
+}
 #endif
 
 // ----------------------------------------------------------------------------
@@ -406,56 +420,19 @@ void softmax(float* x, int size) {
 }
 
 #ifdef USE_CUDA
-// TODO consider cuBLAS for such an important fn for performance.
-#if 1
-// one output per warp so that we can parallelize the dot product across the warp
-// Note that ~95% of total time is spent here, so optimizing this is important
-__global__ void mat_vec_kernel(float* output, float* input, float* weight, int n, int d, int numSerialElements) {
-    int index = blockIdx.x * blockDim.y + threadIdx.y;
-    if (index >= d)
-        return;
-
-    float sum = 0;
-    for (int i = 0; i < numSerialElements; i++) {
-        int j = i * 32 + threadIdx.x;
-        if (j < n)
-            sum += (weight[index * n + j]) * (input[j]);
-    }
-
-    using WarpReduce = cub::WarpReduce<float>;
-    __shared__ typename WarpReduce::TempStorage temp;
-    sum = WarpReduce(temp).Sum(sum);
-
-    if (threadIdx.x == 0)
-        output[index] = sum;
-}
-
+// Use cuBLAS for matmul to leverage this included, high-performance library.
 void matmul(float* xout, float* x, float* w, int n, int d) {
-    int serialElements = divUp(n, 32);
-    dim3 block_dim(32, 4);
-    int blocks = divUp(d, 4);
-    mat_vec_kernel <<<blocks, block_dim >>> (xout, x, w, n, d, serialElements);
-}
-#else
-// Use cuBLAS for matmul
-void matmul(float* xout, float* x, float* w, int n, int d) {
-    if(g_cublas_handle == nullptr) {
-        cublasStatus_t stat = cublasCreate(&g_cublas_handle);  // FIXME cublasDestroy
-        if (stat != CUBLAS_STATUS_SUCCESS) {
-            printf ("CUBLAS initialization failed\n");
-            exit(EXIT_FAILURE);
-        }
-    }
     // W (d,n) @ x (n,) -> xout (d,)
+    // W is stored in this order: (n=0,d=0), (n=1,d=0), (n=2,d=0), ... 
+    // so W is n x d in cublas terms & we'll need to transpose.
     // Sgemv does y = alpha * op(A) * x + beta * y (modifying y)
     //   where op can transpose the matrix A
     // Translating to our local vars, that is
     // xout = 1.0*op(w)*x + 0.0*xout
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-    cublasSgemv(g_cublas_handle, CUBLAS_OP_T, d, n, &alpha, w, d, x, 1, &beta, xout, 1);
+    float alpha = 1.0f;
+    float beta = 0.0f; // when this is 0, xout will not be used for input
+    cublasSgemv(g_cublas_handle, CUBLAS_OP_T, n, d, &alpha, w, n, x, 1, &beta, xout, 1);
 }
-#endif
 #else
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
@@ -1337,6 +1314,10 @@ int main(int argc, char *argv[]) {
     Sampler sampler;
     build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
 
+#ifdef USE_CUDA
+    create_cublas_handle();
+#endif
+
     // run!
     if (strcmp(mode, "generate") == 0) {
         generate(&transformer, &tokenizer, &sampler, prompt, steps);
@@ -1351,6 +1332,9 @@ int main(int argc, char *argv[]) {
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
+#ifdef USE_CUDA
+    destroy_cublas_handle();
+#endif
     return 0;
 }
 #endif
