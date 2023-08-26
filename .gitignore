@@ -1,6 +1,7 @@
 .vscode/
 save/
 llama_env/
+__pycache__/
 run
 runcuda
 stories*bin
