@@ -231,7 +231,7 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     }
 }
 
-float* forward(Transformer* transformer, int token, int pos) {
+float* forward(Transformer* transformer, int token, int pos, int in_prompt) {
 
     // a few convenience variables
     Config* p = &transformer->config;
@@ -244,18 +244,26 @@ float* forward(Transformer* transformer, int token, int pos) {
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
+
     // copy the token embedding into x
     float* content_row = w->token_embedding_table + token * dim;
     memcpy(x, content_row, dim*sizeof(*x));
 
     // forward all the layers
+    int is_last_layer_in_prompt;
     for(int l = 0; l < p->n_layers; l++) {
+
+        // When processing prompt tokens, some operations are redundant and can
+        // be skipped to improve performance. This flag is true when we are
+        // processing a prompt token and we are on the last layer of the NN.
+        is_last_layer_in_prompt = in_prompt && (l == p->n_layers -1);
 
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
+        if (!is_last_layer_in_prompt)
+            matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
         matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
         matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
@@ -266,9 +274,18 @@ float* forward(Transformer* transformer, int token, int pos) {
             float val = pos * freq;
             float fcr = cosf(val);
             float fci = sinf(val);
-            int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-            for (int v = 0; v < rotn; v++) {
-                float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
+
+            // Rotate q, unless we are processing a prompt token and this is the last layer
+            if (!is_last_layer_in_prompt) {
+                float* vec = s->q;  // the vector to rotate (query or key)
+                float v0 = vec[i];
+                float v1 = vec[i+1];
+                vec[i]   = v0 * fcr - v1 * fci;
+                vec[i+1] = v0 * fci + v1 * fcr;
+            }
+            // Rotate k for all dimensions less than kv_dim
+            if (i < kv_dim) {
+                float* vec = s->k; // the vector to rotate (key)
                 float v0 = vec[i];
                 float v1 = vec[i+1];
                 vec[i]   = v0 * fcr - v1 * fci;
@@ -282,6 +299,10 @@ float* forward(Transformer* transformer, int token, int pos) {
         float* value_cache_row = s->value_cache + loff + pos * kv_dim;
         memcpy(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row));
         memcpy(value_cache_row, s->v, kv_dim * sizeof(*value_cache_row));
+
+        // The rest of operation would be useless when processing prompt tokens
+        // and we are on the latest layer of the NN. Let's skip them and return.
+        if (is_last_layer_in_prompt) return s->logits; 
 
         // multihead attention. iterate over all heads
         int h;
@@ -749,13 +770,15 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int next;        // will store the next token in the sequence
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
     int pos = 0;     // position in the sequence
+    int in_prompt;
     while (pos < steps) {
 
+        in_prompt = pos < num_prompt_tokens - 1;
         // forward the transformer to get logits for the next token
-        float* logits = forward(transformer, token, pos);
+        float* logits = forward(transformer, token, pos, in_prompt);
 
         // advance the state state machine
-        if (pos < num_prompt_tokens - 1) {
+        if (in_prompt) {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos + 1];
         } else {
