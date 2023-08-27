@@ -151,6 +151,34 @@ static const char* shader_matmul =
     "    xout.data[i] = val;\n"
     "}\n";
 
+static const char* shader_matmul_trans_vec4 =
+    "#version 320 es\n"
+    "uniform int n;\n"
+    "uniform int d;\n"
+    "uniform int x_offset;\n"
+    "uniform int w_offset;\n"
+    "layout(local_size_x = 1) in;\n"
+    "layout(binding = 0) readonly buffer Input0{\n"
+    "    vec4 data[];\n"
+    "} x;\n"
+
+    "layout(binding = 1) readonly buffer Input1{\n"
+    "    vec4 data[];\n"
+    "} w;\n"
+
+    "layout(binding = 2) writeonly buffer Output0{\n"
+    "    vec4 data[];\n"
+    "} xout;\n"
+
+    "void main(){\n"
+    "    int i = int(gl_GlobalInvocationID.x);\n"
+    "    vec4 val = vec4(0.0 , 0.0 , 0.0 , 0.0);\n"
+    "    for (int j = 0; j < d; j++) {\n"
+    "        val += w.data[i + j * d + w_offset] * x.data[j + x_offset];\n"
+    "    }\n"
+    "    xout.data[i] = val;\n"
+    "}\n";
+
 static const char* shader_rmsnorm_squares_and_sum =
     "#version 320 es\n"
     "uniform int insize;\n"
@@ -647,6 +675,7 @@ typedef struct {
     GLuint shader_transformer_softmax_output;
     GLuint shader_temperature;
     GLuint shader_copyBuffer;
+    GLuint shader_matmul_trans_vec4;
 } GPUProgram;
 
 typedef struct {
@@ -841,6 +870,8 @@ void compile_GPUProgram(GPUProgram* program) {
     GPU_CHECK();
     program->shader_copyBuffer = createComputeProgram(shader_copyBuffer);
     GPU_CHECK();
+    program->shader_matmul_trans_vec4 = createComputeProgram(shader_matmul_trans_vec4);
+    GPU_CHECK();
 }
 
 #define create_GPU_buffer(ptr, size, usage, data) \
@@ -1022,11 +1053,13 @@ void free_gpu_program(GPUProgram* prog) {
     glDeleteProgram(prog->shader_matmul);
     glDeleteProgram(prog->shader_rmsnorm_squares_and_sum);
     glDeleteProgram(prog->shader_sum);
+    glDeleteProgram(prog->shader_sum_vec4);
     glDeleteProgram(prog->shader_rmsnorm_normalize_and_scale);
     glDeleteProgram(prog->shader_rmsnorm_normalize_and_scale_currentPos);
     glDeleteProgram(prog->shader_accum);
     glDeleteProgram(prog->shader_positionalEncoding);
     glDeleteProgram(prog->shader_max);
+    glDeleteProgram(prog->shader_max_vec4);
     glDeleteProgram(prog->shader_softmax_exp);
     glDeleteProgram(prog->shader_softmax_normalize);
     glDeleteProgram(prog->shader_transformer_silu_and_mulW3);
@@ -1036,6 +1069,7 @@ void free_gpu_program(GPUProgram* prog) {
     glDeleteProgram(prog->shader_transformer_softmax_output);
     glDeleteProgram(prog->shader_temperature);
     glDeleteProgram(prog->shader_copyBuffer);
+    glDeleteProgram(prog->shader_matmul_trans_vec4);
 }
 
 void reduce_step(GLuint kernel, GLuint inBuffer, int insize, GLuint outBuffer, int outsize, int numSeq) {
@@ -1306,6 +1340,31 @@ void matmul(GPUProgram* prog, RunState* state, GLuint xout, GLuint x, GLuint w, 
     glUniform1i(w_offset_gpu, w_offset);
 
     glDispatchCompute(d, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    GPU_CHECK();
+}
+
+void matmul_trans_vec4(GPUProgram* prog, RunState* state, GLuint xout, GLuint x, GLuint w, int n, int d, int x_offset, int w_offset) {
+    // W (d,n) @ x (n,) -> xout (d,)
+    // by far the most amount of time is spent inside this little function
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, x);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, w);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, xout);
+    glUseProgram(prog->shader_matmul_trans_vec4);
+
+    int n_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "n");
+    glUniform1i(n_gpu, n);
+
+    int d_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "d");
+    glUniform1i(d_gpu, d);
+
+    int x_offset_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "x_offset");
+    glUniform1i(x_offset_gpu, x_offset / 4);
+
+    int w_offset_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "w_offset");
+    glUniform1i(w_offset_gpu, w_offset / 4);
+
+    glDispatchCompute(n, 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 }
