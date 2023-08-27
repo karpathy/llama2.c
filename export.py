@@ -194,7 +194,7 @@ def version2_export(model, filepath, group_size=64):
         group_size //= 2
         print(f"BACKOFF: reducing group size to {group_size} to fit hidden_dim")
     weights = [
-        model.tok_embeddings.weight,
+        *[row for row in model.tok_embeddings.weight],
         *[layer.attention.wq.weight for layer in model.layers],
         *[layer.attention.wk.weight for layer in model.layers],
         *[layer.attention.wv.weight for layer in model.layers],
@@ -204,6 +204,7 @@ def version2_export(model, filepath, group_size=64):
         *[layer.feed_forward.w3.weight for layer in model.layers],
     ]
     shared_classifier = torch.equal(model.tok_embeddings.weight, model.output.weight)
+    shared_classifier = 0
     if not shared_classifier:
         weights.append(model.output.weight)
     for w in weights:
@@ -241,21 +242,15 @@ def version2_export(model, filepath, group_size=64):
     # now let's write out all the params that we are quantizing to Q8_0
     # note we skip classifier weights, which are shared with the embedding
     ew = []
-    scales = []
     for i, w in enumerate(weights):
         # quantize this weight
         q, s, err = quantize_q80(w, group_size)
         # save the int8 weights to file
         serialize_int8(out_file, q) # save the tensor in int8
-        scales.append(s)  # we'll do all the scales after all the qs
+        serialize_fp32(out_file, s) # save scale factors
         # logging
         ew.append((err, w.shape))
         print(f"{i+1}/{len(weights)} quantized {tuple(w.shape)} to Q8_0 with max error {err}")
-
-    # save the scaling factors in fp32 here
-    # this is done to keep all the weights contiquous, making pointer arithmetic easier in C
-    for s in scales:
-        serialize_fp32(out_file, s)
 
     # print the highest error across all weights, should be very small, e.g. O(~0.001)
     ew.sort(reverse=True)
