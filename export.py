@@ -194,7 +194,7 @@ def version2_export(model, filepath, group_size=64):
         group_size //= 2
         print(f"BACKOFF: reducing group size to {group_size} to fit hidden_dim")
     weights = [
-        *[row for row in model.tok_embeddings.weight],
+        model.tok_embeddings.weight,
         *[layer.attention.wq.weight for layer in model.layers],
         *[layer.attention.wk.weight for layer in model.layers],
         *[layer.attention.wv.weight for layer in model.layers],
@@ -204,7 +204,6 @@ def version2_export(model, filepath, group_size=64):
         *[layer.feed_forward.w3.weight for layer in model.layers],
     ]
     shared_classifier = torch.equal(model.tok_embeddings.weight, model.output.weight)
-    shared_classifier = 0
     if not shared_classifier:
         weights.append(model.output.weight)
     for w in weights:

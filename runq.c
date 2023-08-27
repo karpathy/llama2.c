@@ -38,7 +38,9 @@ typedef struct {
 
 typedef struct {
     // token embedding table
-    QuantizedTensor *token_embedding_table; // (vocab_size, dim)
+    QuantizedTensor *q_tokens; // (vocab_size, dim)
+    float* token_embedding_table; // same, but dequantized
+
     // weights for rmsnorms
     float* rms_att_weight; // (layer, dim) rmsnorm weights
     float* rms_ffn_weight; // (layer, dim)
@@ -131,10 +133,44 @@ void free_run_state(RunState* s) {
     free(s->value_cache);
 }
 
-/* 
- * initialize `n` x quantized tensor (with `size_each` elements), starting from memory pointed at *ptr
- * ptr is advanced accordingly
- */
+// ----------------------------------------------------------------------------
+// Quantization functions
+
+void dequantize(QuantizedTensor *qx, float* x, int n) {
+    for (int i = 0; i < n; i++) {
+        x[i] = qx->q[i] * qx->s[i / GS];
+    }
+}
+
+void quantize(QuantizedTensor *qx, float* x, int n) {
+    int num_groups = n / GS;
+    float Q_MAX = 127.0f;
+
+    for (int group = 0; group < num_groups; group++) {
+
+        // find the max absolute value in the current group
+        float wmax = 0.0;
+        for (int i = 0; i < GS; i++) {
+            float val = fabs(x[group * GS + i]);
+            if (val > wmax) {
+                wmax = val;
+            }
+        }
+
+        // calculate and write the scaling factor
+        float scale = wmax / Q_MAX;
+        qx->s[group] = scale;
+
+        // calculate and write the quantized values
+        for (int i = 0; i < GS; i++) {
+            float quant_value = x[group * GS + i] / scale; // scale
+            int8_t quantized = (int8_t) round(quant_value); // round and clamp
+            qx->q[group * GS + i] = quantized;
+        }
+    }
+}
+
+/* initialize `n` x quantized tensor (with `size_each` elements), starting from memory pointed at *ptr */
 QuantizedTensor *init_quantized_tensors(void **ptr, int n, int size_each) {
     void *p = *ptr;
     QuantizedTensor *res = malloc(n * sizeof(QuantizedTensor));
@@ -146,7 +182,7 @@ QuantizedTensor *init_quantized_tensors(void **ptr, int n, int size_each) {
         res[i].s = (float*)p;
         p = (float*)p + size_each / GS;
     }
-    *ptr = p;
+    *ptr = p; // advance ptr to current position
     return res;
 }
 
@@ -163,7 +199,11 @@ void memory_map_weights(TransformerWeights *w, Config* p, void* ptr, uint8_t sha
 
     // now read all the quantized weights
     ptr = (void*)fptr; // now cast the pointer back to void*
-    w->token_embedding_table = init_quantized_tensors(&ptr, p->vocab_size, p->dim);
+    w->q_tokens = init_quantized_tensors(&ptr, 1, p->vocab_size * p->dim);
+    // dequantize token embedding table
+    w->token_embedding_table = malloc(p->vocab_size * p->dim * sizeof(float));
+    dequantize(w->q_tokens, w->token_embedding_table, p->vocab_size * p->dim);
+
     w->wq = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_heads * head_size));
     w->wk = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_kv_heads * head_size));
     w->wv = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_kv_heads * head_size));
@@ -173,7 +213,7 @@ void memory_map_weights(TransformerWeights *w, Config* p, void* ptr, uint8_t sha
     w->w2 = init_quantized_tensors(&ptr, p->n_layers, p->hidden_dim * p->dim);
     w->w3 = init_quantized_tensors(&ptr, p->n_layers, p->dim * p->hidden_dim);
 
-    w->wcls = init_quantized_tensors(&ptr, 1, p->dim * p->vocab_size);
+    w->wcls = shared_classifier ? w->q_tokens : init_quantized_tensors(&ptr, 1, p->dim * p->vocab_size);
 }
 
 void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights,
@@ -219,6 +259,7 @@ void build_transformer(Transformer *t, char* checkpoint_path) {
 
 void free_transformer(Transformer* t) {
     // free QuantizedTensors
+    free(t->weights.q_tokens);
     free(t->weights.token_embedding_table);
     free(t->weights.wq);
     free(t->weights.wk);
@@ -227,7 +268,7 @@ void free_transformer(Transformer* t) {
     free(t->weights.w1);
     free(t->weights.w2);
     free(t->weights.w3);
-    free(t->weights.wcls);
+    if(t->weights.wcls != t->weights.q_tokens) { free(t->weights.wcls); }
     // close the memory mapping
     if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
     if (t->fd != -1) { close(t->fd); }
@@ -300,40 +341,6 @@ void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
     }
 }
 
-void dequantize(QuantizedTensor *qx, float* x, int n) {
-    for (int i = 0; i < n; i++) {
-        x[i] = qx->q[i] * qx->s[i / GS];
-    }
-}
-
-void quantize(QuantizedTensor *qx, float* x, int n) {
-    int num_groups = n / GS;
-    float Q_MAX = 127.0f;
-
-    for (int group = 0; group < num_groups; group++) {
-
-        // find the max absolute value in the current group
-        float wmax = 0.0;
-        for (int i = 0; i < GS; i++) {
-            float val = fabs(x[group * GS + i]);
-            if (val > wmax) {
-                wmax = val;
-            }
-        }
-
-        // calculate and write the scaling factor
-        float scale = wmax / Q_MAX;
-        qx->s[group] = scale;
-
-        // calculate and write the quantized values
-        for (int i = 0; i < GS; i++) {
-            float quant_value = x[group * GS + i] / scale; // scale
-            int8_t quantized = (int8_t) round(quant_value); // round and clamp
-            qx->q[group * GS + i] = quantized;
-        }
-    }
-}
-
 float* forward(Transformer* transformer, int token, int pos) {
 
     // a few convenience variables
@@ -347,8 +354,8 @@ float* forward(Transformer* transformer, int token, int pos) {
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
-    // dequantize the token embedding into a float x
-    dequantize(w->token_embedding_table + token, x, dim);
+    // copy the token embedding into x
+    memcpy(x, w->token_embedding_table + token*dim, dim * sizeof(float));
 
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
