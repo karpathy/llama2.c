@@ -1111,7 +1111,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
 
-        // advance the state state machine
+        // advance the state machine
         if (pos < num_prompt_tokens - 1) {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos + 1];
