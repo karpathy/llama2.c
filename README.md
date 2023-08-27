@@ -109,6 +109,7 @@ Chat with Code Llama Instruct:
 python export.py codellama2_7b_instruct.bin --meta-llama /path/to/CodeLlama-7b-Instruct
 python tokenizer.py --tokenizer-model=/path/to/CodeLlama-7b-Instruct/tokenizer.model
 ./run codellama2_7b_instruct.bin -m chat -z /path/to/CodeLlama-7b-Instruct/tokenizer.bin
+```
 
 ## hugginface models
 
