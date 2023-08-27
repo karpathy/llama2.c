@@ -218,6 +218,16 @@ void build_transformer(Transformer *t, char* checkpoint_path) {
 }
 
 void free_transformer(Transformer* t) {
+    // free QuantizedTensors
+    free(t->weights.token_embedding_table);
+    free(t->weights.wq);
+    free(t->weights.wk);
+    free(t->weights.wv);
+    free(t->weights.wo);
+    free(t->weights.w1);
+    free(t->weights.w2);
+    free(t->weights.w3);
+    free(t->weights.wcls);
     // close the memory mapping
     if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
     if (t->fd != -1) { close(t->fd); }
