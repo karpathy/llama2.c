@@ -404,7 +404,7 @@ void softmax(float* x, int size) {
 }
 
 #ifdef USE_CUDA
-// TODO check vs C code
+// TODO consider cuBLAS for such an important fn for performance.
 
 // one output per warp so that we can parallelize the dot product across the warp
 // Note that ~95% of total time is spent here, so optimizing this is important
@@ -521,35 +521,21 @@ __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, flo
     __syncthreads();
 
     // weighted sum of the values, store back into xb
-#if 0
-    // using llama2.cu code below in place of this code
-    // this code will require adding a recuction sum of xb[i] across 
-    // all threads.  Instead the code below is very reasonable.
+    // NOTE: by swapping the order of the for loops (vs. C) a simpler
+    // version of the code accomplishes the same task and fits more
+    // naturally with the CUDA way of subdividing the problem.
     float* xb = sxb + h * head_size;
-    if(threadIdx.x == 0) {
-        memset(xb, 0, head_size * sizeof(float));
-    }
-    __syncthreads();
-    for (int t = threadIdx.x; t <= pos; t += blockDim.x) {
-        // get the value vector for this head and at this timestep
-        float* v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-        // get the attention weight for this timestep
-        float a = att[t];
-        // accumulate the weighted value into xb
-        for (int i = 0; i < head_size; i++) {
-            xb[i] += a * v[i];
-        }
-    }
-#else
-    // llama2.cu reversed the for loops & refactored...
     for (int i = threadIdx.x; i < head_size; i += blockDim.x) {
         float val = 0.0f;
         for (int t = 0; t <= pos; t++) {
-            val += att[t] * value_cache[loff + t * kv_dim + (h / kv_mul) * head_size + i];
+            // get the value vector for this head and at this timestep
+            float* v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+            // get the attention weight for this timestep
+            float a = att[t];
+            val += a * v[i];
         }
-        sxb[h * head_size + i] = val;
+        xb[i] = val;
     }
-#endif
 }
 void multi_head_attention(int pos, Config* p, RunState* s, int kv_dim, int kv_mul, int head_size, int loff) {
     multi_head_attention_kernel <<<p->n_heads, num_threads_lrg>>> (pos, p->seq_len, s->q, s->att, s->xb, s->key_cache, s->value_cache, kv_dim, kv_mul, head_size, loff);
@@ -598,12 +584,15 @@ void multi_head_attention(int pos, Config* p, RunState* s, int kv_dim, int kv_mu
 #endif
 
 #ifdef USE_CUDA
-// TODO check vs C code
 __global__ void f_silu_elementwise_mul_w3_kernel(float *shb, float *shb2, int hidden_dim) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < hidden_dim) {
-        float val = shb[i] * (1.0f / (1.0f + expf(-shb[i])));
-        shb[i] = val * shb2[i];
+        float val = shb[i];
+        // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+        val *= (1.0f / (1.0f + expf(-val)));
+        // elementwise multiply with w3(x)
+        val *= shb2[i];
+        shb[i] = val;
     }
 }
 void f_silu_elementwise_mul_w3(RunState *s, int hidden_dim) {
