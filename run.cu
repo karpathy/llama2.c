@@ -22,9 +22,8 @@
 #ifdef USE_CUDA
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
-#endif
+#include <cublas_v2.h>
 
-#ifdef USE_CUDA
 // Each CUDA function call should be checked for errors.
 #define CUCHK(err) cuda_check((err), __FILE__, __LINE__)
 inline void cuda_check(cudaError_t error_code, const char *file, int line)
@@ -36,6 +35,9 @@ inline void cuda_check(cudaError_t error_code, const char *file, int line)
         exit(error_code);
     }
 }
+
+cublasHandle_t g_cublas_handle = nullptr;
+
 #endif
 
 // ----------------------------------------------------------------------------
@@ -405,7 +407,7 @@ void softmax(float* x, int size) {
 
 #ifdef USE_CUDA
 // TODO consider cuBLAS for such an important fn for performance.
-
+#if 1
 // one output per warp so that we can parallelize the dot product across the warp
 // Note that ~95% of total time is spent here, so optimizing this is important
 __global__ void mat_vec_kernel(float* output, float* input, float* weight, int n, int d, int numSerialElements) {
@@ -434,6 +436,26 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     int blocks = divUp(d, 4);
     mat_vec_kernel <<<blocks, block_dim >>> (xout, x, w, n, d, serialElements);
 }
+#else
+// Use cuBLAS for matmul
+void matmul(float* xout, float* x, float* w, int n, int d) {
+    if(g_cublas_handle == nullptr) {
+        cublasStatus_t stat = cublasCreate(&g_cublas_handle);  // FIXME cublasDestroy
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            printf ("CUBLAS initialization failed\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    // W (d,n) @ x (n,) -> xout (d,)
+    // Sgemv does y = alpha * op(A) * x + beta * y (modifying y)
+    //   where op can transpose the matrix A
+    // Translating to our local vars, that is
+    // xout = 1.0*op(w)*x + 0.0*xout
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    cublasSgemv(g_cublas_handle, CUBLAS_OP_T, d, n, &alpha, w, d, x, 1, &beta, xout, 1);
+}
+#endif
 #else
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)

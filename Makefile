@@ -68,12 +68,12 @@ testcc:
 # run cuda
 .PHONY: runcuda
 runcuda: run.c
-	$(NVCC) -DUSE_CUDA -O3 -o runcuda run.cu -lm
+	$(NVCC) -DUSE_CUDA -O3 -o runcuda run.cu -lm -lcublas
 
 # run debug cuda
 .PHONY: rundebugcuda
 rundebugcuda: run.c
-	$(NVCC) -DUSE_CUDA -g -o runcuda run.cu -lm
+	$(NVCC) -DUSE_CUDA -g -o runcuda run.cu -lm -lcublas
 
 .PHONY: clean
 clean:
