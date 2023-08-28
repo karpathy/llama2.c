@@ -287,16 +287,18 @@ int divUp(int a, int b) {
     return (a - 1) / b + 1;
 }
 
-const int rmsnorm_num_threads = 1024;
+const int num_threads_lrg = 1024;
+const int num_threads_med = 256;
+
 __global__ void rmsnorm_kernel(float* o, float* x, float* weight, int size, int elementsPerThread) {
     // parallel reduction of sum of squares via CUB
     float ss = 0.0f;
     for (int i = 0; i < elementsPerThread; i++) {
-        int j = threadIdx.x + i * rmsnorm_num_threads;
+        int j = threadIdx.x + i * num_threads_lrg;
         if (j < size)
             ss += x[j] * x[j];
     }
-    using BlockReduce = cub::BlockReduce<float, rmsnorm_num_threads>;
+    using BlockReduce = cub::BlockReduce<float, num_threads_lrg>;
     __shared__ typename BlockReduce::TempStorage temp;
     ss = BlockReduce(temp).Sum(ss);
 
@@ -313,15 +315,15 @@ __global__ void rmsnorm_kernel(float* o, float* x, float* weight, int size, int 
 
     // normalize and scale
     for (int i = 0; i < elementsPerThread; i++) {
-        int j = threadIdx.x + i * rmsnorm_num_threads;
+        int j = threadIdx.x + i * num_threads_lrg;
         if (j < size) {
             o[j] = weight[j] * (ss * x[j]);
         }
     }
 }
 void rmsnorm(float* o, float* x, float* weight, int size) {
-    int elementsPerThread = divUp(size, rmsnorm_num_threads);
-    rmsnorm_kernel <<<1, rmsnorm_num_threads >>> (o, x, weight, size, elementsPerThread);
+    int elementsPerThread = divUp(size, num_threads_lrg);
+    rmsnorm_kernel <<<1, num_threads_lrg >>> (o, x, weight, size, elementsPerThread);
 }
 #else
 void rmsnorm(float* o, float* x, float* weight, int size) {
@@ -341,24 +343,24 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
 #endif
 
 #ifdef USE_CUDA
-// TODO check vs C code
 __device__ void softmax_gpu(float* __restrict__ x, int size) {
-    using BlockReduce = cub::BlockReduce<float, 1024>;
-    __shared__ typename BlockReduce::TempStorage temp;
-    __shared__ float shared_val;
-
     int tid = threadIdx.x;
     int step = blockDim.x;
 
     // find max value (for numerical stability)
     float max_val = tid < size ? x[tid] : 0;
-    for (int i = tid + step; i < size; i += step)
-        if (x[i] > max_val)
+    for (int i = tid + step; i < size; i += step) {
+        if (x[i] > max_val) {
             max_val = x[i];
-
+        }
+    }
+    using BlockReduce = cub::BlockReduce<float, num_threads_lrg>;
+    __shared__ typename BlockReduce::TempStorage temp;
+    __shared__ float shared_val;
     max_val = BlockReduce(temp).Reduce(max_val, cub::Max());
-    if (threadIdx.x == 0)
+    if (threadIdx.x == 0) {
         shared_val = max_val;
+    }
     __syncthreads();
     max_val = shared_val;
 
@@ -368,16 +370,17 @@ __device__ void softmax_gpu(float* __restrict__ x, int size) {
         x[i] = expf(x[i] - max_val);
         sum += x[i];
     }
-
     sum = BlockReduce(temp).Sum(sum);
-    if (threadIdx.x == 0)
+    if (threadIdx.x == 0) {
         shared_val = sum;
+    }
     __syncthreads();
     sum = shared_val;
 
     // normalize
-    for (int i = tid; i < size; i += step)
+    for (int i = tid; i < size; i += step) {
         x[i] /= sum;
+    }
 }
 #endif
 void softmax(float* x, int size) {
@@ -549,7 +552,7 @@ __global__ void multi_head_attention_kernel(int pos, int seq_len, float *sq, flo
 #endif
 }
 void multi_head_attention(int pos, Config* p, RunState* s, int kv_dim, int kv_mul, int head_size, int loff) {
-    multi_head_attention_kernel <<<p->n_heads, 1024>>> (pos, p->seq_len, s->q, s->att, s->xb, s->key_cache, s->value_cache, kv_dim, kv_mul, head_size, loff);
+    multi_head_attention_kernel <<<p->n_heads, num_threads_lrg>>> (pos, p->seq_len, s->q, s->att, s->xb, s->key_cache, s->value_cache, kv_dim, kv_mul, head_size, loff);
 }
 #else
 void multi_head_attention(int pos, Config* p, RunState* s, int kv_dim, int kv_mul, int head_size, int loff) {
@@ -604,7 +607,7 @@ __global__ void f_silu_elementwise_mul_w3_kernel(float *shb, float *shb2, int hi
     }
 }
 void f_silu_elementwise_mul_w3(RunState *s, int hidden_dim) {
-    f_silu_elementwise_mul_w3_kernel<<<divUp(hidden_dim, 256), 256>>>(s->hb, s->hb2, hidden_dim);
+    f_silu_elementwise_mul_w3_kernel<<<divUp(hidden_dim, num_threads_med), num_threads_med>>>(s->hb, s->hb2, hidden_dim);
 }
 #else
 void f_silu_elementwise_mul_w3(RunState *s, int hidden_dim) {
@@ -627,7 +630,7 @@ __global__ void accum_kernel(float* a, float* b, int size) {
     }
 }
 void accum(float *a, float *b, int size) {
-    accum_kernel<<<divUp(size, 256), 256>>>(a,b,size);
+    accum_kernel<<<divUp(size, num_threads_med), num_threads_med>>>(a,b,size);
 }
 #else
 void accum(float *a, float *b, int size) {

@@ -4,9 +4,9 @@ This is a work-in-progress port of llama2.c to CUDA.
 
 I was inspired & have used some code from https://github.com/ankan-ban/llama2.cu, but I noticed the `run.c` code had progressed and updated and the `llama2.cu` code was no longer working after just a week.  So, I tried to implement CUDA code in a way that `run.cu` could be more easily kept up-to-date via `diff` and also the CUDA code could be compared directly to the C code for educational purposes.  We'll see how easy that really is since the original `run.c` code continues to be updated.
 
-Coding CUDA for the highest performance is a significant effort and outside the scope of this repository.  I'm thinking that this repository is more for seeing the basics of porting to C to CUDA for educational purposes and for hopefully noticing a significant performance increase over C.  That said, performance improvements that do not dramatically affect the code structure are fine.
+Coding CUDA for the highest performance is a significant effort and outside the scope of this repository.  I'm thinking that this repository is more for seeing the basics of porting from C to CUDA for educational purposes and for hopefully noticing a significant performance increase over C.  That said, performance improvements that do not dramatically affect the code structure would be acceptable to merge.
 
-To give you and idea of performance improvement at the moment (with no perf analysis), here are some representative results from my 14-core Intel RTX 4050 laptop:
+To give you an idea of performance improvement at the moment (with no perf analysis), here are some representative results from my 14-core Intel RTX 4050 laptop:
 
 ```
 Runs e.g.
@@ -35,7 +35,7 @@ Use the `runcuda` or `runcuda.exe` as you would the `run` or `run.exe` commands.
 * [x] get windows build working
 * [ ] look over the existing cuda kernels and make them look like the C code if it doesn't hurt perf too bad.
 * [ ] consider if there is a straightforward way to transfer weights 'just in time' to the GPU so we could run a models that can be mmap-ed, but not fit into GPU memory.
-* [ ] write a basic description of the conversion process, maybe a blog post
+* [ ] write a basic description of the conversion process, maybe a blog post.
 
 ## llama2.c
 
