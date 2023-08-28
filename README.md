@@ -32,8 +32,6 @@ Use the `runcuda` or `runcuda.exe` as you would the `run` or `run.exe` commands.
 ### To Do
 
 * keep up-to-date with llama.c repo...seems like this is going to iterate for a bit longer
-* [x] get windows build working
-* [ ] look over the existing cuda kernels and make them look like the C code if it doesn't hurt perf too bad.
 * [ ] consider if there is a straightforward way to transfer weights 'just in time' to the GPU so we could run a models that can be mmap-ed, but not fit into GPU memory.
 * [ ] write a basic description of the conversion process, maybe a blog post.
 
