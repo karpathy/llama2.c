@@ -75,5 +75,16 @@ with torch.no_grad():
     with ctx:
         for k in range(num_samples):
             y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
-            print(enc.decode(y[0].tolist()))
+            idx_list = y[0].tolist()
+            bos_index = None
+            try:
+                # skip the 1st bos marker and look for the next one, if it exists                
+                bos_index = idx_list.index(enc.bos_id, 1)
+            except:
+                pass
+            
+            # truncate the response to the next bos marker.  If not found, return the entire response
+            idx_list = idx_list[:bos_index]
+
+            print(enc.decode(idx_list))
             print('---------------')
