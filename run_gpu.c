@@ -27,7 +27,7 @@ $ ./run
 // ----------------------------------------------------------------------------
 // Transformer and RunState structs, and related memory management
 
-// #define DEBUG
+#define DEBUG
 
 void checkGPUError(int line) {
     GLenum err = glGetError();
@@ -112,6 +112,9 @@ typedef struct {
     // (optional) classifier weights for the logits, on the last layer
     GLuint wcls;
     GLuint wcls_len;
+
+    int dim_vec4;
+    int hidden_dim_vec4;
 } TransformerWeights_gpu;
 
 typedef struct {
@@ -154,12 +157,11 @@ static const char* shader_matmul =
 static const char* shader_matmul_trans_vec4 =
     "#version 320 es\n"
     "uniform int n;\n"
-    "uniform int d;\n"
     "uniform int x_offset;\n"
     "uniform int w_offset;\n"
     "layout(local_size_x = 1) in;\n"
     "layout(binding = 0) readonly buffer Input0{\n"
-    "    vec4 data[];\n"
+    "    float data[];\n"
     "} x;\n"
 
     "layout(binding = 1) readonly buffer Input1{\n"
@@ -173,8 +175,8 @@ static const char* shader_matmul_trans_vec4 =
     "void main(){\n"
     "    int i = int(gl_GlobalInvocationID.x);\n"
     "    vec4 val = vec4(0.0 , 0.0 , 0.0 , 0.0);\n"
-    "    for (int j = 0; j < d; j++) {\n"
-    "        val += w.data[i + j * d + w_offset] * x.data[j + x_offset];\n"
+    "    for (int j = 0; j < n; j++) {\n"
+    "        val += w.data[i  + j* n / 4 + w_offset / 4] * x.data[j + x_offset];\n"
     "    }\n"
     "    xout.data[i] = val;\n"
     "}\n";
@@ -883,13 +885,16 @@ void compile_GPUProgram(GPUProgram* program) {
     GPU_CHECK();
 
 void malloc_run_state(RunState* s, Config* p) {
+    int dim_vec4 = ((p->dim / 4) + 1) * 4;
+    int hidden_dim_vec4 = ((p->hidden_dim / 4) + 1) * 4;
+
     s->x_len = sizeof(float) * p->dim;
     create_GPU_buffer(s->x, s->x_len, GL_DYNAMIC_DRAW, NULL);
 
-    s->xb_len = sizeof(float) * p->dim;
+    s->xb_len = sizeof(float) * dim_vec4;
     create_GPU_buffer(s->xb, s->xb_len, GL_DYNAMIC_DRAW, NULL);
 
-    s->xb2_len = sizeof(float) * p->dim;
+    s->xb2_len = sizeof(float) * dim_vec4;
     create_GPU_buffer(s->xb2, s->xb2_len, GL_DYNAMIC_DRAW, NULL);
 
     s->hb_len = sizeof(float) * p->hidden_dim;
@@ -898,13 +903,13 @@ void malloc_run_state(RunState* s, Config* p) {
     s->hb2_len = sizeof(float) * p->hidden_dim;
     create_GPU_buffer(s->hb2, s->hb2_len, GL_DYNAMIC_DRAW, NULL);
 
-    s->q_len = sizeof(float) * p->dim;
+    s->q_len = sizeof(float) * dim_vec4;
     create_GPU_buffer(s->q, s->q_len, GL_DYNAMIC_DRAW, NULL);
 
-    s->k_len = sizeof(float) * p->dim;
+    s->k_len = sizeof(float) * dim_vec4;
     create_GPU_buffer(s->k, s->k_len, GL_DYNAMIC_DRAW, NULL);
 
-    s->v_len = sizeof(float) * p->dim;
+    s->v_len = sizeof(float) * dim_vec4;
     create_GPU_buffer(s->v, s->v_len, GL_DYNAMIC_DRAW, NULL);
 
     s->att_len = sizeof(float) * p->n_heads * p->seq_len;
@@ -954,23 +959,49 @@ void free_run_state(RunState* s) {
     free(s->probindex);
 }
 
+void copyLocalMat(float* out, float* src, int n_layers, int dim_i, int dim_j, int rdim) {
+    int i, j, l;
+    for (l = 0; l < n_layers; ++l) {
+        for (i = 0; i < dim_i; ++i) {
+            for (j = 0; j < dim_j; ++j) {
+                float val = src[l * dim_i * dim_j + j * dim_i + i];
+                out[l * rdim * dim_i + i * rdim + j] = val;
+            }
+            for (; j < rdim; ++j) {
+                out[l * rdim * dim_j + i * rdim + j] = 0;
+            }
+        }
+    }
+}
+
 void upload_weights(TransformerWeights_local* local, TransformerWeights_gpu* remote, Config* p) {
+    remote->dim_vec4 = ((p->dim / 4) + 1) * 4;
+    remote->hidden_dim_vec4 = ((p->hidden_dim / 4) + 1) * 4;
+
     remote->token_embedding_table = local->token_embedding_table;
 
     remote->rms_att_weight_len = sizeof(float) * p->n_layers * p->dim;
     create_GPU_buffer(remote->rms_att_weight, remote->rms_att_weight_len, GL_STATIC_DRAW, local->rms_att_weight);
 
-    remote->wq_len = sizeof(float) * p->n_layers * p->dim * p->dim;
-    create_GPU_buffer(remote->wq, remote->wq_len, GL_STATIC_DRAW, local->wq);
+    float* tmp = (float*)malloc(sizeof(float) * p->n_layers * remote->dim_vec4 * p->dim);
 
-    remote->wk_len = sizeof(float) * p->n_layers * p->dim * p->dim;
-    create_GPU_buffer(remote->wk, remote->wk_len, GL_STATIC_DRAW, local->wk);
+    copyLocalMat(tmp, local->wq, p->n_layers, p->dim, p->dim, remote->dim_vec4);
+    remote->wq_len = sizeof(float) * p->n_layers * remote->dim_vec4 * p->dim;
+    create_GPU_buffer(remote->wq, remote->wq_len, GL_STATIC_DRAW, tmp);
 
-    remote->wv_len = sizeof(float) * p->n_layers * p->dim * p->dim;
-    create_GPU_buffer(remote->wv, remote->wv_len, GL_STATIC_DRAW, local->wv);
+    copyLocalMat(tmp, local->wk, p->n_layers, p->dim, p->dim, remote->dim_vec4);
+    remote->wk_len = sizeof(float) * p->n_layers * remote->dim_vec4 * p->dim;
+    create_GPU_buffer(remote->wk, remote->wk_len, GL_STATIC_DRAW, tmp);
 
-    remote->wo_len = sizeof(float) * p->n_layers * p->dim * p->dim;
-    create_GPU_buffer(remote->wo, remote->wo_len, GL_STATIC_DRAW, local->wo);
+    copyLocalMat(tmp, local->wv, p->n_layers, p->dim, p->dim, remote->dim_vec4);
+    remote->wv_len = sizeof(float) * p->n_layers * remote->dim_vec4 * p->dim;
+    create_GPU_buffer(remote->wv, remote->wv_len, GL_STATIC_DRAW, tmp);
+
+    copyLocalMat(tmp, local->wo, p->n_layers, p->dim, p->dim, remote->dim_vec4);
+    remote->wo_len = sizeof(float) * p->n_layers * remote->dim_vec4 * p->dim;
+    create_GPU_buffer(remote->wo, remote->wo_len, GL_STATIC_DRAW, tmp);
+
+    free(tmp);
 
     remote->rms_ffn_weight_len = sizeof(float) * p->n_layers * p->dim;
     create_GPU_buffer(remote->rms_ffn_weight, remote->rms_ffn_weight_len, GL_STATIC_DRAW, local->rms_ffn_weight);
@@ -1355,16 +1386,13 @@ void matmul_trans_vec4(GPUProgram* prog, RunState* state, GLuint xout, GLuint x,
     int n_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "n");
     glUniform1i(n_gpu, n);
 
-    int d_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "d");
-    glUniform1i(d_gpu, d);
-
     int x_offset_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "x_offset");
-    glUniform1i(x_offset_gpu, x_offset / 4);
+    glUniform1i(x_offset_gpu, x_offset);
 
     int w_offset_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "w_offset");
-    glUniform1i(w_offset_gpu, w_offset / 4);
+    glUniform1i(w_offset_gpu, w_offset);
 
-    glDispatchCompute(n, 1, 1);
+    glDispatchCompute(d/4, 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 }
@@ -1407,9 +1435,16 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         rmsnorm(prog, s, s->xb, x, w->rms_att_weight, dim, l * dim);
 
         // qkv matmuls for this position
-        matmul(prog, s, s->q, s->xb, w->wq, dim, dim, 0, l * dim * dim);
-        matmul(prog, s, s->k, s->xb, w->wk, dim, dim, 0, l * dim * dim);
-        matmul(prog, s, s->v, s->xb, w->wv, dim, dim, 0, l * dim * dim);
+        matmul_trans_vec4(prog, s, s->q, s->xb, w->wq, w->dim_vec4, dim, 0, l * w->dim_vec4 * dim);
+        matmul_trans_vec4(prog, s, s->k, s->xb, w->wk, w->dim_vec4, dim, 0, l * w->dim_vec4 * dim);
+        matmul_trans_vec4(prog, s, s->v, s->xb, w->wv, w->dim_vec4, dim, 0, l * w->dim_vec4 * dim);
+
+        // printf("q:\n");
+        // dumpGPUArray(s->q, 0, dim);
+        // printf("k:\n");
+        // dumpGPUArray(s->k, 0, dim);
+        // printf("v:\n");
+        // dumpGPUArray(s->v, 0, dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
 
@@ -1502,7 +1537,7 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         transformer_sum(prog, s, s->xb, s->mulBuffer_4, pos + 1, head_size * p->n_heads);
 
         // final matmul to get the output of the attention
-        matmul(prog, s, s->xb2, s->xb, w->wo, dim, dim, 0, l * dim * dim);
+        matmul_trans_vec4(prog, s, s->xb2, s->xb, w->wo, w->dim_vec4, dim, 0, l * w->dim_vec4 * dim);
 
         // residual connection back into x
         accum(prog, s, x, s->xb2, dim);
