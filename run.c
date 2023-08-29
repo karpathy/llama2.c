@@ -116,7 +116,7 @@ void free_run_state(RunState* s) {
 void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights) {
     int head_size = p->dim / p->n_heads;
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
-    unsigned long n_layers = p->n_layers;
+    unsigned long long n_layers = p->n_layers;
     w->token_embedding_table = ptr;
     ptr += p->vocab_size * p->dim;
     w->rms_att_weight = ptr;
@@ -251,7 +251,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     memcpy(x, content_row, dim*sizeof(*x));
 
     // forward all the layers
-    for(unsigned long l = 0; l < p->n_layers; l++) {
+    for(unsigned long long l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
