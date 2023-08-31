@@ -157,6 +157,7 @@ static const char* shader_matmul =
 static const char* shader_matmul_trans_vec4 =
     "#version 320 es\n"
     "uniform int n;\n"
+    "uniform int d;\n"
     "uniform int x_offset;\n"
     "uniform int w_offset;\n"
     "layout(local_size_x = 1) in;\n"
@@ -897,10 +898,10 @@ void malloc_run_state(RunState* s, Config* p) {
     s->xb2_len = sizeof(float) * dim_vec4;
     create_GPU_buffer(s->xb2, s->xb2_len, GL_DYNAMIC_DRAW, NULL);
 
-    s->hb_len = sizeof(float) * p->hidden_dim;
+    s->hb_len = sizeof(float) * hidden_dim_vec4;
     create_GPU_buffer(s->hb, s->hb_len, GL_DYNAMIC_DRAW, NULL);
 
-    s->hb2_len = sizeof(float) * p->hidden_dim;
+    s->hb2_len = sizeof(float) * hidden_dim_vec4;
     create_GPU_buffer(s->hb2, s->hb2_len, GL_DYNAMIC_DRAW, NULL);
 
     s->q_len = sizeof(float) * dim_vec4;
@@ -968,7 +969,7 @@ void copyLocalMat(float* out, float* src, int n_layers, int dim_i, int dim_j, in
                 out[l * rdim * dim_i + i * rdim + j] = val;
             }
             for (; j < rdim; ++j) {
-                out[l * rdim * dim_j + i * rdim + j] = 0;
+                out[l * rdim * dim_i + i * rdim + j] = 0;
             }
         }
     }
@@ -1006,14 +1007,20 @@ void upload_weights(TransformerWeights_local* local, TransformerWeights_gpu* rem
     remote->rms_ffn_weight_len = sizeof(float) * p->n_layers * p->dim;
     create_GPU_buffer(remote->rms_ffn_weight, remote->rms_ffn_weight_len, GL_STATIC_DRAW, local->rms_ffn_weight);
 
-    remote->w1_len = sizeof(float) * p->n_layers * p->dim * p->hidden_dim;
-    create_GPU_buffer(remote->w1, remote->w1_len, GL_STATIC_DRAW, local->w1);
+    tmp = (float*)malloc(sizeof(float) * p->n_layers * p->dim * remote->hidden_dim_vec4);
+
+    copyLocalMat(tmp, local->w1, p->n_layers, p->dim, p->hidden_dim, remote->hidden_dim_vec4);
+    remote->w1_len = sizeof(float) * p->n_layers * p->dim * remote->hidden_dim_vec4;
+    create_GPU_buffer(remote->w1, remote->w1_len, GL_STATIC_DRAW, tmp);
+
+    copyLocalMat(tmp, local->w3, p->n_layers, p->dim, p->hidden_dim, remote->hidden_dim_vec4);
+    remote->w3_len = sizeof(float) * p->n_layers * p->dim * remote->hidden_dim_vec4;
+    create_GPU_buffer(remote->w3, remote->w3_len, GL_STATIC_DRAW, tmp);
+
+    free(tmp);
 
     remote->w2_len = sizeof(float) * p->n_layers * p->hidden_dim * p->dim;
     create_GPU_buffer(remote->w2, remote->w2_len, GL_STATIC_DRAW, local->w2);
-
-    remote->w3_len = sizeof(float) * p->n_layers * p->dim * p->hidden_dim;
-    create_GPU_buffer(remote->w3, remote->w3_len, GL_STATIC_DRAW, local->w3);
 
     remote->rms_final_weight_len = sizeof(float) * p->dim;
     create_GPU_buffer(remote->rms_final_weight, remote->rms_final_weight_len, GL_STATIC_DRAW, local->rms_final_weight);
@@ -1386,13 +1393,16 @@ void matmul_trans_vec4(GPUProgram* prog, RunState* state, GLuint xout, GLuint x,
     int n_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "n");
     glUniform1i(n_gpu, n);
 
+    int d_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "d");
+    glUniform1i(d_gpu, d);
+
     int x_offset_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "x_offset");
     glUniform1i(x_offset_gpu, x_offset);
 
     int w_offset_gpu = glGetUniformLocation(prog->shader_matmul_trans_vec4, "w_offset");
     glUniform1i(w_offset_gpu, w_offset);
 
-    glDispatchCompute(d/4, 1, 1);
+    glDispatchCompute(n / 4, 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     GPU_CHECK();
 }
@@ -1438,13 +1448,6 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
         matmul_trans_vec4(prog, s, s->q, s->xb, w->wq, w->dim_vec4, dim, 0, l * w->dim_vec4 * dim);
         matmul_trans_vec4(prog, s, s->k, s->xb, w->wk, w->dim_vec4, dim, 0, l * w->dim_vec4 * dim);
         matmul_trans_vec4(prog, s, s->v, s->xb, w->wv, w->dim_vec4, dim, 0, l * w->dim_vec4 * dim);
-
-        // printf("q:\n");
-        // dumpGPUArray(s->q, 0, dim);
-        // printf("k:\n");
-        // dumpGPUArray(s->k, 0, dim);
-        // printf("v:\n");
-        // dumpGPUArray(s->v, 0, dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k by freq_cis in each head
 
@@ -1547,8 +1550,8 @@ void transformer(int token, int pos, Config* p, GPUProgram* prog, RunState* s, T
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(prog, s, s->hb, s->xb, w->w1, dim, hidden_dim, 0, l * dim * hidden_dim);
-        matmul(prog, s, s->hb2, s->xb, w->w3, dim, hidden_dim, 0, l * dim * hidden_dim);
+        matmul_trans_vec4(prog, s, s->hb, s->xb, w->w1, w->hidden_dim_vec4, dim, 0, l * dim * w->hidden_dim_vec4);
+        matmul_trans_vec4(prog, s, s->hb2, s->xb, w->w3, w->hidden_dim_vec4, dim, 0, l * dim * w->hidden_dim_vec4);
 
         // 1. F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         // 2. elementwise multiply with w3(x)
