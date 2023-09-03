@@ -27,10 +27,10 @@ import torch
 from model import Transformer, ModelArgs
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
-
+import torch._dynamo
 from tinystories import Task
 from export import model_export
-
+torch._dynamo.config.suppress_errors = True
 # -----------------------------------------------------------------------------
 # I/O
 out_dir = "out"
@@ -59,7 +59,7 @@ dropout = 0.0
 # adamw optimizer
 gradient_accumulation_steps = 4  # used to simulate larger batch sizes
 learning_rate = 5e-4  # max learning rate
-max_iters = 100000  # total number of training iterations
+max_iters = 10  # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
@@ -68,7 +68,7 @@ grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 decay_lr = True  # whether to decay the learning rate
 warmup_iters = 1000  # how many steps to warm up for
 # system
-device = "mps"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', 'mps', 'mps:0', 'mps1' etc., or try 'mps' on macbooks
+device = "cpu"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', 'mps', 'mps:0', 'mps1' etc., or try 'mps' on macbooks
 dtype = "bfloat16"  # float32|bfloat16|float16
 compile = True  # use PyTorch 2.0 to compile the model to be faster
 # -----------------------------------------------------------------------------
@@ -214,28 +214,18 @@ if ddp:
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
 def estimate_loss():
-    print("z1")
     out = {}
     model.eval()
-    print("z2")
     for split in ["train", "val"]:
-        print("z2.1")
         batch_iter = iter_batches(split=split)
-        print("z2.2")
         losses = torch.zeros(eval_iters)  # keep on CPU
-        print("z2.3")
         for k in range(eval_iters):
             X, Y = next(batch_iter)
-            print("z2.4")
             with ctx:
                 logits = model(X, Y)
-
-                print("z2.5")
                 loss = raw_model.last_loss
-                print("z2.6")
             losses[k] = loss.item()
         out[split] = losses.mean()
-    print("z3")
     model.train()
     return out
 
@@ -266,19 +256,13 @@ local_iter_num = 0  # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model  # unwrap DDP container if needed
 running_mfu = -1.0
 while True:
-    print("!!!!0.5")
     # determine and set the learning rate for this iteration
     lr = get_lr(iter_num) if decay_lr else learning_rate
-    print("!!!!0.6")
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
-    print("!!!!0.7")
-    print("!!!!")
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0 and master_process:
-        print("!!!!0.8")
         losses = estimate_loss()
-        print("!!!!1")
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         if wandb_log:
             try:
@@ -294,7 +278,6 @@ while True:
                 )
             except Exception as e:
                 print(f"logging to wandb failed: {e}")
-        print("!!!!2")
         if losses["val"] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses["val"]
             if iter_num > 0:
@@ -309,29 +292,23 @@ while True:
                 print(f"saving checkpoint to {out_dir}")
                 torch.save(checkpoint, os.path.join(out_dir, "ckpt.pt"))
                 model_export(raw_model, os.path.join(out_dir, "model.bin"), version=0)
-        print("!!!!3")
     if iter_num == 0 and eval_only:
         break
-    print("!!!!4")
     # forward backward update, with optional gradient accumulation to simulate larger batch size
     # and using the GradScaler if data type is float16
     for micro_step in range(gradient_accumulation_steps):
-        print("!!!!5")
         if ddp:
             # in DDP training we only need to sync gradients at the last micro step.
             # the official way to do this is with model.no_sync() context manager, but
             # I really dislike that this bloats the code and forces us to repeat code
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = micro_step == gradient_accumulation_steps - 1
-        print("!!!!6")
         with ctx:
             logits = model(X, Y)
             loss = raw_model.last_loss
             loss = loss / gradient_accumulation_steps
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
-        print("!!!!7")
         X, Y = next(train_batch_iter)
-        print("!!!!8")
         # backward pass, with gradient scaling if training in fp16
         scaler.scale(loss).backward()
     # clip the gradient
