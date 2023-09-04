@@ -67,7 +67,7 @@ grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 decay_lr = True  # whether to decay the learning rate
 warmup_iters = 1000  # how many steps to warm up for
 # system
-device = "mps"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', 'mps', 'mps:0', 'mps1' etc., or try 'mps' on macbooks
+device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', 'mps', 'mps:0', 'mps1' etc., or try 'mps' on macbooks
 dtype = "bfloat16"  # float32|bfloat16|float16
 compile = True if device != "mps" else False  # use PyTorch 2.0 to compile the model to be faster.
 # -----------------------------------------------------------------------------
