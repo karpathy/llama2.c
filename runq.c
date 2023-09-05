@@ -38,23 +38,25 @@ typedef struct {
 
 typedef struct {
     // token embedding table
-    QuantizedTensor token_embedding_table; // (vocab_size, dim)
+    QuantizedTensor *q_tokens; // (vocab_size, dim)
+    float* token_embedding_table; // same, but dequantized
+
     // weights for rmsnorms
     float* rms_att_weight; // (layer, dim) rmsnorm weights
     float* rms_ffn_weight; // (layer, dim)
     // weights for matmuls. note dim == n_heads * head_size
-    QuantizedTensor wq; // (layer, dim, n_heads * head_size)
-    QuantizedTensor wk; // (layer, dim, n_kv_heads * head_size)
-    QuantizedTensor wv; // (layer, dim, n_kv_heads * head_size)
-    QuantizedTensor wo; // (layer, n_heads * head_size, dim)
+    QuantizedTensor *wq; // (layer, dim, n_heads * head_size)
+    QuantizedTensor *wk; // (layer, dim, n_kv_heads * head_size)
+    QuantizedTensor *wv; // (layer, dim, n_kv_heads * head_size)
+    QuantizedTensor *wo; // (layer, n_heads * head_size, dim)
     // weights for ffn
-    QuantizedTensor w1; // (layer, hidden_dim, dim)
-    QuantizedTensor w2; // (layer, dim, hidden_dim)
-    QuantizedTensor w3; // (layer, hidden_dim, dim)
+    QuantizedTensor *w1; // (layer, hidden_dim, dim)
+    QuantizedTensor *w2; // (layer, dim, hidden_dim)
+    QuantizedTensor *w3; // (layer, hidden_dim, dim)
     // final rmsnorm
     float* rms_final_weight; // (dim,)
     // (optional) classifier weights for the logits, on the last layer
-    QuantizedTensor wcls;
+    QuantizedTensor *wcls;
 } TransformerWeights;
 
 typedef struct {
@@ -131,6 +133,59 @@ void free_run_state(RunState* s) {
     free(s->value_cache);
 }
 
+// ----------------------------------------------------------------------------
+// Quantization functions
+
+void dequantize(QuantizedTensor *qx, float* x, int n) {
+    for (int i = 0; i < n; i++) {
+        x[i] = qx->q[i] * qx->s[i / GS];
+    }
+}
+
+void quantize(QuantizedTensor *qx, float* x, int n) {
+    int num_groups = n / GS;
+    float Q_MAX = 127.0f;
+
+    for (int group = 0; group < num_groups; group++) {
+
+        // find the max absolute value in the current group
+        float wmax = 0.0;
+        for (int i = 0; i < GS; i++) {
+            float val = fabs(x[group * GS + i]);
+            if (val > wmax) {
+                wmax = val;
+            }
+        }
+
+        // calculate and write the scaling factor
+        float scale = wmax / Q_MAX;
+        qx->s[group] = scale;
+
+        // calculate and write the quantized values
+        for (int i = 0; i < GS; i++) {
+            float quant_value = x[group * GS + i] / scale; // scale
+            int8_t quantized = (int8_t) round(quant_value); // round and clamp
+            qx->q[group * GS + i] = quantized;
+        }
+    }
+}
+
+/* initialize `n` x quantized tensor (with `size_each` elements), starting from memory pointed at *ptr */
+QuantizedTensor *init_quantized_tensors(void **ptr, int n, int size_each) {
+    void *p = *ptr;
+    QuantizedTensor *res = malloc(n * sizeof(QuantizedTensor));
+    for(int i=0; i<n; i++) {
+        /* map quantized int8 values*/
+        res[i].q = (int8_t*)p; 
+        p = (int8_t*)p + size_each;
+        /* map scale factors */
+        res[i].s = (float*)p;
+        p = (float*)p + size_each / GS;
+    }
+    *ptr = p; // advance ptr to current position
+    return res;
+}
+
 void memory_map_weights(TransformerWeights *w, Config* p, void* ptr, uint8_t shared_classifier) {
     int head_size = p->dim / p->n_heads;
     // first are the parameters that are kept in fp32 (the rmsnorm (1D) weights)
@@ -141,54 +196,24 @@ void memory_map_weights(TransformerWeights *w, Config* p, void* ptr, uint8_t sha
     fptr += p->n_layers * p->dim;
     w->rms_final_weight = fptr;
     fptr += p->dim;
+
     // now read all the quantized weights
-    int8_t* qptr = (int8_t*) fptr; // now cast the pointer to int8_t*
-    w->token_embedding_table.q = qptr;
-    qptr += p->vocab_size * p->dim;
-    w->wq.q = qptr;
-    qptr += p->n_layers * p->dim * (p->n_heads * head_size);
-    w->wk.q = qptr;
-    qptr += p->n_layers * p->dim * (p->n_kv_heads * head_size);
-    w->wv.q = qptr;
-    qptr += p->n_layers * p->dim * (p->n_kv_heads * head_size);
-    w->wo.q = qptr;
-    qptr += p->n_layers * (p->n_heads * head_size) * p->dim;
-    w->w1.q = qptr;
-    qptr += p->n_layers * p->dim * p->hidden_dim;
-    w->w2.q = qptr;
-    qptr += p->n_layers * p->hidden_dim * p->dim;
-    w->w3.q = qptr;
-    qptr += p->n_layers * p->dim * p->hidden_dim;
-    if (shared_classifier) {
-        w->wcls.q = w->token_embedding_table.q;
-    } else {
-        w->wcls.q = qptr;
-        qptr += p->dim * p->vocab_size;
-    }
-    // and finally all the associated scaling factors
-    float* sptr = (float*) qptr; // cast pointer back to float*
-    w->token_embedding_table.s = sptr;
-    sptr += p->vocab_size * p->dim / GS;
-    w->wq.s = sptr;
-    sptr += p->n_layers * p->dim * (p->n_heads * head_size) / GS;
-    w->wk.s = sptr;
-    sptr += p->n_layers * p->dim * (p->n_kv_heads * head_size) / GS;
-    w->wv.s = sptr;
-    sptr += p->n_layers * p->dim * (p->n_kv_heads * head_size) / GS;
-    w->wo.s = sptr;
-    sptr += p->n_layers * (p->n_heads * head_size) * p->dim / GS;
-    w->w1.s = sptr;
-    sptr += p->n_layers * p->dim * p->hidden_dim / GS;
-    w->w2.s = sptr;
-    sptr += p->n_layers * p->hidden_dim * p->dim / GS;
-    w->w3.s = sptr;
-    sptr += p->n_layers * p->dim * p->hidden_dim / GS;
-    if (shared_classifier) {
-        w->wcls.s = w->token_embedding_table.s;
-    } else {
-        w->wcls.s = sptr;
-        sptr += p->dim * p->vocab_size / GS;
-    }
+    ptr = (void*)fptr; // now cast the pointer back to void*
+    w->q_tokens = init_quantized_tensors(&ptr, 1, p->vocab_size * p->dim);
+    // dequantize token embedding table
+    w->token_embedding_table = malloc(p->vocab_size * p->dim * sizeof(float));
+    dequantize(w->q_tokens, w->token_embedding_table, p->vocab_size * p->dim);
+
+    w->wq = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_heads * head_size));
+    w->wk = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_kv_heads * head_size));
+    w->wv = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_kv_heads * head_size));
+    w->wo = init_quantized_tensors(&ptr, p->n_layers, (p->n_heads * head_size) * p->dim);
+
+    w->w1 = init_quantized_tensors(&ptr, p->n_layers, p->dim * p->hidden_dim);
+    w->w2 = init_quantized_tensors(&ptr, p->n_layers, p->hidden_dim * p->dim);
+    w->w3 = init_quantized_tensors(&ptr, p->n_layers, p->dim * p->hidden_dim);
+
+    w->wcls = shared_classifier ? w->q_tokens : init_quantized_tensors(&ptr, 1, p->dim * p->vocab_size);
 }
 
 void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights,
@@ -233,6 +258,17 @@ void build_transformer(Transformer *t, char* checkpoint_path) {
 }
 
 void free_transformer(Transformer* t) {
+    // free QuantizedTensors
+    free(t->weights.q_tokens);
+    free(t->weights.token_embedding_table);
+    free(t->weights.wq);
+    free(t->weights.wk);
+    free(t->weights.wv);
+    free(t->weights.wo);
+    free(t->weights.w1);
+    free(t->weights.w2);
+    free(t->weights.w3);
+    if(t->weights.wcls != t->weights.q_tokens) { free(t->weights.wcls); }
     // close the memory mapping
     if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
     if (t->fd != -1) { close(t->fd); }
@@ -278,7 +314,7 @@ void softmax(float* x, int size) {
     }
 }
 
-void matmul(float* xout, int8_t* xq, float* xs, int8_t* wq, float* ws, int n, int d) {
+void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
     // inputs to this function are both quantized
@@ -295,47 +331,13 @@ void matmul(float* xout, int8_t* xq, float* xs, int8_t* wq, float* ws, int n, in
         int j;
         for (j = 0; j <= n - GS; j += GS) {
             for (int k = 0; k < GS; k++) {
-                ival += ((int32_t) xq[j + k]) * ((int32_t) wq[in + j + k]);
+                ival += ((int32_t) x->q[j + k]) * ((int32_t) w->q[in + j + k]);
             }
-            val += ((float) ival) * ws[(in + j) / GS] * xs[j / GS];
+            val += ((float) ival) * w->s[(in + j) / GS] * x->s[j / GS];
             ival = 0;
         }
 
         xout[i] = val;
-    }
-}
-
-void dequantize(int8_t* q, float* s, float* x, int n) {
-    for (int i = 0; i < n; i++) {
-        x[i] = q[i] * s[i / GS];
-    }
-}
-
-void quantize(float* x, int8_t* q, float* s, int n) {
-    int num_groups = n / GS;
-    float Q_MAX = 127.0f;
-
-    for (int group = 0; group < num_groups; group++) {
-
-        // find the max absolute value in the current group
-        float wmax = 0.0;
-        for (int i = 0; i < GS; i++) {
-            float val = fabs(x[group * GS + i]);
-            if (val > wmax) {
-                wmax = val;
-            }
-        }
-
-        // calculate and write the scaling factor
-        float scale = wmax / Q_MAX;
-        s[group] = scale;
-
-        // calculate and write the quantized values
-        for (int i = 0; i < GS; i++) {
-            float quant_value = x[group * GS + i] / scale; // scale
-            int8_t quantized = (int8_t) round(quant_value); // round and clamp
-            q[group * GS + i] = quantized;
-        }
     }
 }
 
@@ -352,9 +354,8 @@ float* forward(Transformer* transformer, int token, int pos) {
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
-    // dequantize the token embedding into a float x
-    QuantizedTensor tok = w->token_embedding_table;
-    dequantize(tok.q + token * dim, tok.s + token * dim / GS, x, dim);
+    // copy the token embedding into x
+    memcpy(x, w->token_embedding_table + token*dim, dim * sizeof(float));
 
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
@@ -363,10 +364,10 @@ float* forward(Transformer* transformer, int token, int pos) {
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         // qkv matmuls for this position
-        quantize(s->xb, s->xq.q, s->xq.s, dim);
-        matmul(s->q, s->xq.q, s->xq.s, w->wq.q + l*dim*dim,    w->wq.s + l*dim*dim/GS, dim, dim);
-        matmul(s->k, s->xq.q, s->xq.s, w->wk.q + l*dim*kv_dim, w->wk.s + l*dim*kv_dim/GS, dim, kv_dim);
-        matmul(s->v, s->xq.q, s->xq.s, w->wv.q + l*dim*kv_dim, w->wv.s + l*dim*kv_dim/GS, dim, kv_dim);
+        quantize(&s->xq, s->xb, dim);
+        matmul(s->q, &s->xq, w->wq + l, dim, dim);
+        matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
+        matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
@@ -433,8 +434,8 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // final matmul to get the output of the attention
-        quantize(s->xb, s->xq.q, s->xq.s, dim);
-        matmul(s->xb2, s->xq.q, s->xq.s, w->wo.q + l*dim*dim, w->wo.s + l*dim*dim/GS, dim, dim);
+        quantize(&s->xq, s->xb, dim);
+        matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
@@ -446,9 +447,9 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        quantize(s->xb, s->xq.q, s->xq.s, dim);
-        matmul(s->hb, s->xq.q, s->xq.s, w->w1.q + l*dim*hidden_dim, w->w1.s + l*dim*hidden_dim/GS, dim, hidden_dim);
-        matmul(s->hb2, s->xq.q, s->xq.s, w->w3.q + l*dim*hidden_dim, w->w3.s + l*dim*hidden_dim/GS, dim, hidden_dim);
+        quantize(&s->xq, s->xb, dim);
+        matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim);
+        matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
 
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
@@ -461,8 +462,8 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // final matmul to get the output of the ffn
-        quantize(s->hb, s->hq.q, s->hq.s, hidden_dim);
-        matmul(s->xb, s->hq.q, s->hq.s, w->w2.q + l*dim*hidden_dim, w->w2.s + l*dim*hidden_dim/GS, hidden_dim, dim);
+        quantize(&s->hq, s->hb, hidden_dim);
+        matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
 
         // residual connection
         for (int i = 0; i < dim; i++) {
@@ -474,8 +475,8 @@ float* forward(Transformer* transformer, int token, int pos) {
     rmsnorm(x, x, w->rms_final_weight, dim);
 
     // classifier into logits
-    quantize(x, s->xq.q, s->xq.s, dim);
-    matmul(s->logits, s->xq.q, s->xq.s, w->wcls.q, w->wcls.s, dim, p->vocab_size);
+    quantize(&s->xq, x, dim);
+    matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size);
     return s->logits;
 }
 
