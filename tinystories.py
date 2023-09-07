@@ -88,7 +88,7 @@ def train_vocab(vocab_size):
     shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
 
     print(f"Writing temporary file {tiny_file} with {num_shards} shards...")
-    with open(tiny_file, "w") as of:
+    with open(tiny_file, "w", encoding="utf-8") as of:
         for shard in tqdm(shard_filenames[:num_shards]):
             with open(shard, "r") as f:
                 data = json.load(f)
