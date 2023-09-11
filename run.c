@@ -724,7 +724,7 @@ int sample(Sampler* sampler, float* logits) {
 long time_in_ms() {
     // return time in milliseconds, for benchmarking the model speed
     struct timespec time;
-    clock_gettime(CLOCK_REALTIME, &time);
+    clock_gettime(CLOCK_MONOTONIC, &time);
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
 
