@@ -268,6 +268,13 @@ def version2_export(model, filepath, group_size=64):
 def hf_export(llama_model, filepath, group_size=64):
     """ Generate the pytorch_model.bin state_dict and config.json for HuggingFace """
 
+    try:
+        from transformers.models.llama.configuration_llama import LlamaConfig
+    except ImportError:
+        print("Error: transformers package is required to load huggingface models")
+        print("Please run `pip install transformers` to install it")
+        return None
+
     # Generate LlamaModel state_dict
     def permute_original(w, n_heads=llama_model.params.n_heads, dim1=llama_model.params.dim, dim2=llama_model.params.dim):
         return w.view(dim1, dim2).reshape(n_heads, dim1 // n_heads // 2, 2, dim2).transpose(1, 2).reshape(dim1, dim2)
@@ -294,7 +301,6 @@ def hf_export(llama_model, filepath, group_size=64):
 
 
     # Generate LlamaConfig (seen in transformers.models.llama.configuration_llama)
-    from transformers.models.llama.configuration_llama import LlamaConfig
 
     # Extract necessary attributes from llama.c model
     vocab_size = llama_model.params.vocab_size
