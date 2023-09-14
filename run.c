@@ -55,7 +55,6 @@ typedef struct {
     float *hb; // buffer for hidden dimension in the ffn (hidden_dim,)
     float *hb2; // buffer for hidden dimension in the ffn (hidden_dim,)
     float *q; // query (dim,)
-    float *k; // key (dim,)
     float *att; // buffer for scores/attention values (n_heads, seq_len)
     float *logits; // output logits
     // kv cache
@@ -82,14 +81,13 @@ void malloc_run_state(RunState* s, Config* p) {
     s->hb = calloc(p->hidden_dim, sizeof(float));
     s->hb2 = calloc(p->hidden_dim, sizeof(float));
     s->q = calloc(p->dim, sizeof(float));
-    s->k = calloc(kv_dim, sizeof(float));
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
     s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->k || !s->att || !s->logits || !s->key_cache
+     || !s->att || !s->logits || !s->key_cache
      || !s->value_cache) {
         fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
@@ -103,7 +101,6 @@ void free_run_state(RunState* s) {
     free(s->hb);
     free(s->hb2);
     free(s->q);
-    free(s->k);
     free(s->att);
     free(s->logits);
     free(s->key_cache);
@@ -253,9 +250,16 @@ float* forward(Transformer* transformer, int token, int pos) {
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
-        // qkv matmuls for this position
+        // determine location for this step's (pos) key and value in the cache
+        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
+        float* key = s->key_cache + loff + pos * kv_dim;
+        float* value = s->value_cache + loff + pos * kv_dim;
+
+        // qkv matmuls for this position. key and value are generated directly at the desired position
+        // inside the cache
         matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
+        matmul(key, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
+        matmul(value, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
@@ -266,22 +270,13 @@ float* forward(Transformer* transformer, int token, int pos) {
             float fci = sinf(val);
             int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
             for (int v = 0; v < rotn; v++) {
-                float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
+                float* vec = v == 0 ? s->q : key; // the vector to rotate (query or key)
                 float v0 = vec[i];
                 float v1 = vec[i+1];
                 vec[i]   = v0 * fcr - v1 * fci;
                 vec[i+1] = v0 * fci + v1 * fcr;
             }
         }
-
-        // save key at this time step (pos) to our kv cache
-        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
-        float* key_cache_row = s->key_cache + loff + pos * kv_dim;
-        memcpy(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row));
-
-        // calculate value directly inside the kv cache
-        float* value_cache_row = s->value_cache + loff + pos * kv_dim;
-        matmul(value_cache_row, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
         // multihead attention. iterate over all heads
         int h;
