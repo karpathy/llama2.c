@@ -265,7 +265,7 @@ def version2_export(model, filepath, group_size=64):
     out_file.close()
     print(f"wrote {filepath}")
 
-def hf_export(llama_model, filepath, group_size=64):
+def hf_export(llama_model, filepath, group_size=64, dtype=torch.float16):
     """ Generate the pytorch_model.bin state_dict and config.json for HuggingFace """
 
     try:
@@ -282,22 +282,22 @@ def hf_export(llama_model, filepath, group_size=64):
     hf_state_dict = {}
 
     # Transfer weights from llama model to the HF state dictionary format
-    hf_state_dict['model.embed_tokens.weight'] = llama_model.tok_embeddings.weight.clone()
-    hf_state_dict['model.norm.weight'] = llama_model.norm.weight.clone()
+    hf_state_dict['model.embed_tokens.weight'] = llama_model.tok_embeddings.weight.clone().to(dtype)
+    hf_state_dict['model.norm.weight'] = llama_model.norm.weight.clone().to(dtype)
 
     for i, layer in enumerate(llama_model.layers):
         layer_id = layer.layer_id  # Assuming llama.c layers have layer_id
-        hf_state_dict[f'model.layers.{i}.input_layernorm.weight'] = llama_model.layers[layer_id].attention_norm.weight.clone()
-        hf_state_dict[f'model.layers.{i}.self_attn.q_proj.weight'] = permute_original(llama_model.layers[layer_id].attention.wq.weight.clone())
-        hf_state_dict[f'model.layers.{i}.self_attn.k_proj.weight'] = permute_original(llama_model.layers[layer_id].attention.wk.weight.clone())
-        hf_state_dict[f'model.layers.{i}.self_attn.v_proj.weight'] = llama_model.layers[layer_id].attention.wv.weight.clone()
-        hf_state_dict[f'model.layers.{i}.self_attn.o_proj.weight'] = llama_model.layers[layer_id].attention.wo.weight.clone()
-        hf_state_dict[f'model.layers.{i}.post_attention_layernorm.weight'] = llama_model.layers[layer_id].ffn_norm.weight.clone()
-        hf_state_dict[f'model.layers.{i}.mlp.gate_proj.weight'] = llama_model.layers[layer_id].feed_forward.w1.weight.clone()
-        hf_state_dict[f'model.layers.{i}.mlp.down_proj.weight'] = llama_model.layers[layer_id].feed_forward.w2.weight.clone()
-        hf_state_dict[f'model.layers.{i}.mlp.up_proj.weight'] = llama_model.layers[layer_id].feed_forward.w3.weight.clone()
+        hf_state_dict[f'model.layers.{i}.input_layernorm.weight'] = llama_model.layers[layer_id].attention_norm.weight.clone().to(dtype)
+        hf_state_dict[f'model.layers.{i}.self_attn.q_proj.weight'] = permute_original(llama_model.layers[layer_id].attention.wq.weight.clone()).to(dtype)
+        hf_state_dict[f'model.layers.{i}.self_attn.k_proj.weight'] = permute_original(llama_model.layers[layer_id].attention.wk.weight.clone()).to(dtype)
+        hf_state_dict[f'model.layers.{i}.self_attn.v_proj.weight'] = llama_model.layers[layer_id].attention.wv.weight.clone().to(dtype)
+        hf_state_dict[f'model.layers.{i}.self_attn.o_proj.weight'] = llama_model.layers[layer_id].attention.wo.weight.clone().to(dtype)
+        hf_state_dict[f'model.layers.{i}.post_attention_layernorm.weight'] = llama_model.layers[layer_id].ffn_norm.weight.clone().to(dtype)
+        hf_state_dict[f'model.layers.{i}.mlp.gate_proj.weight'] = llama_model.layers[layer_id].feed_forward.w1.weight.clone().to(dtype)
+        hf_state_dict[f'model.layers.{i}.mlp.down_proj.weight'] = llama_model.layers[layer_id].feed_forward.w2.weight.clone().to(dtype)
+        hf_state_dict[f'model.layers.{i}.mlp.up_proj.weight'] = llama_model.layers[layer_id].feed_forward.w3.weight.clone().to(dtype)
 
-    hf_state_dict['lm_head.weight'] = llama_model.output.weight.clone()
+    hf_state_dict['lm_head.weight'] = llama_model.output.weight.clone().to(dtype)
 
 
     # Generate LlamaConfig (seen in transformers.models.llama.configuration_llama)
@@ -335,7 +335,7 @@ def hf_export(llama_model, filepath, group_size=64):
     os.makedirs(filepath, exist_ok=True)
 
     # Save the state dictionary in .pt format
-    torch.save(hf_state_dict, os.path.join(filepath, "pytorch_model.pt"))
+    torch.save(hf_state_dict, os.path.join(filepath, "pytorch_model.bin"))
     config.save_pretrained(filepath)
 
 
