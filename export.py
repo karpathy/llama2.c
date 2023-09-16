@@ -480,7 +480,8 @@ def load_hf_model(model_path):
 # -----------------------------------------------------------------------------
 # API entrypoint
 
-def model_export(model, filepath, version):
+def model_export(model, filepath, version, dtype=torch.float32):
+    # TODO: add dtype export support for other versions
     if version == 0:
         legacy_export(model, filepath)
     elif version == 1:
@@ -488,7 +489,7 @@ def model_export(model, filepath, version):
     elif version == 2:
         version2_export(model, filepath)
     elif version == -1:
-        hf_export(model, filepath)
+        hf_export(model, filepath, dtype)
     else:
         raise ValueError(f"unknown version {version}")
 
@@ -528,11 +529,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("filepath", type=str, help="the output filepath")
     parser.add_argument("--version", default=0, type=int, help="the version to export with")
+    parser.add_argument("--dtype", type=str, help="dtype of the model (fp16, fp32)", default="fp32")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--checkpoint", type=str, help="model checkpoint, .pt file")
     group.add_argument("--meta-llama", type=str, help="meta llama model path")
     group.add_argument("--hf", type=str, help="huggingface model path")
     args = parser.parse_args()
+    dtype = {"fp16": torch.float16, "fp32": torch.float32}[args.dtype]
 
     if args.checkpoint:
         model = load_checkpoint(args.checkpoint)
@@ -545,4 +548,4 @@ if __name__ == "__main__":
         parser.error("Can't load input model!")
 
     # export
-    model_export(model, args.filepath, args.version)
+    model_export(model, args.filepath, args.version, args.dtype)
