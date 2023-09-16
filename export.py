@@ -336,7 +336,7 @@ def hf_export(llama_model, filepath, group_size=64, dtype=torch.float32):
     # First make the directory if it doesn't exist
     os.makedirs(filepath, exist_ok=True)
 
-    # Save the state dictionary in .pt format
+    # Save the state dictionary in .bin format, and config as .json
     torch.save(hf_state_dict, os.path.join(filepath, "pytorch_model.bin"))
     config.save_pretrained(filepath)
 
