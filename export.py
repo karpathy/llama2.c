@@ -265,7 +265,7 @@ def version2_export(model, filepath, group_size=64):
     out_file.close()
     print(f"wrote {filepath}")
 
-def hf_export(llama_model, filepath, group_size=64, dtype=torch.float16):
+def hf_export(llama_model, filepath, group_size=64, dtype=torch.float32):
     """ Generate the pytorch_model.bin state_dict and config.json for HuggingFace """
 
     try:
