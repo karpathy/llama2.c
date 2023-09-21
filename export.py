@@ -276,20 +276,29 @@ def hf_export(llama_model, filepath, group_size=64, dtype=torch.float32):
         return None
 
     # Generate LlamaModel state_dict
-    def permute_original(w, n_heads=llama_model.params.n_heads, dim1=llama_model.params.dim, dim2=llama_model.params.dim):
-        return w.view(dim1, dim2).reshape(n_heads, dim1 // n_heads // 2, 2, dim2).transpose(1, 2).reshape(dim1, dim2)
-
     hf_state_dict = {}
+
+    # Sometimes we have repeated key values for the heads
+    dim = llama_model.params.dim
+    num_key_value_heads = llama_model.params.n_kv_heads
+    n_rep = llama_model.params.n_heads // num_key_value_heads
+    key_value_dim = dim // n_rep
+
+    # HuggingFace needs the weights permuted.
+    # See: https://github.com/huggingface/transformers/blob/b132c1703eb1c8bd9dfa4ad6a9be2bfd6ef819e9/src/transformers/models/llama/convert_llama_weights_to_hf.py#L122
+    def permute_original(w, n_heads=llama_model.params.n_heads, dim1=dim, dim2=dim):
+        return w.view(dim1, dim2).reshape(n_heads, dim1 // n_heads // 2, 2, dim2).transpose(1, 2).reshape(dim1, dim2)
 
     # Transfer weights from llama model to the HF state dictionary format
     hf_state_dict['model.embed_tokens.weight'] = llama_model.tok_embeddings.weight.clone().to(dtype)
     hf_state_dict['model.norm.weight'] = llama_model.norm.weight.clone().to(dtype)
 
+    # Add each layer's weights to the HF state dictionary
     for i, layer in enumerate(llama_model.layers):
-        layer_id = layer.layer_id  # Assuming llama.c layers have layer_id
+        layer_id = layer.layer_id
         hf_state_dict[f'model.layers.{i}.input_layernorm.weight'] = llama_model.layers[layer_id].attention_norm.weight.clone().to(dtype)
         hf_state_dict[f'model.layers.{i}.self_attn.q_proj.weight'] = permute_original(llama_model.layers[layer_id].attention.wq.weight.clone()).to(dtype)
-        hf_state_dict[f'model.layers.{i}.self_attn.k_proj.weight'] = permute_original(llama_model.layers[layer_id].attention.wk.weight.clone()).to(dtype)
+        hf_state_dict[f'model.layers.{i}.self_attn.k_proj.weight'] = permute_original(llama_model.layers[layer_id].attention.wk.weight.clone(), num_key_value_heads, key_value_dim, dim).to(dtype)
         hf_state_dict[f'model.layers.{i}.self_attn.v_proj.weight'] = llama_model.layers[layer_id].attention.wv.weight.clone().to(dtype)
         hf_state_dict[f'model.layers.{i}.self_attn.o_proj.weight'] = llama_model.layers[layer_id].attention.wo.weight.clone().to(dtype)
         hf_state_dict[f'model.layers.{i}.post_attention_layernorm.weight'] = llama_model.layers[layer_id].ffn_norm.weight.clone().to(dtype)
@@ -318,8 +327,9 @@ def hf_export(llama_model, filepath, group_size=64, dtype=torch.float32):
     max_position_embeddings = llama_model.params.max_seq_len
     rms_norm_eps = llama_model.params.norm_eps
 
-    # TODO values for: pretraining_tp, initializer_range, use_cache,
-    # tie_word_embeddings, rope_theta, and rope_scaling.
+    # TODO check values for:
+    # pretraining_tp, initializer_range, use_cache,
+    # rope_theta, and rope_scaling.
 
     config = LlamaConfig(
         vocab_size=vocab_size,
