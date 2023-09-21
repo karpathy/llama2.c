@@ -297,9 +297,13 @@ def hf_export(llama_model, filepath, group_size=64, dtype=torch.float32):
         hf_state_dict[f'model.layers.{i}.mlp.down_proj.weight'] = llama_model.layers[layer_id].feed_forward.w2.weight.clone().to(dtype)
         hf_state_dict[f'model.layers.{i}.mlp.up_proj.weight'] = llama_model.layers[layer_id].feed_forward.w3.weight.clone().to(dtype)
 
-    # llama2.c uses tied weights, so we reference the embed_tokens.weights instead
-    #hf_state_dict['lm_head.weight'] = llama_model.output.weight.clone().to(dtype)
+    # llama2.c usually uses tied weights -> reference the embed_tokens.weights instead
     hf_state_dict['lm_head.weight'] = hf_state_dict['model.embed_tokens.weight']
+
+    # We check that the embeddings are tied, else use manual output weights
+    _embeddings_are_tied: bool = torch.equal(llama_model.tok_embeddings.weight, llama_model.output.weight)
+    if not _embeddings_are_tied:
+        hf_state_dict['lm_head.weight'] = llama_model.output.weight.clone().to(dtype)
 
 
     # Generate LlamaConfig (seen in transformers.models.llama.configuration_llama)
@@ -326,6 +330,7 @@ def hf_export(llama_model, filepath, group_size=64, dtype=torch.float32):
         num_key_value_heads=num_key_value_heads,
         max_position_embeddings=max_position_embeddings,
         rms_norm_eps=rms_norm_eps,
+        tie_word_embeddings=_embeddings_are_tied,
         # Manual
         architectures=["LlamaForCausalLM"],
         hidden_act="silu",
