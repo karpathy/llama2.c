@@ -43,7 +43,7 @@ def serialize_bf16(file, tensor):
     if d.dtype == torch.bfloat16:
         d = d.view(torch.int16).numpy()
     else:
-        d = d.to(torch.bfloat16).numpy()
+        d = d.to(torch.bfloat16).view(torch.int16).numpy()
     b = struct.pack(f'{len(d)}h', *d)
     file.write(b)
 
