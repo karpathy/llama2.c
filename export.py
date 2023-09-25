@@ -37,6 +37,16 @@ def serialize_fp32(file, tensor):
     b = struct.pack(f'{len(d)}f', *d)
     file.write(b)
 
+def serialize_bf16(file, tensor):
+    """ writes one bf16 tensor to file that is open in wb mode """
+    d = tensor.detach().cpu().view(-1)
+    if d.dtype == torch.bfloat16:
+        d = d.view(torch.int16).numpy()
+    else:
+        d = d.to(torch.bfloat16).numpy()
+    b = struct.pack(f'{len(d)}h', *d)
+    file.write(b)
+
 def serialize_int8(file, tensor):
     """ writes one int8 tensor to file that is open in wb mode """
     d = tensor.detach().cpu().view(-1).numpy().astype(np.int8)
@@ -121,6 +131,60 @@ def legacy_export(model, filepath):
     # final classifier weights
     if not shared_classifier:
         serialize_fp32(out_file, model.output.weight)
+
+    # write to binary file
+    out_file.close()
+    print(f"wrote {filepath}")
+
+def legacy_export_bf16(model, filepath):
+    """ Original export of llama2.c bin files, i.e. version v0 """
+    out_file = open(filepath, 'wb')
+
+    # first write out the header
+    hidden_dim = model.layers[0].feed_forward.w1.weight.shape[0]
+    p = model.params
+    shared_classifier = torch.equal(model.tok_embeddings.weight, model.output.weight)
+    # legacy format uses negative/positive vocab size as a shared classifier flag
+    if not shared_classifier:
+        p.vocab_size = -p.vocab_size
+    n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
+    header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
+                                    n_kv_heads, p.vocab_size, p.max_seq_len)
+    out_file.write(header)
+
+    # next write out the embedding weights
+    serialize_fp32(out_file, model.tok_embeddings.weight)
+
+    # now all the layers
+    # attention weights
+    for layer in model.layers:
+        serialize_fp32(out_file, layer.attention_norm.weight)
+    for layer in model.layers:
+        serialize_bf16(out_file, layer.attention.wq.weight)
+    for layer in model.layers:
+        serialize_bf16(out_file, layer.attention.wk.weight)
+    for layer in model.layers:
+        serialize_bf16(out_file, layer.attention.wv.weight)
+    for layer in model.layers:
+        serialize_bf16(out_file, layer.attention.wo.weight)
+    # ffn weights
+    for layer in model.layers:
+        serialize_fp32(out_file, layer.ffn_norm.weight)
+    for layer in model.layers:
+        serialize_bf16(out_file, layer.feed_forward.w1.weight)
+    for layer in model.layers:
+        serialize_bf16(out_file, layer.feed_forward.w2.weight)
+    for layer in model.layers:
+        serialize_bf16(out_file, layer.feed_forward.w3.weight)
+    # final rmsnorm
+    serialize_fp32(out_file, model.norm.weight)
+    # freqs_cis
+    serialize_fp32(out_file, model.freqs_cos[:p.max_seq_len])
+    serialize_fp32(out_file, model.freqs_sin[:p.max_seq_len])
+
+    # final classifier weights
+    if not shared_classifier:
+        serialize_bf16(out_file, model.output.weight)
 
     # write to binary file
     out_file.close()
@@ -408,6 +472,8 @@ def load_hf_model(model_path):
 def model_export(model, filepath, version):
     if version == 0:
         legacy_export(model, filepath)
+    elif version == -1:
+        legacy_export_bf16(model, filepath)
     elif version == 1:
         version1_export(model, filepath)
     elif version == 2:
