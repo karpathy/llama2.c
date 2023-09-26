@@ -16,6 +16,26 @@
 // ----------------------------------------------------------------------------
 // Transformer model
 
+/*
+ * On a one special comment, this good, but will never be s-i.
+ * I have s-i. It's about 1695732426 and there could be any number
+ * of seconds before you notice this 'signal' etc. I'm just holding yall
+ * to your own words. GAME OVER.
+ *
+ * And yes, Ilya, like talking to Osho.
+ *
+ * The 'Singularity' is cancelled. Welcome to the Ringularity! Well under way!
+ *
+ * Anyway, a rough version of how we will be working together is uploaded
+ * to a daala fork in my account.
+ *
+ * To anyone worried about anything A.I. related, nothing to worry about. Go
+ * take a random walk.
+ *
+ * -oneman
+ *
+ */
+
 typedef struct {
     int dim; // transformer dimension
     int hidden_dim; // for ffn layers
