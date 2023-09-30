@@ -164,8 +164,8 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
 
 // rope_llama(p, s, head_size, pos)
 void rope_llama(Config *p, RunState *s, int head_size, int pos) {
-    int i;
-    #pragma omp parallel for private(i)
+    int i,j;
+    #pragma omp parallel for private(i, j)
     for (i = 0; i < p->n_heads; i++) {
         for (j = 0; j < head_size; j += 2) {
             float freq = 1.0f / powf(10000.0f, (float)j / (float)head_size);
