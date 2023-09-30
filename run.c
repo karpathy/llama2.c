@@ -21,6 +21,7 @@
 #include "lib/ak_matmul.h"
 #include "lib/ak_tokenizer.h"
 #include "lib/ak_transformer.h"
+#include "lib/ak_params.h"
 
 // ----------------------------------------------------------------------------
 // generation loop
@@ -176,82 +177,34 @@ void chat(ak_transformer_t *transformer, ak_tokenizer_t *tokenizer, ak_sampler_t
 // CLI, include only if not testing
 #ifndef TESTING
 
-void error_usage() {
-    fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
-    fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
-    fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -t <float>  temperature in [0,inf], default 1.0\n");
-    fprintf(stderr, "  -p <float>  p value in top-p (nucleus) sampling in [0,1] default 0.9\n");
-    fprintf(stderr, "  -s <int>    random seed, default time(NULL)\n");
-    fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len\n");
-    fprintf(stderr, "  -i <string> input prompt\n");
-    fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
-    fprintf(stderr, "  -m <string> mode: generate|chat, default: generate\n");
-    fprintf(stderr, "  -y <string> (optional) system prompt in chat mode\n");
-    exit(EXIT_FAILURE);
-}
-
 int main(int argc, char *argv[]) {
-    // default parameters
-    char *checkpoint_path = NULL;  // e.g. out/model.bin
-    char *tokenizer_path = (char *)"tokenizer.bin";
-    float temperature = 1.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-    float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = 256;            // number of steps to run for
-    char *prompt = NULL;        // prompt string
-    unsigned long long rng_seed = 0; // seed rng with time by default
-    char *mode = (char *)"generate";    // generate|chat
-    char *system_prompt = NULL; // the (optional) system prompt to use in chat mode
-
-    // poor man's C argparse so we can override the defaults above from the command line
-    if (argc >= 2) { checkpoint_path = argv[1]; } else { error_usage(); }
-    for (int i = 2; i < argc; i+=2) {
-        // do some basic validation
-        if (i + 1 >= argc) { error_usage(); } // must have arg after flag
-        if (argv[i][0] != '-') { error_usage(); } // must start with dash
-        if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
-        // read in the args
-        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
-        else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
-        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
-        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
-        else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
-        else if (argv[i][1] == 'z') { tokenizer_path = argv[i + 1]; }
-        else if (argv[i][1] == 'm') { mode = argv[i + 1]; }
-        else if (argv[i][1] == 'y') { system_prompt = argv[i + 1]; }
-        else { error_usage(); }
-    }
-
-    // parameter validation/overrides
-    if (rng_seed <= 0) rng_seed = (unsigned int)time(NULL);
-    if (temperature < 0.0) temperature = 0.0;
-    if (topp < 0.0 || 1.0 < topp) topp = 0.9;
-    if (steps < 0) steps = 0;
+    ak_params_t *params = ak_params_init(argc, argv);
 
     // build the Transformer via the model .bin file
-    ak_transformer_t* transformer = ak_transformer_init(checkpoint_path);
-    if (steps == 0 || steps > ak_transformer_seq_len(transformer)) steps = ak_transformer_seq_len(transformer); // ovrerride to ~max length
+    ak_transformer_t* transformer = ak_transformer_init(params->checkpoint_path);
+    if (params->steps == 0 || params->steps > ak_transformer_seq_len(transformer)) params->steps = ak_transformer_seq_len(transformer); // ovrerride to ~max length
 
     // build the Tokenizer via the tokenizer .bin file
-    ak_tokenizer_t* tokenizer = ak_tokenizer_init(tokenizer_path, ak_transformer_vocab_size(transformer));
+    ak_tokenizer_t* tokenizer = ak_tokenizer_init(params->tokenizer_path, ak_transformer_vocab_size(transformer));
 
     // build the Sampler
-    ak_sampler_t* sampler = ak_sampler_init(ak_transformer_vocab_size(transformer), temperature, topp, rng_seed);
+    ak_sampler_t* sampler = ak_sampler_init(ak_transformer_vocab_size(transformer), params->temperature, params->topp, params->rng_seed);
 
     // run!
-    if (strcmp(mode, "generate") == 0) {
-        generate(transformer, tokenizer, sampler, prompt, steps);
-    } else if (strcmp(mode, "chat") == 0) {
-        chat(transformer, tokenizer, sampler, prompt, system_prompt, steps);
+    if (strcmp(params->mode, "generate") == 0) {
+        generate(transformer, tokenizer, sampler, params->prompt, params->steps);
+    } else if (strcmp(params->mode, "chat") == 0) {
+        chat(transformer, tokenizer, sampler, params->prompt, params->system_prompt, params->steps);
     } else {
-        fprintf(stderr, "unknown mode: %s\n", mode);
-        error_usage();
+        fprintf(stderr, "unknown mode: %s\n", params->mode);
+        ak_params_error_usage();
     }
 
     // memory and file handles cleanup
     ak_sampler_destroy(sampler);
     ak_tokenizer_destroy(tokenizer);
     ak_transformer_destroy(transformer);
+    ak_params_destroy(params);
     return 0;
 }
 #endif
