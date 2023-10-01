@@ -77,7 +77,7 @@ int str_lookup(char *str, ak_token_index_t *sorted_vocab, int vocab_size) {
     return res != NULL ? res->id : -1;
 }
 
-void ak_tokenizer_encode(ak_tokenizer_t* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens) {
+void ak_tokenizer_encode(ak_tokenizer_t* t, char *text, bool bos, bool eos, int *tokens, int *n_tokens) {
     // encode the string text (input) into an upper-bound preallocated tokens[] array
     // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
     if (text == NULL) { fprintf(stderr, "cannot encode NULL text\n"); exit(EXIT_FAILURE); }

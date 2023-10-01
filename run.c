@@ -14,6 +14,8 @@
     #include <sys/mman.h>
 #endif
 
+#include <stdbool.h>
+
 #include "lib/ak_utils.h"
 #include "lib/ak_softmax.h"
 #include "lib/ak_rmsnorm.h"
@@ -33,7 +35,7 @@ void generate(ak_transformer_t *transformer, ak_tokenizer_t *tokenizer, ak_sampl
     // encode the (string) prompt into tokens sequence
     int num_prompt_tokens = 0;
     int* prompt_tokens = (int*)malloc((strlen(prompt)+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
-    ak_tokenizer_encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+    ak_tokenizer_encode(tokenizer, prompt, true, false, prompt_tokens, &num_prompt_tokens);
     if (num_prompt_tokens < 1) {
         fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
         exit(EXIT_FAILURE);
@@ -101,10 +103,9 @@ void chat(ak_transformer_t *transformer, ak_tokenizer_t *tokenizer, ak_sampler_t
     int user_idx;
 
     // start the main loop
-    int8_t user_turn = 1; // user starts
+    bool user_turn = true; // user starts
     int next;        // will store the next token in the sequence
     int token;       // stores the current token to feed into the transformer
-    int prev_token;
     int pos = 0;     // position in the sequence
     while (pos < steps) {
 
@@ -138,9 +139,9 @@ void chat(ak_transformer_t *transformer, ak_tokenizer_t *tokenizer, ak_sampler_t
                 snprintf(rendered_prompt, 1152, user_template, user_prompt);
             }
             // encode the rendered prompt into tokens
-            ak_tokenizer_encode(tokenizer, rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+            ak_tokenizer_encode(tokenizer, rendered_prompt, true, false, prompt_tokens, &num_prompt_tokens);
             user_idx = 0; // reset the user index
-            user_turn = 0;
+            user_turn = false;
             printf("Assistant: ");
         }
 
@@ -153,7 +154,7 @@ void chat(ak_transformer_t *transformer, ak_tokenizer_t *tokenizer, ak_sampler_t
             token = next;
         }
         // EOS (=2) token ends the Assistant turn
-        if (token == 2) { user_turn = 1; }
+        if (token == 2) { user_turn = true; }
 
         // forward the transformer to get logits for the next token
         float* logits = ak_transformer_forward(transformer, token, pos);
@@ -182,13 +183,15 @@ int main(int argc, char *argv[]) {
 
     // build the Transformer via the model .bin file
     ak_transformer_t* transformer = ak_transformer_init(params->checkpoint_path);
-    if (params->steps == 0 || params->steps > ak_transformer_seq_len(transformer)) params->steps = ak_transformer_seq_len(transformer); // ovrerride to ~max length
+    if (params->steps == 0 || params->steps > ak_transformer_seq_len(transformer))
+        params->steps = ak_transformer_seq_len(transformer); // ovrerride to ~max length
 
     // build the Tokenizer via the tokenizer .bin file
     ak_tokenizer_t* tokenizer = ak_tokenizer_init(params->tokenizer_path, ak_transformer_vocab_size(transformer));
 
     // build the Sampler
-    ak_sampler_t* sampler = ak_sampler_init(ak_transformer_vocab_size(transformer), params->temperature, params->topp, params->rng_seed);
+    ak_sampler_t* sampler = ak_sampler_init(ak_transformer_vocab_size(transformer),
+                                            params->temperature, params->topp, params->rng_seed);
 
     // run!
     if (strcmp(params->mode, "generate") == 0) {
