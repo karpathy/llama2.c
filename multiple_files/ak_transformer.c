@@ -204,16 +204,6 @@ void read_checkpoint(char* checkpoint, ak_transformer_config_t* config, ak_trans
     */
     *data = (float *)read_file(checkpoint, *file_size);
     float* weights_ptr = *data + sizeof(ak_transformer_config_t)/sizeof(float);
-    size_t num_weights = *file_size / sizeof(float);
-    float mx = weights_ptr[0];
-    float mn = weights_ptr[0];
-    for( size_t i=0; i<num_weights; i++ ) {
-        if(mx < weights_ptr[i])
-            mx = weights_ptr[i];
-        if(mn > weights_ptr[i])
-            mn = weights_ptr[i];
-    }
-    printf( "max: %0.5f, min: %0.5f\n", mx, mn);
     memory_map_weights(weights, config, weights_ptr, shared_weights);
 }
 
