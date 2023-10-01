@@ -1,6 +1,7 @@
 #ifndef _ak_matmul_H
 #define _ak_matmul_H
 
+/* If THREADS=8, then 8 pthreads will be used */
 #ifndef THREADS
 
 static

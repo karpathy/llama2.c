@@ -259,9 +259,32 @@ float* ak_transformer_forward(ak_transformer_t* transformer, int token, int pos)
 
     // forward all the layers
     for(unsigned long long l = 0; l < p->n_layers; l++) {
+        // x (part of the run state) serves as the output from each of the prior layers
+        // OR the token embedding on the first round.
+
+        /*
+            Take the mean of the sum of the squares for x and multiply it by
+            rms_att_weight for the given layer.  Note that in this model rms_att_weight
+            for all layers are stacked up in a sequential space.
+
+            Also note that the output is to xb (part of the run state), so this is
+            branching here.
+        */
 
         // attention rmsnorm
         ak_rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+
+
+        /*
+            s->q = [dim] vector    (query)
+            s->k = [kv_dim] vector (key)
+            s->v = [kv_dim] vector (value)
+
+            s->xb = [dim] vector
+            w->wq = [dim][dim] matrix    (query weights)
+            w->wk = [dim][kv_dim] matrix (key weights)
+            w->wv = [dim][kv_dim] matrix (value weights)
+        */
 
         // qkv matmuls for this position
         ak_matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
