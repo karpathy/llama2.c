@@ -1,8 +1,8 @@
 #ifndef _ak_matmul_H
 #define _ak_matmul_H
 
-/* If THREADS=8, then 8 pthreads will be used */
-#ifndef THREADS
+/* If PTHREADS=8, then 8 pthreads will be used */
+#ifndef PTHREADS
 
 static
 void ak_matmul(float* xout, float* x, float* w, int n, int d) {
@@ -53,7 +53,7 @@ void ak_matmul(float* xout, float* x, float* w, int n, int d) {
     // by far the most amount of time is spent inside this little function
     int i;
     // #pragma omp parallel for private(i)
-    const int num_threads = THREADS;
+    const int num_threads = PTHREADS;
     int chunk_size = d / num_threads;
     int start = 0;
     matmul_t *mm = (matmul_t *)malloc(sizeof(*mm) * num_threads);
@@ -73,5 +73,5 @@ void ak_matmul(float* xout, float* x, float* w, int n, int d) {
     free(mm);
 }
 
-#endif /* THREADS */
+#endif /* PTHREADS */
 #endif /* ak_matmul_H */
