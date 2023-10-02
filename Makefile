@@ -5,12 +5,12 @@ CC = gcc
 # the most basic way of building that is most likely to work on most systems
 .PHONY: run
 run: run.c
-	$(CC) -O3 -o run run.c -lm
+	$(CC) -O3 -o run run.c -lm -lrt
 
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
 rundebug: run.c
-	$(CC) -g -o run run.c -lm
+	$(CC) -g -o run run.c -lm -lrt
 
 # https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html
 # https://simonbyrne.github.io/notes/fastmath/
@@ -23,14 +23,14 @@ rundebug: run.c
 # In our specific application this is *probably* okay to use
 .PHONY: runfast
 runfast: run.c
-	$(CC) -Ofast -o run run.c -lm
+	$(CC) -Ofast -o run run.c -lm -lrt
 
 # additionally compiles with OpenMP, allowing multithreaded runs
 # make sure to also enable multiple threads when running, e.g.:
 # OMP_NUM_THREADS=4 ./run out/model.bin
 .PHONY: runomp
 runomp: run.c
-	$(CC) -Ofast -fopenmp -march=native run.c  -lm  -o run
+	$(CC) -Ofast -fopenmp -march=native run.c  -lm -lrt -o run
 
 .PHONY: win64
 win64:
@@ -39,11 +39,11 @@ win64:
 # compiles with gnu99 standard flags for amazon linux, coreos, etc. compatibility
 .PHONY: rungnu
 rungnu:
-	$(CC) -Ofast -std=gnu11 -o run run.c -lm
+	$(CC) -Ofast -std=gnu11 -o run run.c -lm -lrt
 
 .PHONY: runompgnu
 runompgnu:
-	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm  -o run
+	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm -lrt  -o run
 
 # run all tests
 .PHONY: test
