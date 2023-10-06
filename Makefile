@@ -45,6 +45,14 @@ rungnu:
 runompgnu:
 	$(CC) -Ofast -fopenmp -std=gnu11 run.c  -lm  -o run
 
+.PHONY: cuda
+cuda:
+	nvcc -O3 run.cu -o run-cuda -Xcudafe --diag_suppress=2464
+
+.PHONY: cuda-q8
+cuda-q8:
+	nvcc -O3 run-q8.cu -o run-cuda-q8 -Xcudafe --diag_suppress=2464
+
 # run all tests
 .PHONY: test
 test:
@@ -65,4 +73,4 @@ testcc:
 
 .PHONY: clean
 clean:
-	rm -f run
+	rm -f run run-cuda run-cuda-q8
