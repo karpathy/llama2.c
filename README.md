@@ -64,6 +64,44 @@ There is also an even better 110M param model available, see [models](#models).
 
 Quick note on sampling, the recommendation for ~best results is to sample with `-t 1.0 -p 0.9`, i.e. temperature 1.0 (default) but also top-p sampling at 0.9 (default). Intuitively, top-p ensures that tokens with tiny probabilities do not get sampled, so we can't get "unlucky" during sampling, and we are less likely to go "off the rails" afterwards. More generally, to control the diversity of samples use either the temperature (i.e. vary `-t` between 0 and 1 and keep top-p off with `-p 0`) or the top-p value (i.e. vary `-p` between 0 and 1 and keep `-t 1`), but not both. Nice explainers on LLM sampling strategies include [this](https://peterchng.com/blog/2023/05/02/token-selection-strategies-top-k-top-p-and-temperature/), [this](https://docs.cohere.com/docs/controlling-generation-with-top-k-top-p) or [this](https://huggingface.co/blog/how-to-generate).
 
+## Tiny Llama 1.1B model
+The [TinyLlama](https://github.com/jzhang38/TinyLlama) is a 1.1B Llama model trained on 3 trillion tokens. This compactness allows it to cater to a multitude of applications demanding a restricted computation and memory footprint. This is also the reason why we select it as the first billion parameter model to support. 
+
+Let's download the model and the tokenizer from huggingface https://huggingface.co/kirp/TinyLlama-1.1B-Chat-v0.2-bin.
+
+```bash
+wget https://huggingface.co/kirp/TinyLlama-1.1B-Chat-v0.2-bin/resolve/main/tok_tl-chat.bin
+wget https://huggingface.co/kirp/TinyLlama-1.1B-Chat-v0.2-bin/resolve/main/tl-chat.bin
+```
+
+Run the model.
+```bash
+./run tl-chat.bin -z tok_tl-chat.bin \
+    -n 512 -t 0.0 -s 100 \
+    -i "<|im_start|>user\nExplain huggingface.<|im_end|>\n<|im_start|>assistant\n"
+```
+
+Sample output:
+```<|im_start|>user
+Explain huggingface.<|im_end|>
+<|im_start|>assistant
+Huggingface is a software platform that provides tools and resources for building and hosting large-scale machine learning models and datasets. It is designed to make it easier and faster to build, train, and deploy models for a wide range of applications, including natural language processing, computer vision, and generative models.
+
+Huggingface provides a set of tools and resources, including:
+
+1. A framework for building and hosting large-scale machine learning models and datasets.
+2. A set of pre-trained models and datasets that can be used with your Huggingface model.
+3. A set of tools for data preparation, cleaning, and formatting.
+4. A set of tools for model training, evaluation, and inference.
+5. A set of metrics and tools for measuring the performance of your models.
+
+Huggingface also provides a library of pre-built components and utilities that can be used with your Huggingface model. These components and utilities include:
+
+1. A library of pre-trained
+achieved tok/s: 4.200850
+```
+
+
 ## Meta's Llama 2 models
 
 As the neural net architecture is identical, we can also inference the Llama 2 models released by Meta. Sadly there is a bit of friction here due to licensing (I can't directly upload the checkpoints, I think). So Step 1, get the Llama 2 checkpoints by following the [Meta instructions](https://github.com/facebookresearch/llama). Once we have those checkpoints, we have to convert them into the llama2.c format.
