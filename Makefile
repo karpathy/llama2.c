@@ -8,6 +8,9 @@ run: run.c
 	$(CC) -O3 -o run run.c -lm
 	$(CC) -O3 -o runq runq.c -lm
 
+run_gpu: run_gpu.c
+	$(CC) -O3 -o run_gpu run_gpu.c -lm -lGLESv2 -lEGL -fopenmp
+
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
 rundebug: run.c
