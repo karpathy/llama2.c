@@ -1,4 +1,4 @@
-/* Inference for Llama-2 Transformer model in pure C */
+/* Inference for Llama-2 Transformer model in pure C, int8 quantized forward pass. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -176,7 +176,7 @@ QuantizedTensor *init_quantized_tensors(void **ptr, int n, int size_each) {
     QuantizedTensor *res = malloc(n * sizeof(QuantizedTensor));
     for(int i=0; i<n; i++) {
         /* map quantized int8 values*/
-        res[i].q = (int8_t*)p; 
+        res[i].q = (int8_t*)p;
         p = (int8_t*)p + size_each;
         /* map scale factors */
         res[i].s = (float*)p;
