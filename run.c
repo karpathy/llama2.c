@@ -83,16 +83,13 @@ void malloc_run_state(RunState* s, Config* p) {
     s->hb = calloc(p->hidden_dim, sizeof(float));
     s->hb2 = calloc(p->hidden_dim, sizeof(float));
     s->q = calloc(p->dim, sizeof(float));
-    s->k = calloc(kv_dim, sizeof(float));
-    s->v = calloc(kv_dim, sizeof(float));
-    s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
-    s->logits = calloc(p->vocab_size, sizeof(float));
     s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+    s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
+    s->logits = calloc(p->vocab_size, sizeof(float));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
-     || !s->value_cache) {
+     || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
         fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
     }
@@ -105,8 +102,6 @@ void free_run_state(RunState* s) {
     free(s->hb);
     free(s->hb2);
     free(s->q);
-    free(s->k);
-    free(s->v);
     free(s->att);
     free(s->logits);
     free(s->key_cache);
@@ -115,26 +110,28 @@ void free_run_state(RunState* s) {
 
 void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights) {
     int head_size = p->dim / p->n_heads;
+    // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
+    unsigned long long n_layers = p->n_layers;
     w->token_embedding_table = ptr;
     ptr += p->vocab_size * p->dim;
     w->rms_att_weight = ptr;
-    ptr += p->n_layers * p->dim;
+    ptr += n_layers * p->dim;
     w->wq = ptr;
-    ptr += p->n_layers * p->dim * (p->n_heads * head_size);
+    ptr += n_layers * p->dim * (p->n_heads * head_size);
     w->wk = ptr;
-    ptr += p->n_layers * p->dim * (p->n_kv_heads * head_size);
+    ptr += n_layers * p->dim * (p->n_kv_heads * head_size);
     w->wv = ptr;
-    ptr += p->n_layers * p->dim * (p->n_kv_heads * head_size);
+    ptr += n_layers * p->dim * (p->n_kv_heads * head_size);
     w->wo = ptr;
-    ptr += p->n_layers * (p->n_heads * head_size) * p->dim;
+    ptr += n_layers * (p->n_heads * head_size) * p->dim;
     w->rms_ffn_weight = ptr;
-    ptr += p->n_layers * p->dim;
+    ptr += n_layers * p->dim;
     w->w1 = ptr;
-    ptr += p->n_layers * p->dim * p->hidden_dim;
+    ptr += n_layers * p->dim * p->hidden_dim;
     w->w2 = ptr;
-    ptr += p->n_layers * p->hidden_dim * p->dim;
+    ptr += n_layers * p->hidden_dim * p->dim;
     w->w3 = ptr;
-    ptr += p->n_layers * p->dim * p->hidden_dim;
+    ptr += n_layers * p->dim * p->hidden_dim;
     w->rms_final_weight = ptr;
     ptr += p->dim;
     ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
@@ -249,10 +246,15 @@ float* forward(Transformer* transformer, int token, int pos) {
     memcpy(x, content_row, dim*sizeof(*x));
 
     // forward all the layers
-    for(int l = 0; l < p->n_layers; l++) {
+    for(unsigned long long l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+
+        // key and value point to the kv cache
+        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
+        s->k = s->key_cache + loff + pos * kv_dim;
+        s->v = s->value_cache + loff + pos * kv_dim;
 
         // qkv matmuls for this position
         matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
@@ -275,13 +277,6 @@ float* forward(Transformer* transformer, int token, int pos) {
                 vec[i+1] = v0 * fci + v1 * fcr;
             }
         }
-
-        // save key,value at this time step (pos) to our kv cache
-        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
-        float* key_cache_row = s->key_cache + loff + pos * kv_dim;
-        float* value_cache_row = s->value_cache + loff + pos * kv_dim;
-        memcpy(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row));
-        memcpy(value_cache_row, s->v, kv_dim * sizeof(*value_cache_row));
 
         // multihead attention. iterate over all heads
         int h;
@@ -754,7 +749,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
 
-        // advance the state state machine
+        // advance the state machine
         if (pos < num_prompt_tokens - 1) {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos + 1];
