@@ -3,10 +3,14 @@
 CC = gcc
 
 # the most basic way of building that is most likely to work on most systems
-.PHONY: run
+.PHONY: run multirun
 run: run.c
 	$(CC) -O3 -o run run.c -lm
 	$(CC) -O3 -o runq runq.c -lm
+
+multirun: multiple_files/run.c
+	$(CC) -O3 -o multirun multiple_files/run.c -lm -DPTHREADS=8
+
 
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
