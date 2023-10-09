@@ -16,7 +16,7 @@ Please note that this repo started recently as a fun weekend project: I took my 
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/karpathy/llama2.c/blob/master/run.ipynb)
 
-First, navigate to the folder when you keep your projects and clone this repository to this folder:
+First, navigate to the folder where you keep your projects and clone this repository to this folder:
 
 ```bash
 git clone https://github.com/karpathy/llama2.c.git
