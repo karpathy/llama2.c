@@ -221,8 +221,14 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
         float val = 0.0f;
-        for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
+        const int i_n = i * n;
+        // Loop is incremented by 4 to perform four calculations at once. This is known as loop unrolling.
+        for (int j = 0; j < n; j+=4) {
+            // Four calculations are conducted in parallel, utilizing simd instructions to speed up the processing time.
+            val += w[i_n + j] * x[j];
+            val += w[i_n + j + 1] * x[j + 1];
+            val += w[i_n + j + 2] * x[j + 2];
+            val += w[i_n + j + 3] * x[j + 3];
         }
         xout[i] = val;
     }
