@@ -139,17 +139,14 @@ void malloc_run_state(RunState* s, Config* p) {
     CUCHK(cudaMalloc((void**)&s->hb, p->hidden_dim * sizeof(float)));
     CUCHK(cudaMalloc((void**)&s->hb2, p->hidden_dim * sizeof(float)));
     CUCHK(cudaMalloc((void**)&s->q, p->dim * sizeof(float)));
-    CUCHK(cudaMalloc((void**)&s->k, kv_dim * sizeof(float)));
-    CUCHK(cudaMalloc((void**)&s->v, kv_dim * sizeof(float)));
+    CUCHK(cudaMalloc((void**)&s->key_cache, p->n_layers * p->seq_len * kv_dim * sizeof(float)));
+    CUCHK(cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * kv_dim * sizeof(float)));
     CUCHK(cudaMalloc((void**)&s->att, p->n_heads * p->seq_len * sizeof(float)));
     CUCHK(cudaMalloc((void**)&s->logits_gpu, p->vocab_size * sizeof(float)));
     s->logits = (float *)calloc(p->vocab_size, sizeof(float));
-    CUCHK(cudaMalloc((void**)&s->key_cache, p->n_layers * p->seq_len * kv_dim * sizeof(float)));
-    CUCHK(cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * kv_dim * sizeof(float)));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->k || !s->v || !s->att || !s->logits_gpu || !s->logits || !s->key_cache
-     || !s->value_cache) {
+     || !s->key_cache || !s->value_cache || !s->att || !s->logits_gpu || !s->logits) {
         fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
     }
@@ -164,16 +161,13 @@ void malloc_run_state(RunState* s, Config* p) {
     s->hb = (float *)calloc(p->hidden_dim, sizeof(float));
     s->hb2 = (float *)calloc(p->hidden_dim, sizeof(float));
     s->q = (float *)calloc(p->dim, sizeof(float));
-    s->k = (float *)calloc(kv_dim, sizeof(float));
-    s->v = (float *)calloc(kv_dim, sizeof(float));
-    s->att = (float *)calloc(p->n_heads * p->seq_len, sizeof(float));
-    s->logits = (float *)calloc(p->vocab_size, sizeof(float));
     s->key_cache = (float *)calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->value_cache = (float *)calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+    s->att = (float *)calloc(p->n_heads * p->seq_len, sizeof(float));
+    s->logits = (float *)calloc(p->vocab_size, sizeof(float));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
-     || !s->value_cache) {
+     || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
         fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
     }
@@ -188,8 +182,6 @@ void free_run_state(RunState* s) {
     CUCHK(cudaFree(s->hb));
     CUCHK(cudaFree(s->hb2));
     CUCHK(cudaFree(s->q));
-    CUCHK(cudaFree(s->k));
-    CUCHK(cudaFree(s->v));
     CUCHK(cudaFree(s->att));
     CUCHK(cudaFree(s->logits_gpu));
     free(s->logits);
@@ -204,8 +196,6 @@ void free_run_state(RunState* s) {
     free(s->hb);
     free(s->hb2);
     free(s->q);
-    free(s->k);
-    free(s->v);
     free(s->att);
     free(s->logits);
     free(s->key_cache);
@@ -657,6 +647,11 @@ float* forward(Transformer* transformer, int token, int pos) {
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
+        // key and value point to the kv cache
+        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
+        s->k = s->key_cache + loff + pos * kv_dim;
+        s->v = s->value_cache + loff + pos * kv_dim;
+
         // qkv matmuls for this position
         matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
         matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
@@ -664,18 +659,6 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         RoPe_rotation(pos, s, dim, kv_dim, head_size);
-
-        // save key,value at this time step (pos) to our kv cache
-        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
-        float* key_cache_row = s->key_cache + loff + pos * kv_dim;
-        float* value_cache_row = s->value_cache + loff + pos * kv_dim;
-#ifdef USE_CUDA
-        CUCHK(cudaMemcpyAsync(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row), cudaMemcpyDeviceToDevice));
-        CUCHK(cudaMemcpyAsync(value_cache_row, s->v, kv_dim * sizeof(*value_cache_row), cudaMemcpyDeviceToDevice));
-#else
-        memcpy(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row));
-        memcpy(value_cache_row, s->v, kv_dim * sizeof(*value_cache_row));
-#endif
 
         // multihead attention. iterate over all heads
         multi_head_attention(pos, p, s, kv_dim, kv_mul, head_size, loff);
