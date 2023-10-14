@@ -1,0 +1,12 @@
+.vscode/
+save/
+llama_env/
+__pycache__/
+run
+runq
+runcuda
+*.exe
+*.obj
+*.exp
+*.lib
+*.bin

@@ -1,6 +1,8 @@
 # choose your compiler, e.g. gcc/clang
 # example override to clang: make run CC=clang
 CC = gcc
+# CUDA compiler
+NVCC = nvcc
 
 # the most basic way of building that is most likely to work on most systems
 .PHONY: run
@@ -69,6 +71,21 @@ VERBOSITY ?= 0
 testcc:
 	$(CC) -DVERBOSITY=$(VERBOSITY) -O3 -o testc test.c -lm
 	./testc
+
+# run cuda
+.PHONY: runcuda
+runcuda: run.cu
+	$(NVCC) -DUSE_CUDA -O3 -o runcuda run.cu -lm -lcublas
+
+# run debug cuda
+.PHONY: rundebugcuda
+rundebugcuda: run.cu
+	$(NVCC) -DUSE_CUDA -g -o runcuda run.cu -lm -lcublas
+
+# run cuda source file, but use only CPU code to compare with run target.
+.PHONY: runnotcuda
+runnotcuda: run.cu
+	$(NVCC) -O3 -o runcuda run.cu -lm
 
 .PHONY: clean
 clean:
