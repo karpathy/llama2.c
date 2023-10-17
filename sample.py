@@ -5,6 +5,7 @@ import os
 import pickle
 from contextlib import nullcontext
 import torch
+import time
 from model import ModelArgs, Transformer
 from tokenizer import Tokenizer
 
@@ -14,7 +15,7 @@ from tinystories import get_tokenizer_model_path
 checkpoint = 'out/ckpt.pt'
 start = "" # or "<|endoftext|>" or etc. Can also specify a file, use as: "FILE:prompt.txt"
 num_samples = 1 # number of samples to draw
-max_new_tokens = 100 # number of tokens generated in each sample
+max_new_tokens = 500 # number of tokens generated in each sample
 temperature = 1.0 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
 top_k = 300 # retain only the top_k most likely tokens, clamp others to have 0 probability
 tokenizer = "" # override the tokenizer model path
@@ -74,6 +75,8 @@ x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 with torch.no_grad():
     with ctx:
         for k in range(num_samples):
+            start = time.perf_counter()
             y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
             print(enc.decode(y[0].tolist()))
+            print(f"Time: {time.perf_counter() - start}")
             print('---------------')
