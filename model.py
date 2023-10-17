@@ -9,6 +9,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+KVCACHE = True
+
 @dataclass
 class ModelArgs:
     # default hyperparameters for the Llama 7B model
@@ -23,6 +25,22 @@ class ModelArgs:
     max_seq_len: int = 2048
     dropout: float = 0.0
 
+
+class KVCache:
+    def __init__(self, shape, max_seq_length,device=None,dtype=None):
+        self.key: torch.Tensor = torch.zeros(shape, device=device, dtype=dtype)
+        self.value: torch.Tensor = torch.zeros(shape, device=device, dtype=dtype)
+        self.max_seq_length = max_seq_length
+
+    def update(
+        self, keys: torch.Tensor, values: torch.Tensor, start_pos: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        bsz,T,nh,C = keys.shape
+        self.key[:bsz, start_pos : start_pos + T] = keys
+        self.value[:bsz, start_pos : start_pos + T] = values
+        keys = self.key[:bsz, : start_pos + T]
+        values = self.value[:bsz, : start_pos + T]
+        return keys, values
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float):
@@ -113,15 +131,17 @@ class Attention(nn.Module):
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
-            mask = torch.full((1, 1, args.max_seq_len, args.max_seq_len), float("-inf"))
-            mask = torch.triu(mask, diagonal=1)
-            self.register_buffer("mask", mask)
+        mask = torch.full((1, 1, args.max_seq_len, args.max_seq_len), float("-inf"))
+        mask = torch.triu(mask, diagonal=1)
+        self.register_buffer("mask", mask)
 
     def forward(
         self,
         x: torch.Tensor,
         freqs_cos: torch.Tensor,
         freqs_sin: torch.Tensor,
+        cache:KVCache=None,
+        input_pos:torch.Tensor=None
     ):
         bsz, seqlen, _ = x.shape
 
@@ -133,7 +153,11 @@ class Attention(nn.Module):
 
         # RoPE relative positional embeddings
         xq, xk = apply_rotary_emb(xq, xk, freqs_cos, freqs_sin)
-
+        
+        if cache is not None:
+            assert input_pos is not None
+            xk,xv = cache.update(xk,xv,input_pos)
+            
         # grouped multiquery attention: expand out keys and values
         xk = repeat_kv(xk, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
         xv = repeat_kv(xv, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
@@ -144,7 +168,7 @@ class Attention(nn.Module):
         xv = xv.transpose(1, 2)
 
         # flash implementation
-        if self.flash:
+        if self.flash and cache is None:
             output = torch.nn.functional.scaled_dot_product_attention(xq, xk, xv, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
         else:
             # manual implementation
@@ -197,8 +221,8 @@ class TransformerBlock(nn.Module):
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
 
-    def forward(self, x, freqs_cos, freqs_sin):
-        h = x + self.attention.forward(self.attention_norm(x), freqs_cos, freqs_sin)
+    def forward(self, x, freqs_cos, freqs_sin,cache,input_pos):
+        h = x + self.attention.forward(self.attention_norm(x), freqs_cos, freqs_sin,cache=cache,input_pos=input_pos)
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         return out
 
@@ -227,6 +251,8 @@ class Transformer(nn.Module):
         freqs_cos, freqs_sin = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
+        
+        self.kv_cache = [None for _ in range(self.params.n_layers)]
 
         # init all weights
         self.apply(self._init_weights)
@@ -246,15 +272,38 @@ class Transformer(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, tokens: torch.Tensor, targets: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        targets: Optional[torch.Tensor] = None,
+        kv_cache: bool = False,
+        max_seq_length: int = None,
+        input_pos: torch.Tensor = None,
+    ) -> torch.Tensor:
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         h = self.dropout(h)
-        freqs_cos = self.freqs_cos[:seqlen]
-        freqs_sin = self.freqs_sin[:seqlen]
+        if kv_cache:
+            freqs_cos = self.freqs_cos[input_pos:input_pos+seqlen]
+            freqs_sin = self.freqs_sin[input_pos:input_pos+seqlen]
+        else:
+            freqs_cos = self.freqs_cos[:seqlen]
+            freqs_sin = self.freqs_sin[:seqlen]
+            
+        
+        if kv_cache:
+            assert max_seq_length is not None
+            assert input_pos is not None
+            if self.kv_cache[0] is None:
+                shape = (_bsz,max_seq_length,self.params.n_heads,self.params.dim//self.params.n_heads)
+                self.kv_cache = [KVCache(shape,max_seq_length,device=h.device,dtype=h.dtype) for _ in range(self.params.n_layers)]
+        elif self.kv_cache[-1] is not None:
+            self.kv_cache = [None for _ in range(self.params.n_layers)]
+            
+        
 
-        for layer in self.layers:
-            h = layer(h, freqs_cos, freqs_sin)
+        for layer,cache in zip(self.layers,self.kv_cache):
+            h = layer(h, freqs_cos, freqs_sin,cache,input_pos)
         h = self.norm(h)
 
         if targets is not None:
@@ -318,11 +367,19 @@ class Transformer(nn.Module):
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         Also note this is a super inefficient version of sampling with no key/value cache.
         """
+        B,T = idx.shape
+
+        input_pos = 0
+            
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.params.max_seq_len else idx[:, -self.params.max_seq_len:]
             # forward the model to get the logits for the index in the sequence
-            logits = self(idx_cond)
+            if KVCACHE:
+                x = idx_cond[:,-1].reshape(-1,1)
+            else:
+                x = idx_cond
+            logits = self.forward(x,None,kv_cache=KVCACHE,max_seq_length=max_new_tokens,input_pos=input_pos)
             logits = logits[:, -1, :] # crop to just the final time step
             if temperature == 0.0:
                 # "sample" the single most likely index
@@ -337,6 +394,7 @@ class Transformer(nn.Module):
                 # apply softmax to convert logits to (normalized) probabilities
                 probs = F.softmax(logits, dim=-1)
                 idx_next = torch.multinomial(probs, num_samples=1)
+            input_pos = idx.shape[1]
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
