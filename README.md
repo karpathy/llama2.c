@@ -376,6 +376,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2.dart](https://github.com/yiminghan/llama2.dart) by @[yiminghan](https://github.com/yiminghan/llama2.dart): one-file dart port of this project, works with Flutter!
 - Web
   - [llama2c-web](https://github.com/dmarcos/llama2.c-web) by @[dmarcos](https://github.com/dmarcos): Super simple way to build unmodified llama2.c to WASM and run it in the browser. [Demo](https://diegomarcos.com/llama2.c-web/)
+  - [llama2.rs.wasm](https://github.com/mtb0x1/llama2.rs.wasm) by @[mtb0x1](https://github.com/mtb0x1/) : a [Demo](https://mtb0x1.github.io/llama2.rs.wasm/) of all listed rust ports to WASM, all in one web page.
 - WebAssembly
   - [icpp-llm](https://github.com/icppWorld/icpp-llm): LLMs for the Internet Computer
 - Fortran
