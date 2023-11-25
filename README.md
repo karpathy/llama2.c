@@ -1,5 +1,22 @@
 ## llama2.c
 
+## Zig Build Support
+
+This is fork of the original project with support for build.zig
+
+Here are the instructions to use it
+
+```
+cd llama2.c
+zig build
+wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
+mv ./zig-out/bin/run
+./run stories15M.bin
+```
+Tested with zig 0.11.0
+
+## Introduction
+
 <p align="center">
   <img src="assets/llama_cute.jpg" width="300" height="300" alt="Cute Llama">
 </p>
