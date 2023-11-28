@@ -944,7 +944,7 @@ int main(int argc, char *argv[]) {
     // build the Transformer via the model .bin file
     Transformer transformer;
     build_transformer(&transformer, checkpoint_path);
-    if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; // ovrerride to ~max length
+    if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; // override to ~max length
 
     // build the Tokenizer via the tokenizer .bin file
     Tokenizer tokenizer;
