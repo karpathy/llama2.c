@@ -96,8 +96,8 @@ void malloc_run_state(RunState* s, Config* p) {
     s->xb2 = calloc(p->dim, sizeof(float));
     s->hb = calloc(p->hidden_dim, sizeof(float));
     s->hb2 = calloc(p->hidden_dim, sizeof(float));
-    s->xq = (QuantizedTensor) { .q = calloc(p->dim, sizeof(int8_t)), .s = calloc(p->dim, sizeof(float)) };
-    s->hq = (QuantizedTensor) { .q = calloc(p->hidden_dim, sizeof(int8_t)), .s = calloc(p->hidden_dim, sizeof(float)) };
+    s->xq = (QuantizedTensor) { .q = calloc(p->dim, sizeof(int8_t)), .s = calloc(p->dim / GS, sizeof(float)) };
+    s->hq = (QuantizedTensor) { .q = calloc(p->hidden_dim, sizeof(int8_t)), .s = calloc(p->hidden_dim / GS, sizeof(float)) };
     s->q = calloc(p->dim, sizeof(float));
     s->k = calloc(kv_dim, sizeof(float));
     s->v = calloc(kv_dim, sizeof(float));
