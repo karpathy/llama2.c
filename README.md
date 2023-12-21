@@ -366,6 +366,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2.scala](https://github.com/jrudolph/llama2.scala) by @[jrudolph](https://github.com/jrudolph): a Scala port of this project
 - Java
   - [llama2.java](https://github.com/mukel/llama2.java) by @[mukel](https://github.com/mukel): a Java port of this project
+  - [llama2.tornadovm.java](https://github.com/mikepapadim/llama2.tornadovm.java) by @[mikepapadim](https://github.com/mikepapadim): an extension of the llama2.java with GPU-support through [TornadoVM](https://github.com/beehive-lab/TornadoVM).
 - Kotlin
   - [llama2.kt](https://github.com/madroidmaq/llama2.kt) by @[madroidmaq](https://github.com/madroidmaq): a Kotlin port of this project
 - Python
