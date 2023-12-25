@@ -299,6 +299,9 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // multihead attention. iterate over all heads
         int h;
+        int count = 0;
+        int tot = 0;
+        float bin = 8.0f;
         #pragma omp parallel for private(h)
         for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
@@ -312,7 +315,9 @@ float* forward(Transformer* transformer, int token, int pos) {
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
+                    if (fabs(k[i]) < bin) score += q[i] * k[i];
+                    if (fabs(k[i]) > bin) { count++; printf("%f \n", k[i]); }
+                    tot++;
                 }
                 score /= sqrtf(head_size);
                 // save the score to the attention buffer
@@ -332,10 +337,13 @@ float* forward(Transformer* transformer, int token, int pos) {
                 float a = att[t];
                 // accumulate the weighted value into xb
                 for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
+                    if (fabs(v[i]) < bin) xb[i] += a * v[i];
+                    if (fabs(v[i]) > bin) { count++; printf("%f \n", v[i]); }
+                    tot++;
                 }
             }
         }
+        //printf("Outliers: %f, Layer %lld, Pos %d\n", count*1.0f/tot, l, pos);
 
         // final matmul to get the output of the attention
         matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);

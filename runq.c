@@ -75,8 +75,8 @@ typedef struct {
     float *att; // buffer for scores/attention values (n_heads, seq_len)
     float *logits; // output logits
     // kv cache
-    float* key_cache;   // (layer, seq_len, dim)
-    float* value_cache; // (layer, seq_len, dim)
+    QuantizedTensor key_cache; //float* key_cache;   // (layer, seq_len, dim)
+    QuantizedTensor value_cache; //float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
 typedef struct {
@@ -104,12 +104,16 @@ void malloc_run_state(RunState* s, Config* p) {
     s->v = calloc(kv_dim, sizeof(float));
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
-    s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
-    s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+
+    int kv_cache_dim = p->n_layers * p->seq_len * kv_dim;
+    s->key_cache = (QuantizedTensor) { .q = calloc(kv_cache_dim, sizeof(int8_t)), .s = calloc(kv_cache_dim, sizeof(float)) };
+    s->value_cache = (QuantizedTensor) { .q = calloc(kv_cache_dim, sizeof(int8_t)), .s = calloc(kv_cache_dim, sizeof(float)) };
+
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
-     || !s->value_cache) {
+     || !s->k || !s->v || !s->att || !s->logits || !s->key_cache.q
+     || !s->key_cache.s || !s->value_cache.q || !s->value_cache.s
+     || !s->xq.q || !s->xq.s || !s->hq.q || !s->hq.s) {
         fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
     }
@@ -131,8 +135,12 @@ void free_run_state(RunState* s) {
     free(s->v);
     free(s->att);
     free(s->logits);
-    free(s->key_cache);
-    free(s->value_cache);
+    //free(s->key_cache);
+    //free(s->value_cache);
+    free(s->key_cache.q);
+    free(s->key_cache.s);
+    free(s->value_cache.q);
+    free(s->value_cache.s);
 }
 
 // ----------------------------------------------------------------------------
@@ -144,17 +152,19 @@ void dequantize(QuantizedTensor *qx, float* x, int n) {
     }
 }
 
-void quantize(QuantizedTensor *qx, float* x, int n) {
-    int num_groups = n / GS;
+void quantize(QuantizedTensor *qx, float* x, int n, int offset) {
+    int num_groups = (offset+n) / GS;
     float Q_MAX = 127.0f;
+    float diff = 0; // for debugging outliers
+    int count = 0;
 
-    for (int group = 0; group < num_groups; group++) {
+    for (int group = offset/GS; group < num_groups; group++) {
 
         // find the max absolute value in the current group
         float wmax = 0.0;
         for (int i = 0; i < GS; i++) {
             float val = fabs(x[group * GS + i]);
-            if (val > wmax) {
+            if (val > wmax && val < 100) {
                 wmax = val;
             }
         }
@@ -168,8 +178,18 @@ void quantize(QuantizedTensor *qx, float* x, int n) {
             float quant_value = x[group * GS + i] / scale; // scale
             int8_t quantized = (int8_t) round(quant_value); // round and clamp
             qx->q[group * GS + i] = quantized;
+            /*
+            if (fabs(quantized*scale - x[group * GS + i]) > 0 || x[group * GS + i]>10)
+                printf("Q: %d, Scale: %f, Original: %f, loss: %f \n", quantized, scale, x[group * GS + i], fabs(quantized*scale - x[group * GS + i]));
+            diff += fabs(quantized*scale - x[group * GS + i]);
+            count++;
+            */
+            if (x[group * GS + i]>1) count++;
         }
+
     }
+    //printf("Running loss: %f \n", diff/count);
+    printf("Outliers: %d \n", count);
 }
 
 /* initialize `n` x quantized tensor (with `size_each` elements), starting from memory pointed at *ptr */
@@ -376,7 +396,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim, true);
 
         // qkv matmuls for this position
-        quantize(&s->xq, s->xb, dim);
+        quantize(&s->xq, s->xb, dim, 0);
         matmul(s->q, &s->xq, w->wq + l, dim, dim);
         matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
         matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
@@ -400,10 +420,14 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // save key,value at this time step (pos) to our kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
-        float* key_cache_row = s->key_cache + loff + pos * kv_dim;
-        float* value_cache_row = s->value_cache + loff + pos * kv_dim;
-        memcpy(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row));
-        memcpy(value_cache_row, s->v, kv_dim * sizeof(*value_cache_row));
+        
+        quantize(&s->key_cache, s->k, kv_dim, loff + pos * kv_dim);
+        quantize(&s->value_cache, s->v, kv_dim, loff + pos * kv_dim);
+        
+        //float* key_cache_row = s->key_cache + loff + pos * kv_dim;
+        //float* value_cache_row = s->value_cache + loff + pos * kv_dim;
+        //memcpy(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row));
+        //memcpy(value_cache_row, s->v, kv_dim * sizeof(*value_cache_row));
 
         // multihead attention. iterate over all heads
         int h;
@@ -416,11 +440,13 @@ float* forward(Transformer* transformer, int token, int pos) {
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                // float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                int k_offset = loff + t * kv_dim + (h / kv_mul) * head_size;
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
+                    //score += q[i] * k[i];
+                    score += q[i] * (s->key_cache.q[k_offset+i] * s->key_cache.s[(k_offset+i) / GS]);
                 }
                 score /= sqrtf(head_size);
                 // save the score to the attention buffer
@@ -435,18 +461,20 @@ float* forward(Transformer* transformer, int token, int pos) {
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                // float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                int v_offset = loff + t * kv_dim + (h / kv_mul) * head_size;
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
                 for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
+                    //xb[i] += a * v[i];
+                    xb[i] += a * (s->value_cache.q[v_offset+i] * s->value_cache.s[(v_offset+i) / GS]);
                 }
             }
         }
 
         // final matmul to get the output of the attention
-        quantize(&s->xq, s->xb, dim);
+        quantize(&s->xq, s->xb, dim, 0);
         matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
 
         // residual connection back into x
@@ -459,7 +487,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        quantize(&s->xq, s->xb, dim);
+        quantize(&s->xq, s->xb, dim, 0);
         matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim);
         matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
 
@@ -479,7 +507,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // final matmul to get the output of the ffn
-        quantize(&s->hq, s->hb, hidden_dim);
+        quantize(&s->hq, s->hb, hidden_dim, 0);
         matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
 
         // residual connection
@@ -492,7 +520,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     rmsnorm(x, x, w->rms_final_weight, dim, false);
 
     // classifier into logits
-    quantize(&s->xq, x, dim);
+    quantize(&s->xq, x, dim, 0);
     matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size);
     return s->logits;
 }
@@ -1099,6 +1127,16 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "unknown mode: %s\n", mode);
         error_usage();
     }
+
+    printf("dim: %d\n", transformer.config.dim);
+    printf("hidden_dim: %d\n", transformer.config.hidden_dim);
+    printf("n_layers: %d\n", transformer.config.n_layers);
+    printf("n_heads: %d\n", transformer.config.n_heads);
+    printf("n_kv_heads: %d\n", transformer.config.n_kv_heads);
+    printf("vocab_size: %d\n", transformer.config.vocab_size);
+    printf("seq_len: %d\n", transformer.config.seq_len);
+    printf("group_size: %d\n", GS);
+    printf("kv_dim: %d\n", (transformer.config.dim * transformer.config.n_kv_heads) / transformer.config.n_heads);
 
     // memory and file handles cleanup
     free_sampler(&sampler);
