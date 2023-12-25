@@ -24,7 +24,7 @@ from datetime import datetime
 from functools import partial
 
 import torch
-from model import Transformer, ModelArgs
+#from model import Transformer, ModelArgs
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -35,7 +35,7 @@ from export import model_export
 # I/O
 out_dir = "out"
 eval_interval = 2000
-log_interval = 1
+log_interval = 100
 eval_iters = 100
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = False  # if True, always save a checkpoint after each eval
@@ -71,6 +71,7 @@ warmup_iters = 1000  # how many steps to warm up for
 device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = "bfloat16"  # float32|bfloat16|float16
 compile = True  # use PyTorch 2.0 to compile the model to be faster
+sparse = False
 # -----------------------------------------------------------------------------
 config_keys = [
     k
@@ -88,6 +89,12 @@ min_lr = 0.0  # minimum learning rate, should be ~= learning_rate/10 per Chinchi
 # validating checks
 assert vocab_source in ["llama2", "custom"]
 assert vocab_source == "custom" or vocab_size == 32000, "The vocab from Meta has 32K tokens"
+
+# import depending on sparsity
+if sparse:
+    from spmodel import Transformer, ModelArgs
+else:
+    from model import Transformer, ModelArgs
 
 # various inits, derived attributes, I/O setup
 ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
@@ -326,11 +333,29 @@ while True:
     if iter_num % log_interval == 0 and master_process:
         # get loss as float, scale up due to the divide above. note: this is a CPU-GPU sync point
         lossf = loss.item() * gradient_accumulation_steps
+        up = 0
+        attn = 0
+        ffn = 0
+        coverage = 0
+
+        for layer in raw_model.layers:
+            up += layer.feed_forward.stats.item()/4
+            attn += layer.attn_stats.item()/4
+            ffn += layer.ffn_stats.item()/4
+            coverage += layer.feed_forward.coverage.item()/4
+        
+        layer.feed_forward.stats = 0
+        layer.feed_forward.count = 0
+        layer.attn_stats.stats = 0
+        layer.attn_stats.count = 0
+        layer.ffn_stats.stats = 0
+        layer.ffn_stats.count = 0
+        
         if local_iter_num >= 5:  # let the training loop settle a bit
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
         print(
-            f"{iter_num} | loss {lossf:.4f} | lr {lr:e} | {dt*1000:.2f}ms | mfu {running_mfu*100:.2f}%"
+            f"{iter_num} | loss {lossf:.4f} | lr {lr:e} | {dt*1000:.2f}ms | mfu {running_mfu*100:.2f}% | up {up:.2f}, {coverage:.2f} | attn {attn:.2f} | ffn {ffn:.2f}"
         )
     iter_num += 1
     local_iter_num += 1

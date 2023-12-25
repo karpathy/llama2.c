@@ -106,12 +106,12 @@ def legacy_export(model, filepath):
     # ffn weights
     for layer in model.layers:
         serialize_fp32(out_file, layer.ffn_norm.weight)
-    for layer in model.layers:
         serialize_fp32(out_file, layer.feed_forward.w1.weight)
-    for layer in model.layers:
         serialize_fp32(out_file, layer.feed_forward.w2.weight)
-    for layer in model.layers:
         serialize_fp32(out_file, layer.feed_forward.w3.weight)
+        serialize_fp32(out_file, layer.feed_forward.lora_d.weight)
+        serialize_fp32(out_file, layer.feed_forward.lora_u.weight)
+
     # final rmsnorm
     serialize_fp32(out_file, model.norm.weight)
     # freqs_cis

@@ -1,18 +1,17 @@
-"""
-Sample from the trained model with PyTorch
-"""
 import os
 import pickle
 import time
 from contextlib import nullcontext
 import torch
+import numpy as np
+from numpy import inf
 from spmodel import ModelArgs, Transformer
 from tokenizer import Tokenizer
 
 from tinystories import get_tokenizer_model_path
 
 # -----------------------------------------------------------------------------
-checkpoint = 'out/ckpt.pt'
+checkpoint = 'out440k_shifted_3x_25/ckpt.pt'
 start = "" # or "<|endoftext|>" or etc. Can also specify a file, use as: "FILE:prompt.txt"
 num_samples = 4 # number of samples to draw
 max_new_tokens = 128 # number of tokens generated in each sample
@@ -20,7 +19,7 @@ temperature = 0.9 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, i
 top_k = 32 # retain only the top_k most likely tokens, clamp others to have 0 probability
 tokenizer = "" # override the tokenizer model path
 seed = int(time.time())
-device = 'cuda' if torch.cuda.is_available() else 'cpu' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
+device = 'cpu'
 #dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
 dtype = "float16"
 compile = False # use PyTorch 2.0 to compile the model to be faster
@@ -52,41 +51,34 @@ if compile:
     print("Compiling the model...")
     model = torch.compile(model) # requires PyTorch 2.0 (optional)
 
-# load the tokenizer
-vocab_source = checkpoint_dict["config"].get("vocab_source", "llama2")
-vocab_size = gptconf.vocab_size
-if tokenizer:
-    # a specific tokenizer is provided, use it
-    tokenizer_model = tokenizer
-else:
-    # let's try to find the tokenizer model automatically. bit gross here...
-    query_vocab_size = 0 if vocab_source == "llama2" else vocab_size
-    tokenizer_model = get_tokenizer_model_path(vocab_size=query_vocab_size)
-enc = Tokenizer(tokenizer_model=tokenizer_model)
-
-# encode the beginning of the prompt
-if start.startswith('FILE:'):
-    with open(start[5:], 'r', encoding='utf-8') as f:
-        start = f.read()
-start_ids = enc.encode(start, bos=True, eos=False)
-x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
-
-# run generation
-with torch.no_grad():
-    with ctx:
-        for k in range(num_samples):
-            y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
-            print(enc.decode(y[0].tolist()))
-            print('---------------')
-
-up = 0
-attn = 0
-ffn = 0
+f = lambda w: torch.bincount(torch.flatten(torch.round( w/torch.max(torch.abs(w))*128).to(torch.int32)+128), minlength=257)
+bins = None
+p = lambda w, i: print("W", i,  torch.std_mean(w), torch.max(torch.abs(w)))
 for layer in model.layers:
-    up += layer.feed_forward.stats.item()/4
-    attn += layer.attn_stats.item()/4
-    ffn += layer.ffn_stats.item()/4
+    if bins == None:
+        bins = f(layer.feed_forward.w1.weight)
+    else:
+        bins += f(layer.feed_forward.w1.weight)
+    bins += f(layer.feed_forward.w2.weight)
+    bins += f(layer.feed_forward.w3.weight)
+    
+    p(layer.feed_forward.w1.weight, 1)
+    p(layer.feed_forward.w2.weight, 2)
+    p(layer.feed_forward.w3.weight, 3)
 
-print("Up: ", up)
-print("Attn: ", attn)
-print("FFN: ", ffn)
+def h(x):
+  bits = torch.log2(x)
+  bits[bits == -inf] = 0
+  return bits*-x
+
+dist = bins/torch.sum(bins)
+
+print(bins)
+
+print(dist)
+
+print(np.round(h(dist), 2))
+
+print(torch.sum(h(dist)))
+
+print(torch.sum(h(dist))/8)
