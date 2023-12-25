@@ -7,6 +7,7 @@ import numpy as np
 from numpy import inf
 from spmodel import ModelArgs, Transformer
 from tokenizer import Tokenizer
+from export import model_export
 
 from tinystories import get_tokenizer_model_path
 
@@ -73,6 +74,7 @@ def h(x):
 
 dist = bins/torch.sum(bins)
 
+'''
 print(bins)
 
 print(dist)
@@ -82,3 +84,8 @@ print(np.round(h(dist), 2))
 print(torch.sum(h(dist)))
 
 print(torch.sum(h(dist))/8)
+
+print(list(model.children()))
+'''
+
+model_export(model, 'out440k_shifted_3x_25/model_qint80.bin', version=2)

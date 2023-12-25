@@ -174,8 +174,8 @@ class FeedForward(nn.Module):
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
-        self.lora_d = nn.Linear(dim, 8, bias=False)
-        self.lora_u = nn.Linear(8, hidden_dim, bias=False)
+        #self.lora_d = nn.Linear(dim, 8, bias=False)
+        #self.lora_u = nn.Linear(8, hidden_dim, bias=False)
         self.dropout = nn.Dropout(dropout)
         
         self.count = 0
@@ -186,16 +186,16 @@ class FeedForward(nn.Module):
     def forward(self, x):
         # 512, 64, 192; batch, context_len, hidden_dim
         relufied = F.relu(self.w1(x) - 0.25) # shifted relu to maximize sparsity
-        pred = (torch.sigmoid(self.lora_u(self.lora_d(x)))>0.5).type_as(relufied)
-        coverage = torch.count_nonzero(torch.logical_xor(relufied, pred))/np.prod(relufied.size())
-        relufied = pred*relufied
+        #pred = (torch.sigmoid(self.lora_u(self.lora_d(x)))>0.5).type_as(relufied)
+        #coverage = torch.count_nonzero(torch.logical_xor(relufied, pred))/np.prod(relufied.size())
+        #relufied = pred*relufied
         
         n=2
         # 64/n, 512, n, 192; context_len/window_len, batch, window_len, hidden_dim
         sample = torch.stack(torch.split(relufied, n, dim=1))
         # 64/n, 512, 192; context_len/window_len, batch, hidden_dim
         sample = torch.sum(sample, dim=2)
-        #coverage = torch.mean(torch.count_nonzero(sample, dim=2)/(relufied.size()[2]))
+        coverage = torch.mean(torch.count_nonzero(sample, dim=2)/(relufied.size()[2]))
         stats = torch.count_nonzero(relufied)/np.prod(relufied.size())
 
         self.coverage = (self.coverage * (self.count/(self.count+1))) + (coverage * (1/(self.count+1)))

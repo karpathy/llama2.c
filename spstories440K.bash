@@ -1,7 +1,7 @@
 #!/bin/bash
 
 python train.py \
-    --out_dir="out440k_shifted_3x_100" \
+    --out_dir="out440k_shifted_3x_25" \
     --batch_size=512 \
     --max_seq_len=64 \
     --gradient_accumulation_steps=1 \
@@ -21,6 +21,6 @@ python train.py \
     --eval_interval=2000 \
     --eval_iters=100 \
     --compile=True \
-    --device="cuda:2" \
+    --device="cuda:0" \
     --dtype="float16" \
     --sparse=True

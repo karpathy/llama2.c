@@ -1,6 +1,7 @@
 /* Inference for Llama-2 Transformer model in pure C */
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <time.h>
@@ -64,6 +65,11 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
+// layer = 4, seq_len = dim = 64, hidden_dim = 192
+// (64*6 + 192*2 + 1024(logits) + 4*64(att))*2 + 2*4*64*64(KV) + 2*4*64*2(KV-scale) 
+// = 4608+33792 = 38,400B if KV cache is int8
+// 27136B left, 16KB for code and some for stack space, very tight but doable
+
 typedef struct {
     Config config; // the hyperparameters of the architecture (the blueprint)
     TransformerWeights weights; // the weights of the model
@@ -83,16 +89,20 @@ void malloc_run_state(RunState* s, Config* p) {
     s->hb = calloc(p->hidden_dim, sizeof(float));
     s->hb2 = calloc(p->hidden_dim, sizeof(float));
     s->q = calloc(p->dim, sizeof(float));
+    s->k = calloc(kv_dim, sizeof(float));
+    s->v = calloc(kv_dim, sizeof(float));
     s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
+     || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
+     || !s->value_cache) {
         fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
     }
+    printf("Total floats malloced: %d \n", p->dim*6 + p->hidden_dim*2 + p->n_heads * p->seq_len + p->vocab_size + (p->n_layers * p->seq_len * kv_dim * 2));
 }
 
 void free_run_state(RunState* s) {
@@ -178,8 +188,7 @@ void free_transformer(Transformer* t) {
 
 // ----------------------------------------------------------------------------
 // neural net blocks; the dynamics of the Transformer
-
-void rmsnorm(float* o, float* x, float* weight, int size) {
+void rmsnorm(float* o, float* x, float* weight, int size, bool relu) {
     // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
@@ -189,8 +198,18 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     ss += 1e-5f;
     ss = 1.0f / sqrtf(ss);
     // normalize and scale
-    for (int j = 0; j < size; j++) {
-        o[j] = weight[j] * (ss * x[j]);
+    if (relu) {
+        for (int j = 0; j < size; j++) {
+            o[j] = weight[j] * (ss * x[j]);
+            o[j] = o[j] - 1.0f;
+            if (o[j] < 0.0f) {
+                o[j] = 0.0f;
+            }
+        }
+    } else {
+        for (int j = 0; j < size; j++) {
+            o[j] = weight[j] * (ss * x[j]);
+        }
     }
 }
 
@@ -249,7 +268,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     for(unsigned long long l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
-        rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+        rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim, true);
 
         // key and value point to the kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
@@ -327,18 +346,23 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // ffn rmsnorm
-        rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
+        rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim, true);
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
         matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
-        // SwiGLU non-linearity
+        // SwiGLU non-linearity -> shifted ReLU
         for (int i = 0; i < hidden_dim; i++) {
             float val = s->hb[i];
             // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-            val *= (1.0f / (1.0f + expf(-val)));
+            // val *= (1.0f / (1.0f + expf(-val))); 
+            // changed to relu - 0.25 to encourage sparsity outlined in LLMs in a flash
+            val = val - 0.25f;
+            if (val < 0.0f) {
+                val = 0.0f;
+            }
             // elementwise multiply with w3(x)
             val *= s->hb2[i];
             s->hb[i] = val;
@@ -354,7 +378,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     }
 
     // final rmsnorm
-    rmsnorm(x, x, w->rms_final_weight, dim);
+    rmsnorm(x, x, w->rms_final_weight, dim, false);
 
     // classifier into logits
     matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
@@ -494,7 +518,6 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
 
     // process the raw (UTF-8) byte sequence of the input string
     for (char *c = text; *c != '\0'; c++) {
-
         // reset buffer if the current byte is ASCII or a leading byte
         // 0xC0 is 11000000, so (*c & 0xC0) keeps the first 2 bits and zeros the rest
         // 0x80 is 10000000
@@ -963,6 +986,14 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "unknown mode: %s\n", mode);
         error_usage();
     }
+
+    printf("dim: %d\n", transformer.config.dim);
+    printf("hidden_dim: %d\n", transformer.config.hidden_dim);
+    printf("n_layers: %d\n", transformer.config.n_layers);
+    printf("n_heads: %d\n", transformer.config.n_heads);
+    printf("n_kv_heads: %d\n", transformer.config.n_kv_heads);
+    printf("vocab_size: %d\n", transformer.config.vocab_size);
+    printf("seq_len: %d\n", transformer.config.seq_len);
 
     // memory and file handles cleanup
     free_sampler(&sampler);

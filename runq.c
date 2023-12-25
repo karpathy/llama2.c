@@ -1,6 +1,7 @@
 /* Inference for Llama-2 Transformer model in pure C, int8 quantized forward pass. */
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdint.h>
@@ -112,6 +113,7 @@ void malloc_run_state(RunState* s, Config* p) {
         fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
     }
+    printf("Total floats malloced: %d \n", p->dim*6 + p->hidden_dim*2 + p->n_heads * p->seq_len + p->vocab_size + (p->n_layers * p->seq_len * kv_dim * 2));
 }
 
 void free_run_state(RunState* s) {
@@ -279,7 +281,7 @@ void free_transformer(Transformer* t) {
 // ----------------------------------------------------------------------------
 // neural net blocks; the dynamics of the Transformer
 
-void rmsnorm(float* o, float* x, float* weight, int size) {
+void rmsnorm(float* o, float* x, float* weight, int size, bool relu) {
     // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
@@ -289,8 +291,18 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     ss += 1e-5f;
     ss = 1.0f / sqrtf(ss);
     // normalize and scale
-    for (int j = 0; j < size; j++) {
-        o[j] = weight[j] * (ss * x[j]);
+    if (relu) {
+        for (int j = 0; j < size; j++) {
+            o[j] = weight[j] * (ss * x[j]);
+            o[j] = o[j] - 1.0f;
+            if (o[j] < 0.0f) {
+                o[j] = 0.0f;
+            }
+        }
+    } else {
+        for (int j = 0; j < size; j++) {
+            o[j] = weight[j] * (ss * x[j]);
+        }
     }
 }
 
@@ -361,7 +373,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     for(int l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
-        rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+        rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim, true);
 
         // qkv matmuls for this position
         quantize(&s->xq, s->xb, dim);
@@ -443,7 +455,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // ffn rmsnorm
-        rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
+        rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim, true);
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
@@ -451,11 +463,16 @@ float* forward(Transformer* transformer, int token, int pos) {
         matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim);
         matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
 
-        // SwiGLU non-linearity
+        // SwiGLU non-linearity -> shifted ReLU
         for (int i = 0; i < hidden_dim; i++) {
             float val = s->hb[i];
             // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-            val *= (1.0f / (1.0f + expf(-val)));
+            // val *= (1.0f / (1.0f + expf(-val))); 
+            // changed to relu - 0.25 to encourage sparsity outlined in LLMs in a flash
+            val = val - 0.25f;
+            if (val < 0.0f) {
+                val = 0.0f;
+            }
             // elementwise multiply with w3(x)
             val *= s->hb2[i];
             s->hb[i] = val;
@@ -472,7 +489,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     }
 
     // final rmsnorm
-    rmsnorm(x, x, w->rms_final_weight, dim);
+    rmsnorm(x, x, w->rms_final_weight, dim, false);
 
     // classifier into logits
     quantize(&s->xq, x, dim);
