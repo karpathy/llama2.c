@@ -7,6 +7,7 @@ CC = gcc
 run: run.c
 	$(CC) -Os -o run run.c -lm
 	$(CC) -Os -o runq runq.c -lm
+	$(CC) -Os -o runMCU runMCU.c -lm
 
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
