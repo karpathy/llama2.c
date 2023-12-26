@@ -65,11 +65,6 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
-// layer = 4, seq_len = dim = 64, hidden_dim = 192
-// (64*6 + 192*2 + 1024(logits) + 4*64(att))*2 + 2*4*64*64(KV) + 2*4*64*2(KV-scale) 
-// = 4608+33792 = 38,400B if KV cache is int8
-// 27136B left, 16KB for code and some for stack space, very tight but doable
-
 typedef struct {
     Config config; // the hyperparameters of the architecture (the blueprint)
     TransformerWeights weights; // the weights of the model
