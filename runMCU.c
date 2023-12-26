@@ -352,7 +352,7 @@ void softmax(float* x, int size) {
     }
 }
 
-void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
+void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d, float* ref) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
     // inputs to this function are both quantized
@@ -360,19 +360,20 @@ void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
     int i;
     #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
-
         float val = 0.0f;
         int32_t ival = 0;
         int in = i * n;
-
-        // do the matmul in groups of GS
-        int j;
-        for (j = 0; j <= n - GS; j += GS) {
-            for (int k = 0; k < GS; k++) {
-                ival += ((int32_t) x->q[j + k]) * ((int32_t) w->q[in + j + k]);
+        // if a gated output exist, check not zero
+        if (!ref || (ref && (ref[i] != 0.0f))) {
+            // do the matmul in groups of GS
+            int j;
+            for (j = 0; j <= n - GS; j += GS) {
+                for (int k = 0; k < GS; k++) {
+                    ival += ((int32_t) x->q[j + k]) * ((int32_t) w->q[in + j + k]);
+                }
+                val += ((float) ival) * w->s[(in + j) / GS] * x->s[j / GS];
+                ival = 0;
             }
-            val += ((float) ival) * w->s[(in + j) / GS] * x->s[j / GS];
-            ival = 0;
         }
 
         xout[i] = val;
@@ -403,9 +404,9 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // qkv matmuls for this position
         quantize(&s->xq, s->xb, dim);
-        matmul(s->q, &s->xq, w->wq + l, dim, dim);
-        matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
-        matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
+        matmul(s->q, &s->xq, w->wq + l, dim, dim, NULL);
+        matmul(s->k, &s->xq, w->wk + l, dim, kv_dim, NULL);
+        matmul(s->v, &s->xq, w->wv + l, dim, kv_dim, NULL);
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
@@ -491,7 +492,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // final matmul to get the output of the attention
         quantize(&s->xq, s->xb, dim);
-        matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
+        matmul(s->xb2, &s->xq, w->wo + l, dim, dim, NULL);
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
@@ -501,30 +502,26 @@ float* forward(Transformer* transformer, int token, int pos) {
         // ffn rmsnorm
         rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim, true);
 
-        // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
-        // first calculate self.w1(x) and self.w3(x)
+        // Now for FFN in PyTorch we have: self.w2(F.relu(self.w1(x)-0.25) * self.w3(x))
+        // first calculate self.w1(x), then use sparsity to calculate self.w3(x)
         quantize(&s->xq, s->xb, dim);
-        matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim);
-        matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
+        matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim, NULL);
 
-        // SwiGLU non-linearity -> shifted ReLU
+        // Shifted ReLU
         for (int i = 0; i < hidden_dim; i++) {
-            float val = s->hb[i];
-            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-            // val *= (1.0f / (1.0f + expf(-val))); 
             // changed to relu - 0.25 to encourage sparsity outlined in LLMs in a flash
-            val = val - 0.25f;
-            if (val < 0.0f) {
-                val = 0.0f;
-            }
+            s->hb[i] -= 0.25f;
+            if (s->hb[i] < 0.0f) s->hb[i] = 0.0f;
+        }
+        matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim, s->hb);
+        for (int i = 0; i < hidden_dim; i++) {
             // elementwise multiply with w3(x)
-            val *= s->hb2[i];
-            s->hb[i] = val;
+            s->hb[i] *= s->hb2[i];
         }
 
         // final matmul to get the output of the ffn
         quantize(&s->hq, s->hb, hidden_dim);
-        matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
+        matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim, NULL);
 
         // residual connection
         for (int i = 0; i < dim; i++) {
@@ -537,7 +534,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
     // classifier into logits
     quantize(&s->xq, x, dim);
-    matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size);
+    matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size, NULL);
     return s->logits;
 }
 
