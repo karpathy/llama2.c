@@ -65,11 +65,6 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
-// layer = 4, seq_len = dim = 64, hidden_dim = 192
-// (64*6 + 192*2 + 1024(logits) + 4*64(att))*2 + 2*4*64*64(KV) + 2*4*64*2(KV-scale) 
-// = 4608+33792 = 38,400B if KV cache is int8
-// 27136B left, 16KB for code and some for stack space, very tight but doable
-
 typedef struct {
     Config config; // the hyperparameters of the architecture (the blueprint)
     TransformerWeights weights; // the weights of the model
@@ -299,6 +294,10 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // multihead attention. iterate over all heads
         int h;
+        int count = 0;
+        int tot = 0;
+        float bin = 10.0f;
+        float scale = bin/127.0f;
         #pragma omp parallel for private(h)
         for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
@@ -312,7 +311,13 @@ float* forward(Transformer* transformer, int token, int pos) {
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
+                    //score += q[i] * k[i];
+                    float k_q = round(k[i]/scale);
+                    if (k_q > 127) k_q = 127;
+                    else if (k_q < -128) k_q = -128;
+                    score += q[i] * (k_q * scale);
+                    if (fabs(k[i]) > bin) { count++; }// printf("%f \n", k[i]); }
+                    tot++;
                 }
                 score /= sqrtf(head_size);
                 // save the score to the attention buffer
@@ -332,10 +337,17 @@ float* forward(Transformer* transformer, int token, int pos) {
                 float a = att[t];
                 // accumulate the weighted value into xb
                 for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
+                    //xb[i] += a * v[i];
+                    float v_q = round(v[i]/scale);
+                    if (v_q > 127) v_q = 127;
+                    else if (v_q < -128) v_q = -128;
+                    xb[i] += a * (v_q * scale);
+                    if (fabs(v[i]) > bin) { count++; } //printf("%f \n", v[i]); }
+                    tot++;
                 }
             }
         }
+        // printf("Outliers: %f, Layer %lld, Pos %d\n", count*1.0f/tot, l, pos);
 
         // final matmul to get the output of the attention
         matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
@@ -987,6 +999,7 @@ int main(int argc, char *argv[]) {
         error_usage();
     }
 
+    /*
     printf("dim: %d\n", transformer.config.dim);
     printf("hidden_dim: %d\n", transformer.config.hidden_dim);
     printf("n_layers: %d\n", transformer.config.n_layers);
@@ -994,7 +1007,9 @@ int main(int argc, char *argv[]) {
     printf("n_kv_heads: %d\n", transformer.config.n_kv_heads);
     printf("vocab_size: %d\n", transformer.config.vocab_size);
     printf("seq_len: %d\n", transformer.config.seq_len);
-
+    printf("kv_dim: %d\n", (transformer.config.dim * transformer.config.n_kv_heads) / transformer.config.n_heads);
+    */
+    
     // memory and file handles cleanup
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
