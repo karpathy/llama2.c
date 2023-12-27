@@ -732,9 +732,33 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int token = 1;   // kick off with the BOS(=1)
     int pos = 0;     // position in the sequence
     while (pos < steps) {
-        // forward the transformer to get logits for the next token
-        float* logits = forward(transformer, token, pos);
-
+        // shift key/value cache to the left by 1 if exceed max context
+        ///*
+        float* logits;
+        if (pos == transformer->config.seq_len) printf("\n=====\n");
+        if (pos >= transformer->config.seq_len) { 
+            //printf("\n");
+            // (layer, seq_len, dim)
+            int kv_dim = (transformer->config.dim * transformer->config.n_kv_heads) / transformer->config.n_heads;
+            for (int l = 0; l < transformer->config.n_layers; l++) {
+                int loff = l * transformer->config.seq_len * kv_dim;
+                for (int j = 0; j < transformer->config.seq_len-1; j++) {
+                    memcpy( transformer->state.key_cache + loff + j*kv_dim, 
+                            transformer->state.key_cache + loff + (j+1)*kv_dim, 
+                            kv_dim * sizeof(int8_t));
+                    memcpy( transformer->state.value_cache + loff + j*kv_dim, 
+                            transformer->state.value_cache + loff + (j+1)*kv_dim, 
+                            kv_dim * sizeof(int8_t));
+                }
+            }
+            // forward the transformer to get logits for the next token
+            logits = forward(transformer, token, transformer->config.seq_len-1);
+        } else {
+            // forward the transformer to get logits for the next token
+            logits = forward(transformer, token, pos);
+        }
+        //*/
+        
         // sample the next token from the logits
         next = sample(sampler, logits);
 
@@ -787,7 +811,7 @@ int main(int argc, char *argv[]) {
     char *tokenizer_path = "tokenizer.bin";
     float temperature = 1.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = 256;            // number of steps to run for
+    int steps = 64;            // number of steps to run for
     unsigned long long rng_seed = 0; // seed rng with time by default
 
     // poor man's C argparse so we can override the defaults above from the command line
@@ -815,7 +839,7 @@ int main(int argc, char *argv[]) {
     // build the Transformer via the model .bin file
     Transformer transformer;
     build_transformer(&transformer, checkpoint_path);
-    if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; // ovrerride to ~max length
+    if (steps == 0) steps = transformer.config.seq_len; // ovrerride to ~max length
 
     // build the Tokenizer via the tokenizer .bin file
     Tokenizer tokenizer;
