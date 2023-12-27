@@ -33,18 +33,15 @@ You can see a 50% increase in speed (benched on M1 base)!
 
 SRAM Consists of the `RunState` struct, which has float32 and int_8 quantized KV Cache. (64x6 + 192x2 + 1024(logits) + 4x64(att))x4(float32) + 2x4x64x64(int8KV) = 41,984B.
 
-In a 64KB SRAM system we'd have 23,552B left, 16KB for code and some for stack space, very tight but can fit. If needed, try to use bfloat16 in the rest of the `RunState` by casting float32's top 16 bits into bfloat16. Can reclaim 4,608B. 
+In a 64KB SRAM system we'd have 23,552B left, 16KB for code and some for stack space. If needed, try to use bfloat16 in the rest of the `RunState` by casting float32's top 16 bits into bfloat16. Can reclaim 4,608B. 
 
-Note that mcu version still dequantizes the embedding table initially and store in SRAM. We plan to remove that. 
+The relufication method as outlined in [Relu Strikes Back](https://arxiv.org/abs/2310.04564) and [LLM in a Flash](https://arxiv.org/abs/2312.11514) is used. With the exception that relu-0.25 is used instead of relu-1 instead of silu, due to relu-1 completely muting the FFN layers. We did not take advantage of a low rank predictor along side up projection as small models aren't very sparse. For large models >3B this would be useful to add. 
 
-The relufication method as outlined in "Relu Strikes Back" and "LLMs in a Flash" is used. With the exception that relu-0.25 is used instead of relu-1 instead of silu, due to relu-1 completely muting the FFN layers.
-
-Below are activation density measured across 4 layers and sample of 32K tokens. It isn't as sparse as 97% Proj in large llamas, but already useful for reducing flash reads in microcontroller. 
+### Sparsity Structure and Statistics
+Below are activation density measured across 4 layers and sample of 32K tokens. It isn't as sparse as 97% Proj in large llamas, but already useful for reducing reads. 
 | Attn | FFN | Proj |
 | --- | --- | --- |
 | 27% | 32% | 23% |
-
-### Sparsity Structure
 <p align="center">
   <img src="assets/SparseDiagram.png" alt="Sparse Diagram">
 </p>
