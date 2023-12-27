@@ -40,7 +40,6 @@ typedef struct {
 typedef struct {
     // token embedding table
     QuantizedTensor *q_tokens; // (vocab_size, dim)
-    float* token_embedding_table; // same, but dequantized
 
     // weights for rmsnorms
     float* rms_att_weight; // (layer, dim) rmsnorm weights
@@ -150,9 +149,9 @@ void free_run_state(RunState* s) {
 // ----------------------------------------------------------------------------
 // Quantization functions
 
-void dequantize(QuantizedTensor *qx, float* x, int n) {
+void dequantize(QuantizedTensor *qx, float* x, int n, int offset) {
     for (int i = 0; i < n; i++) {
-        x[i] = qx->q[i] * qx->s;
+        x[i] = qx->q[offset+i] * qx->s;
     }
 }
 
@@ -207,9 +206,6 @@ void memory_map_weights(TransformerWeights *w, Config* p, void* ptr, uint8_t sha
     // now read all the quantized weights
     ptr = (void*)fptr; // now cast the pointer back to void*
     w->q_tokens = init_quantized_tensors(&ptr, 1, p->vocab_size * p->dim);
-    // dequantize token embedding table
-    w->token_embedding_table = malloc(p->vocab_size * p->dim * sizeof(float));
-    dequantize(w->q_tokens, w->token_embedding_table, p->vocab_size * p->dim);
 
     w->wq = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_heads * head_size));
     w->wk = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_kv_heads * head_size));
@@ -265,7 +261,6 @@ void build_transformer(Transformer *t, char* checkpoint_path) {
 void free_transformer(Transformer* t) {
     // free QuantizedTensors
     free(t->weights.q_tokens);
-    free(t->weights.token_embedding_table);
     free(t->weights.wq);
     free(t->weights.wk);
     free(t->weights.wv);
@@ -391,7 +386,8 @@ float* forward(Transformer* transformer, int token, int pos) {
     int head_size = dim / p->n_heads;
 
     // copy the token embedding into x
-    memcpy(x, w->token_embedding_table + token*dim, dim * sizeof(float));
+    //memcpy(x, w->token_embedding_table + token*dim, dim * sizeof(float));
+    dequantize(w->q_tokens, x, dim, token*dim);
 
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {

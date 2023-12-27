@@ -1,16 +1,30 @@
 ## llama2.c with relu sparsity
-Compile and run the small model
+### Step 1: Compile
 ```
-$ make
-$ ./runq ./out440k_shifted_3x_25/model_qint80.bin -n 1024 -z data/tok1024.bin
+% make
+gcc -Os -o run run.c -lm
+gcc -Os -o runq runq.c -lm
+gcc -Os -o runMCU runMCU.c -lm
 ```
-For sparsity enabled on MCU version:
+### Step 2: Run the quantized version without sparse acceleration
 ```
-$ ./runMCU ./out440k_shifted_3x_25/model_mcu.bin -n 1024 -z data/decode1024.tok
+% ./runq ./out260k_shifted_3x_25/model_qint80.bin -n 1024 -z data/tok1024.bin
+Once upon a time, there was a little boy named Tim. Tim loved to play with his toy cars. He would leave his toys and paint new trucks. He would move to throw it every day. One day, Tim saw a girl who had a cozy ball
+achieved tok/s: 3000.000000
+```
+This is not bad at all for a 260K sized model, sometimes it outputs nonsensical stories but it's still readable. 
+### Step 3 Sparse acceleration
+```
+$ ./runMCU ./out260k_shifted_3x_25/model_mcu.bin -n 1024 -z data/decode1024.tok
 
-Once upon a time, there was a lonely dog named Spot. Spot loved to draw and run around outside with his toys. One day, while Spot was playing, he found a big pool with a little brave ball. Spot and Max were very excited. They wanted to play a fun
+Once upon a time, there was a lonely dog named Spot. 
+Spot loved to draw and run around outside with his toys. 
+One day, while Spot was playing, he found a big pool with 
+a little brave ball. Spot and Max were very excited. 
+They wanted to play a fun
+achieved tok/s: 4500.000000
 ```
-For a 260K model it's good enough...
+You can see a 50% increase in speed (benched on M1 base)!
 
 ### Model Dimensions
 | model | dim | n_layers | n_heads | n_kv_heads | max context length | vocab | val loss | SRAM
