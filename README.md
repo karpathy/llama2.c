@@ -4,9 +4,9 @@ Compile and run the small model
 $ make
 $ ./runq ./out440k_shifted_3x_25/model_qint80.bin -n 1024 -z data/tok1024.bin
 ```
-For the sparsity enabled on one of the FFN layer version, run:
+For sparsity enabled on MCU version:
 ```
-$ ./runMCU ./out440k_shifted_3x_25/model_qint80.bin -n 1024 -z data/decode1024.tok
+$ ./runMCU ./out440k_shifted_3x_25/model_mcu.bin -n 1024 -z data/decode1024.tok
 
 Once upon a time, there was a lonely dog named Spot. Spot loved to draw and run around outside with his toys. One day, while Spot was playing, he found a big pool with a little brave ball. Spot and Max were very excited. They wanted to play a fun
 ```
@@ -21,9 +21,11 @@ SRAM Consists of the `RunState` struct, which has float32 and int_8 quantized KV
 
 In a 64KB SRAM system we'd have 23,552B left, 16KB for code and some for stack space, very tight but can fit. If needed, try to use bfloat16 in the rest of the `RunState` by casting float32's top 16 bits into bfloat16. Can reclaim 4,608B. 
 
+Note that mcu version still dequantizes the embedding table initially and store in SRAM. We plan to remove that. 
+
 The relufication method as outlined in "Relu Strikes Back" and "LLMs in a Flash" is used. With the exception that relu-0.25 is used instead of relu-1 instead of silu, due to relu-1 completely muting the FFN layers.
 
-Sparsity is measured in python, but not yet implemented in C. Below are activation density measured across 4 layers and sample of 32K tokens. It isn't as sparse as expected, but already useful for reducing flash reads in microcontroller. 
+Below are activation density measured across 4 layers and sample of 32K tokens. It isn't as sparse as 97% Proj in large llamas, but already useful for reducing flash reads in microcontroller. 
 | Attn | FFN | Proj |
 | --- | --- | --- |
 | 27% | 32% | 23% |

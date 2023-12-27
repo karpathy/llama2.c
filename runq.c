@@ -1144,7 +1144,6 @@ int main(int argc, char *argv[]) {
         error_usage();
     }
 
-    /*
     printf("dim: %d\n", transformer.config.dim);
     printf("hidden_dim: %d\n", transformer.config.hidden_dim);
     printf("n_layers: %d\n", transformer.config.n_layers);
@@ -1154,7 +1153,6 @@ int main(int argc, char *argv[]) {
     printf("seq_len: %d\n", transformer.config.seq_len);
     printf("group_size: %d\n", GS);
     printf("kv_dim: %d\n", (transformer.config.dim * transformer.config.n_kv_heads) / transformer.config.n_heads);
-    */
     
     // memory and file handles cleanup
     free_sampler(&sampler);

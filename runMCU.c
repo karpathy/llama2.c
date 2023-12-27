@@ -17,8 +17,8 @@
 #endif
 // ----------------------------------------------------------------------------
 // Globals
-int GS = 0; // group size global for quantization of the weights
 float KV_CACHE_SCALE = 8.0f/127.0f; // magic number for now... QuantizeTensor errors
+size_t SPARSECOUNT = 0; // track how many horrifying matmuls we saved from activation
 // ----------------------------------------------------------------------------
 // Transformer model
 
@@ -34,7 +34,7 @@ typedef struct {
 
 typedef struct {
     int8_t* q;    // quantized values
-    float* s; // scaling factors
+    float s; // scaling factor
 } QuantizedTensor;
 
 typedef struct {
@@ -97,8 +97,8 @@ void malloc_run_state(RunState* s, Config* p) {
     s->xb2 = calloc(p->dim, sizeof(float));
     s->hb = calloc(p->hidden_dim, sizeof(float));
     s->hb2 = calloc(p->hidden_dim, sizeof(float));
-    s->xq = (QuantizedTensor) { .q = calloc(p->dim, sizeof(int8_t)), .s = calloc(p->dim/GS, sizeof(float)) };
-    s->hq = (QuantizedTensor) { .q = calloc(p->hidden_dim, sizeof(int8_t)), .s = calloc(p->hidden_dim/GS, sizeof(float)) };
+    s->xq = (QuantizedTensor) { .q = calloc(p->dim, sizeof(int8_t)), .s = 0.0f };
+    s->hq = (QuantizedTensor) { .q = calloc(p->hidden_dim, sizeof(int8_t)), .s = 0.0f };
     s->q = calloc(p->dim, sizeof(float));
     s->k = calloc(kv_dim, sizeof(float));
     s->v = calloc(kv_dim, sizeof(float));
@@ -114,14 +114,13 @@ void malloc_run_state(RunState* s, Config* p) {
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
      || !s->k || !s->v || !s->att || !s->logits 
-     || !s->xq.q || !s->xq.s || !s->hq.q || !s->hq.s
+     || !s->xq.q || !s->hq.q 
      //|| !s->key_cache.q || !s->key_cache.s || !s->value_cache.q || !s->value_cache.s
      || !s->key_cache || !s->value_cache
      ) {
         fprintf(stderr, "malloc failed!\n");
         exit(EXIT_FAILURE);
     }
-    //printf("Total floats malloced: %d \n", p->dim*6 + p->hidden_dim*2 + p->n_heads * p->seq_len + p->vocab_size + (p->n_layers * p->seq_len * kv_dim * 2));
 }
 
 void free_run_state(RunState* s) {
@@ -131,9 +130,7 @@ void free_run_state(RunState* s) {
     free(s->hb);
     free(s->hb2);
     free(s->xq.q);
-    free(s->xq.s);
     free(s->hq.q);
-    free(s->hq.s);
     free(s->q);
     free(s->k);
     free(s->v);
@@ -155,47 +152,28 @@ void free_run_state(RunState* s) {
 
 void dequantize(QuantizedTensor *qx, float* x, int n) {
     for (int i = 0; i < n; i++) {
-        x[i] = qx->q[i] * qx->s[i / GS];
+        x[i] = qx->q[i] * qx->s;
     }
 }
 
 void quantize(QuantizedTensor *qx, float* x, int n) {
-    int num_groups = n / GS;
     float Q_MAX = 127.0f;
-    float diff = 0; // for debugging outliers
-    int count = 0;
-
-    for (int group = 0; group < num_groups; group++) {
-        // find the max absolute value in the current group
-        float wmax = 0.0;
-        for (int i = 0; i < GS; i++) {
-            float val = fabs(x[group * GS + i]);
-            if (val > wmax && val < 100) {
-                wmax = val;
-            }
-        }
-
-        // calculate and write the scaling factor
-        float scale = wmax / Q_MAX;
-        qx->s[group] = scale;
-
-        // calculate and write the quantized values
-        for (int i = 0; i < GS; i++) {
-            float quant_value = x[group * GS + i] / scale; // scale
-            int8_t quantized = (int8_t) round(quant_value); // round and clamp
-            qx->q[group * GS + i] = quantized;
-            /*
-            if (fabs(quantized*scale - x[group * GS + i]) > 0 || x[group * GS + i]>10)
-                printf("Q: %d, Scale: %f, Original: %f, loss: %f \n", quantized, scale, x[group * GS + i], fabs(quantized*scale - x[group * GS + i]));
-            diff += fabs(quantized*scale - x[group * GS + i]);
-            count++;
-            */
-            if (x[group * GS + i]>1) count++;
-        }
-
+    // find the max absolute value in the current group
+    float wmax = 0.0;
+    for (int i = 0; i < n; i++) {
+        float val = fabs(x[i]);
+        if (val > wmax) wmax = val;
     }
-    //printf("Running loss: %f \n", diff/count);
-    //printf("Outliers: %d \n", count);
+
+    float scale = wmax / Q_MAX;
+    qx->s = scale;
+
+    // calculate and write the quantized values
+    for (int i = 0; i < n; i++) {
+        float quant_value = x[i] / scale; // scale
+        int8_t quantized = (int8_t) round(quant_value); // round and clamp
+        qx->q[i] = quantized;
+    }
 }
 
 /* initialize `n` x quantized tensor (with `size_each` elements), starting from memory pointed at *ptr */
@@ -203,12 +181,13 @@ QuantizedTensor *init_quantized_tensors(void **ptr, int n, int size_each) {
     void *p = *ptr;
     QuantizedTensor *res = malloc(n * sizeof(QuantizedTensor));
     for(int i=0; i<n; i++) {
+        /* read scale factor */
+        res[i].s = *(float*)p;
+        p = (float*)p + 1;
+
         /* map quantized int8 values*/
         res[i].q = (int8_t*)p;
         p = (int8_t*)p + size_each;
-        /* map scale factors */
-        res[i].s = (float*)p;
-        p = (float*)p + size_each / GS;
     }
     *ptr = p; // advance ptr to current position
     return res;
@@ -255,16 +234,14 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
     // read in the version number (uint32), has to be 1
     int version;
     if (fread(&version, sizeof(int), 1, file) != 1) { exit(EXIT_FAILURE); }
-    if (version != 2) { fprintf(stderr, "Bad version %d, need version 2\n", version); exit(EXIT_FAILURE); }
-    int header_size = 256; // the header size for version 2 in bytes
+    if (version != 3) { fprintf(stderr, "Bad version %d, need version 3\n", version); exit(EXIT_FAILURE); }
+    int header_size = 256; // the header size for version 3 in bytes
     // read in the Config
     if (fread(config, sizeof(Config), 1, file) != 1) { exit(EXIT_FAILURE); }
     // read in flags
     uint8_t shared_classifier; // a byte to indicate if the classifier is shared
     if (fread(&shared_classifier, sizeof(uint8_t), 1, file) != 1) { exit(EXIT_FAILURE); }
-    int group_size; // the group size used in quantization
-    if (fread(&group_size, sizeof(int), 1, file) != 1) { exit(EXIT_FAILURE); }
-    GS = group_size; // set as global, as it will be used in many places
+
     // figure out the file size
     fseek(file, 0, SEEK_END); // move file pointer to end of file
     *file_size = ftell(file); // get the file size, in bytes
@@ -352,32 +329,52 @@ void softmax(float* x, int size) {
     }
 }
 
-void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d, float* ref) {
+// implements W is not transposed for dense matmul
+void matmul_dense(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
     // inputs to this function are both quantized
-
+    
     int i;
     #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
         float val = 0.0f;
         int32_t ival = 0;
         int in = i * n;
-        // if a gated output exist, check not zero
-        if (!ref || (ref && (ref[i] != 0.0f))) {
-            // do the matmul in groups of GS
-            int j;
-            for (j = 0; j <= n - GS; j += GS) {
-                for (int k = 0; k < GS; k++) {
-                    ival += ((int32_t) x->q[j + k]) * ((int32_t) w->q[in + j + k]);
-                }
-                val += ((float) ival) * w->s[(in + j) / GS] * x->s[j / GS];
-                ival = 0;
-            }
+
+        int j;
+        for (j = 0; j <= n; j++) {
+            ival += ((int32_t) x->q[j]) * ((int32_t) w->q[in + j]);
         }
 
-        xout[i] = val;
+        xout[i] = ((float) ival) * w->s * x->s;;
     }
+}
+
+// implements W is transposed for sparsity
+void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
+    // W (d,n) @ x (n,) -> xout (d,)
+    // by far the most amount of time is spent inside this little function
+    // inputs to this function are both quantized
+
+    // major hack... use xout float as temporary int32 accumulation space
+
+    int32_t* xout_int = (int32_t*)xout;
+    for (int i = 0; i < d; i++) xout_int[i] = 0;
+
+    for (int i = 0; i < n; i++) {
+        int offset = i * d; 
+        int32_t curr_x = x->q[i];
+        // if input is 0, skip
+        if (curr_x!=0) {
+            for (int j = 0; j <= d; j++) {
+                xout_int[j] += curr_x * ((int32_t) w->q[offset + j]);
+            }
+        } else {
+            SPARSECOUNT++;
+        }
+    }
+    for (int i = 0; i < d; i++) xout[i] = xout_int[i] * x->s * w->s;
 }
 
 float* forward(Transformer* transformer, int token, int pos) {
@@ -404,9 +401,9 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // qkv matmuls for this position
         quantize(&s->xq, s->xb, dim);
-        matmul(s->q, &s->xq, w->wq + l, dim, dim, NULL);
-        matmul(s->k, &s->xq, w->wk + l, dim, kv_dim, NULL);
-        matmul(s->v, &s->xq, w->wv + l, dim, kv_dim, NULL);
+        matmul(s->q, &s->xq, w->wq + l, dim, dim);
+        matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
+        matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
@@ -492,7 +489,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // final matmul to get the output of the attention
         quantize(&s->xq, s->xb, dim);
-        matmul(s->xb2, &s->xq, w->wo + l, dim, dim, NULL);
+        matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
@@ -505,23 +502,21 @@ float* forward(Transformer* transformer, int token, int pos) {
         // Now for FFN in PyTorch we have: self.w2(F.relu(self.w1(x)-0.25) * self.w3(x))
         // first calculate self.w1(x), then use sparsity to calculate self.w3(x)
         quantize(&s->xq, s->xb, dim);
-        matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim, NULL);
+        matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim);
+        matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
 
         // Shifted ReLU
         for (int i = 0; i < hidden_dim; i++) {
             // changed to relu - 0.25 to encourage sparsity outlined in LLMs in a flash
             s->hb[i] -= 0.25f;
             if (s->hb[i] < 0.0f) s->hb[i] = 0.0f;
-        }
-        matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim, s->hb);
-        for (int i = 0; i < hidden_dim; i++) {
             // elementwise multiply with w3(x)
             s->hb[i] *= s->hb2[i];
         }
 
         // final matmul to get the output of the ffn
         quantize(&s->hq, s->hb, hidden_dim);
-        matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim, NULL);
+        matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
 
         // residual connection
         for (int i = 0; i < dim; i++) {
@@ -534,7 +529,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
     // classifier into logits
     quantize(&s->xq, x, dim);
-    matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size, NULL);
+    matmul_dense(s->logits, &s->xq, w->wcls, dim, p->vocab_size);
     return s->logits;
 }
 
@@ -741,7 +736,6 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int token = 1;   // kick off with the BOS(=1)
     int pos = 0;     // position in the sequence
     while (pos < steps) {
-
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
 
@@ -837,11 +831,25 @@ int main(int argc, char *argv[]) {
 
     // run!
     generate(&transformer, &tokenizer, &sampler, steps);
+
+    /*
+    int16_t bins[256];
+    memset(bins, 0, 256*sizeof(int16_t));
+    for (int i = 0; i < 64*64*4; i++) {
+        int8_t* k = transformer.state.key_cache;
+        int8_t* v = transformer.state.value_cache;
+        bins[k[i]+127]++;
+        bins[v[i]+127]++;
+    }
+    for (int i = 0; i<256; i++) printf("%d, ", bins[i]);
+    printf("\n");
+    */
     
     // memory and file handles cleanup
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
+    printf("Sparse elements: %ld\n", SPARSECOUNT);
     return 0;
 }
 #endif
