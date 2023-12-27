@@ -52,6 +52,9 @@ Orange - KV cache, Blue - Weight
   <img src="assets/WeightCacheDist.png" alt="Probability Distribution">
 </p>
 
+### V-Cache Warping Issue Beyond Context Length
+When generating beyond context length, Value cache has to be shifted and rotated by -1, which is problematic when quantized in int8 as successive rotations in int8 warps the vector significantly. Unsure if this is fixable, potential solutions include keeping original vector, but might as well use float16 or quantize this in a group. Another thought is to somehow include rounding noise information like stochastic rounding to prevent successive accumulation of error. 
+
 ## Original llama2.c Documentation
 
 <p align="center">

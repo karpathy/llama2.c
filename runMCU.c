@@ -17,7 +17,7 @@
 #endif
 // ----------------------------------------------------------------------------
 // Globals
-float KV_CACHE_SCALE = 8.0f/127.0f; // magic number for now... QuantizeTensor errors
+float KV_CACHE_SCALE = 5.0f/127.0f; // magic number for now... QuantizeTensor errors
 size_t SPARSECOUNT = 0; // track how many horrifying matmuls we saved from activation
 // ----------------------------------------------------------------------------
 // Transformer model
@@ -170,7 +170,7 @@ void quantize(QuantizedTensor *qx, float* x, int n) {
     // calculate and write the quantized values
     for (int i = 0; i < n; i++) {
         float quant_value = x[i] / scale; // scale
-        int8_t quantized = (int8_t) round(quant_value); // round and clamp
+        int8_t quantized = (int8_t) roundf(quant_value); // round and clamp
         qx->q[i] = quantized;
     }
 }
@@ -422,8 +422,8 @@ float* forward(Transformer* transformer, int token, int pos) {
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
         
         for (int i = 0; i < kv_dim; i++) {
-            int k = round(s->k[i] / KV_CACHE_SCALE);
-            int v = round(s->v[i] / KV_CACHE_SCALE);
+            int k = roundf(s->k[i] / KV_CACHE_SCALE);
+            int v = roundf(s->v[i] / KV_CACHE_SCALE);
             if (k > 127) k = 127;
             if (v > 127) v = 127;
             if (k < -128) k = -128;
@@ -731,21 +731,42 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int next;        // will store the next token in the sequence
     int token = 1;   // kick off with the BOS(=1)
     int pos = 0;     // position in the sequence
+
+    int kv_dim = (transformer->config.dim * transformer->config.n_kv_heads) / transformer->config.n_heads;
+    int dim = transformer->config.dim;
+    int head_size = dim / transformer->config.n_heads;
+
     while (pos < steps) {
         // shift key/value cache to the left by 1 if exceed max context
         ///*
         float* logits;
-        if (pos == transformer->config.seq_len) printf("\n=====\n");
         if (pos >= transformer->config.seq_len) { 
             //printf("\n");
             // (layer, seq_len, dim)
-            int kv_dim = (transformer->config.dim * transformer->config.n_kv_heads) / transformer->config.n_heads;
+            
             for (int l = 0; l < transformer->config.n_layers; l++) {
                 int loff = l * transformer->config.seq_len * kv_dim;
                 for (int j = 0; j < transformer->config.seq_len-1; j++) {
+                    // shift & rotate k, simply shift v
+                    // RoPE relative positional encoding: complex-valued rotate q and k in each head
+                    int8_t* from = transformer->state.key_cache + loff + (j+1)*kv_dim; 
+                    int8_t* to = transformer->state.value_cache + loff + j*kv_dim;
+                    for (int i = 0; i < kv_dim; i+=2) {
+                        int head_dim = i % head_size;
+                        float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+                        float val = -1 * freq; // set pos = -1 to rotate backwards by 1
+                        float fcr = cosf(val);
+                        float fci = sinf(val);
+                        float v0 = from[i];
+                        float v1 = from[i+1];
+                        to[i]   = roundf((float)from[i] * fcr - (float)from[i+1] * fci);
+                        to[i+1] = roundf((float)from[i] * fci + (float)from[i+1] * fcr);
+                    }
+                    /*
                     memcpy( transformer->state.key_cache + loff + j*kv_dim, 
                             transformer->state.key_cache + loff + (j+1)*kv_dim, 
                             kv_dim * sizeof(int8_t));
+                    */
                     memcpy( transformer->state.value_cache + loff + j*kv_dim, 
                             transformer->state.value_cache + loff + (j+1)*kv_dim, 
                             kv_dim * sizeof(int8_t));
