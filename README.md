@@ -44,8 +44,18 @@ Below are activation density measured across 4 layers and sample of 32K tokens. 
 | --- | --- | --- |
 | 27% | 32% | 23% |
 
+### Sparsity Structure
+<p align="center">
+  <img src="assets/SparseDiagram.png" alt="Sparse Diagram">
+</p>
 
-## llama2.c
+### Weight & KV Cache Distribution
+Orange - KV cache, Blue - Weight 
+<p align="center">
+  <img src="assets/WeightCacheDist.png" alt="Probability Distribution">
+</p>
+
+## Original llama2.c Documentation
 
 <p align="center">
   <img src="assets/llama_cute.jpg" width="300" height="300" alt="Cute Llama">
