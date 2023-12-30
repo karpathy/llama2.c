@@ -237,6 +237,7 @@ class Transformer(nn.Module):
 
         # Initialize attribute for the loss of the last forward call. This will be set if the forward is called with a targets tensor.
         self.last_loss = None
+        self.flops_per_fwdbwd = None
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -298,12 +299,13 @@ class Transformer(nn.Module):
         """ estimate model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS """
         # first estimate the number of flops we do per iteration.
         # see PaLM paper Appendix B as ref: https://arxiv.org/abs/2204.02311
-        N = sum(p.numel() for p in self.parameters())
-        cfg = self.params
-        L, H, Q, T = cfg.n_layers, cfg.n_heads, cfg.dim//cfg.n_heads, cfg.max_seq_len
-        flops_per_token = 6*N + 12*L*H*Q*T
-        flops_per_fwdbwd = flops_per_token * T
-        flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
+        if self.flops_per_fwdbwd is None:
+            N = sum(p.numel() for p in self.parameters())
+            cfg = self.params
+            L, H, Q, T = cfg.n_layers, cfg.n_heads, cfg.dim//cfg.n_heads, cfg.max_seq_len
+            flops_per_token = 6*N + 12*L*H*Q*T
+            self.flops_per_fwdbwd = flops_per_token * T
+        flops_per_iter = self.flops_per_fwdbwd * fwdbwd_per_iter
         # express our flops throughput as ratio of A100 bfloat16 peak flops
         flops_achieved = flops_per_iter * (1.0/dt) # per second
         flops_promised = 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
