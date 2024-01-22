@@ -386,6 +386,8 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2.ml](https://github.com/jackpeck/llama2.ml) by @[jackpeck](https://github.com/jackpeck): an OCaml port of this project
 - [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @[trholding](https://github.com/trholding): Standalone, Bootable & Portable Binary Llama 2
 - [llama2.c-zh - Bilingual Chinese and English](https://github.com/chenyangMl/llama2.c-zh) by @[chenyangMl](https://github.com/chenyangMl): Expand tokenizer to support training and inference in both Chinese and English
+- Haskell
+  - [llama2.hs](https://github.com/chris-ch/llama2.hs) by @[chris-ch](https://github.com/chris-ch): an Haskell port of this project
 
 ## unsorted todos
 
