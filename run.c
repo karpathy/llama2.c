@@ -89,10 +89,11 @@ void malloc_run_state(RunState* s, Config* p) {
     s->logits = calloc(p->vocab_size, sizeof(float));
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
-        fprintf(stderr, "malloc failed!\n");
-        exit(EXIT_FAILURE);
+        || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
+        free_run_state(s); // Free any allocated memory
+        return 1; // Return error code
     }
+    return 0; // Success
 }
 
 void free_run_state(RunState* s) {
