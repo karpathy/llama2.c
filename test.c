@@ -1,6 +1,8 @@
 #define TESTING
 #include "run.c"
 
+#include <riscv_vector.h>
+
 void assert_eq(int a, int b) {
     if (a != b) {
         printf("Assertion failed: %d != %d\n", a, b);
@@ -78,7 +80,18 @@ void test_prompt_encodings() {
     free_tokenizer(&tokenizer);
 }
 
+// source: https://github.com/opencv/opencv/blob/ae21368eb9b66b448effc60247be8d83056ade80/cmake/checks/cpu_rvv.cpp
+int test_rvv()
+{
+    const float src[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    unsigned long ptr[2] = {0x0908060504020100, 0xFFFFFFFF0E0D0C0A};
+    vuint8m1_t a = vreinterpret_v_u64m1_u8m1(vle64_v_u64m1(ptr, 2));
+    vfloat32m1_t val = vle32_v_f32m1((const float*)(src), 4);
+    return (int)vfmv_f_s_f32m1_f32(val);
+}
+
 int main(int argc, char *argv[]) {
     test_prompt_encodings();
+    test_rvv();
     printf("ALL OK\n");
 }
