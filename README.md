@@ -384,6 +384,8 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2.🔥](https://github.com/tairov/llama2.mojo) by @[tairov](https://github.com/tairov): pure Mojo port of this project
 - OCaml
   - [llama2.ml](https://github.com/jackpeck/llama2.ml) by @[jackpeck](https://github.com/jackpeck): an OCaml port of this project
+- Hare
+  - [llama2.ha](https://sr.ht/~dvshkn/llama2.ha) by @[dvshkn](https://git.sr.ht/~dvshkn): a Hare port of this project
 - [llama2.c - Llama 2 Everywhere](https://github.com/trholding/llama2.c) by @[trholding](https://github.com/trholding): Standalone, Bootable & Portable Binary Llama 2
 - [llama2.c-zh - Bilingual Chinese and English](https://github.com/chenyangMl/llama2.c-zh) by @[chenyangMl](https://github.com/chenyangMl): Expand tokenizer to support training and inference in both Chinese and English
 
