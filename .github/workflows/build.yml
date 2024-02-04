@@ -1,6 +1,6 @@
 name: Test on RISC-V
 
-on: [pull_request]
+on: [workflow_dispatch, pull_request]
 
 jobs:
   build:
