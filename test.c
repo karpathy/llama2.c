@@ -91,7 +91,8 @@ int test_rvv()
 }
 
 
-void test_generate_pikin(char* prompt, char* checkpoint_path, float temperature, int steps, float topp, const char* expected){
+
+void test_generate(char* prompt, char* checkpoint_path, float temperature, int steps, float topp, const char* expected){
     char *tokenizer_path = "tokenizer.bin";
     unsigned long long rng_seed = 124; // seed rng with time by default
 
@@ -150,6 +151,13 @@ int main(int argc, char *argv[]) {
 \"Well, the sun is setting and it will be a beautiful night,\" replied her mom.\n\
 The little girl looked up at the sky and smiled. \"I like it when the sun sets,\" she said.\n\
 \"I know, sweetie. The";
-    test_generate_pikin("That was the darkest day of the year.", "/tmp/stories15M.bin", 0.7f, 100, 0.9f, expected);
+    test_generate("That was the darkest day of the year.", "/tmp/stories15M.bin", 0.7f, 100, 0.9f, expected);
+
+const char* expected2="It was dark and cold around. The little girl was feeling scared. She looked around and saw a big, dark room. She wanted to go in, but she was too scared.\n\
+Suddenly, she heard a noise. It was coming from the corner of the room. She slowly walked over and saw a big, black cat. It was meowing and seemed to be trying to get her attention.\n\
+The little girl was still scared, but she was also curious. She";
+
+    test_generate ("It was dark and cold around.", "/tmp/stories110M.bin", 0.3f, 103, 0.6f, expected2);
     printf("ALL OK\n");
+
 }
