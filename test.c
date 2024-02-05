@@ -91,39 +91,11 @@ int test_rvv()
 }
 
 
-void test_generate_pikin(int argc, char *argv[]){
-    // default parameters
-    char *checkpoint_path = NULL;  // e.g. out/model.bin
+void test_generate_pikin(char* prompt, char* checkpoint_path, float temperature, int steps, float topp, const char* expected){
     char *tokenizer_path = "tokenizer.bin";
-    float temperature = 1.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-    float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = 256;            // number of steps to run for
-    char *prompt = NULL;        // prompt string
-    unsigned long long rng_seed = 0; // seed rng with time by default
-    char *mode = "generate";    // generate|chat
-    char *system_prompt = NULL; // the (optional) system prompt to use in chat mode
-
-    // poor man's C argparse so we can override the defaults above from the command line
-    if (argc >= 2) { checkpoint_path = argv[1]; } //else { error_usage(); }
-    for (int i = 2; i < argc; i+=2) {
-        // do some basic validation
-        if (i + 1 >= argc) //{ error_usage(); } // must have arg after flag
-        if (argv[i][0] != '-') //{ error_usage(); } // must start with dash
-        if (strlen(argv[i]) != 2) //{ error_usage(); } // must be -x (one dash, one letter)
-        // read in the args
-        if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
-        else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
-        else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
-        else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
-        else if (argv[i][1] == 'i') { prompt = argv[i + 1]; }
-        else if (argv[i][1] == 'z') { tokenizer_path = argv[i + 1]; }
-        else if (argv[i][1] == 'm') { mode = argv[i + 1]; }
-        else if (argv[i][1] == 'y') { system_prompt = argv[i + 1]; }
-        //else { error_usage(); }
-    }
+    unsigned long long rng_seed = 124; // seed rng with time by default
 
     // parameter validation/overrides
-    if (rng_seed <= 0) rng_seed = (unsigned int)time(NULL);
     if (temperature < 0.0) temperature = 0.0;
     if (topp < 0.0 || 1.0 < topp) topp = 0.9;
     if (steps < 0) steps = 0;
@@ -142,26 +114,42 @@ void test_generate_pikin(int argc, char *argv[]){
     build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
 
     // run!
-    if (strcmp(mode, "generate") == 0) {
-        generate(&transformer, &tokenizer, &sampler, prompt, steps);
-    } else if (strcmp(mode, "chat") == 0) {
-        chat(&transformer, &tokenizer, &sampler, prompt, system_prompt, steps);
-    } else {
-        fprintf(stderr, "unknown mode: %s\n", mode);
-        //error_usage();
-    }
+
+    freopen("output.txt", "wt", stdout);  // redirect output
+    generate(&transformer, &tokenizer, &sampler, prompt, steps);
+    freopen("/dev/tty", "w", stdout);  // resume
 
     // memory and file handles cleanup
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
 
+    // Check
+    FILE* f = fopen("output.txt", "rt");
+    fseek(f, 0, SEEK_END);
+    const size_t sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char output[sz];
+    fread(output, sizeof(char), sz, f);
+    output[sz - 1] = '\0';
+    fclose(f);
+
+    int res = strcmp(expected, output);
+    if (res != 0) {
+        printf("Expected: %s\n\nGenerated: %s\n", expected, output);
+    }
+    assert_eq(res, 0);
 }
 
 int main(int argc, char *argv[]) {
     test_prompt_encodings();
     test_rvv();
-    printf("ALL OK\n");
 
-    test_generate_pikin(argc, argv);
+    const char* expected = "That was the darkest day of the year. The stars were shining bright in the sky and the birds were singing.\n\
+\"Mommy, why is it so dark?\" asked the little girl, pointing out her finger.\n\
+\"Well, the sun is setting and it will be a beautiful night,\" replied her mom.\n\
+The little girl looked up at the sky and smiled. \"I like it when the sun sets,\" she said.\n\
+\"I know, sweetie. The";
+    test_generate_pikin("That was the darkest day of the year.", "/tmp/stories15M.bin", 0.7f, 100, 0.9f, expected);
+    printf("ALL OK\n");
 }
