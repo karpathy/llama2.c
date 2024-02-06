@@ -17,6 +17,7 @@ import sentencepiece as spm
 import torch
 import torch.distributed as dist
 from tqdm import tqdm
+import zipfile
 
 from tokenizer import Tokenizer
 
@@ -44,10 +45,10 @@ def download():
 
     # download the TinyStories dataset, unless it's already downloaded
     data_url = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStories_all_data.tar.gz"
-    data_filename = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data.tar.gz")
+    data_filename = os.path.join(DATA_CACHE_DIR, "first_data_utf.zip")
     if not os.path.exists(data_filename):
         print(f"Downloading {data_url} to {data_filename}...")
-        download_file(data_url, data_filename)
+        #download_file(data_url, data_filename)
     else:
         print(f"{data_filename} already exists, skipping download...")
 
@@ -56,7 +57,8 @@ def download():
     if not os.path.exists(data_dir):
         os.makedirs(data_dir, exist_ok=True)
         print(f"Unpacking {data_filename}...")
-        os.system(f"tar -xzf {data_filename} -C {data_dir}")
+        with zipfile.ZipFile(data_filename, 'r') as zip_ref:
+            zip_ref.extractall(data_dir)
     else:
         print(f"{data_dir} already exists, skipping unpacking...")
 
