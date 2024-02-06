@@ -86,14 +86,15 @@ def train_vocab(vocab_size):
     tiny_file = os.path.join(DATA_CACHE_DIR, "tiny.txt")
     data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
     shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+    random.shuffle(shard_filenames)
 
     print(f"Writing temporary file {tiny_file} with {num_shards} shards...")
     with open(tiny_file, "w", encoding="utf-8") as of:
         for shard in tqdm(shard_filenames[:num_shards]):
-            with open(shard, "r") as f:
+            with open(shard, "r", encoding="utf-8") as f: #EDITED
                 data = json.load(f)
             for example in data:
-                text = example["story"]
+                text = example["text"]
                 text = text.strip()
                 of.write(text + "\n")
     print(f"Size is: {os.path.getsize(tiny_file) / 1024 / 1024:.2f} MB")
@@ -128,11 +129,11 @@ def process_shard(args, vocab_size):
     shard_id, shard = args
     tokenizer_model = get_tokenizer_model_path(vocab_size)
     enc = Tokenizer(tokenizer_model)
-    with open(shard, "r") as f:
+    with open(shard, "r", encoding="utf8") as f: #EDITED
         data = json.load(f)
     all_tokens = []
     for example in tqdm(data, position=shard_id):
-        text = example["story"]
+        text = example["text"]
         text = text.strip()  # get rid of leading/trailing whitespace
         tokens = enc.encode(text, bos=True, eos=False)  # encode the text, use BOS
         all_tokens.extend(tokens)
