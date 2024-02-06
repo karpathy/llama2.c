@@ -93,6 +93,7 @@ int test_rvv()
 
 
 void test_generate(char* prompt, char* checkpoint_path, float temperature, int steps, float topp, const char* expected){
+    long start_g = time_in_ms();
     char *tokenizer_path = "tokenizer.bin";
     unsigned long long rng_seed = 124; // seed rng with time by default
 
@@ -120,11 +121,16 @@ void test_generate(char* prompt, char* checkpoint_path, float temperature, int s
     generate(&transformer, &tokenizer, &sampler, prompt, steps);
     freopen("/dev/tty", "w", stdout);  // resume
 
+        
+    long start4 = time_in_ms();
     // memory and file handles cleanup
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
+    long end4 = time_in_ms();
+    fprintf(stderr, "memory and file handles cleanup ms: %f\n", (double)(end4-start4));
 
+    long start5 = time_in_ms();
     // Check
     FILE* f = fopen("output.txt", "rt");
     fseek(f, 0, SEEK_END);
@@ -134,12 +140,17 @@ void test_generate(char* prompt, char* checkpoint_path, float temperature, int s
     fread(output, sizeof(char), sz, f);
     output[sz - 1] = '\0';
     fclose(f);
+    long end5 = time_in_ms();
+    fprintf(stderr, "check ms: %f\n", (double)(end5-start5));
 
     int res = strcmp(expected, output);
     if (res != 0) {
         printf("Expected: %s\n\nGenerated: %s\n", expected, output);
     }
     assert_eq(res, 0);
+
+    long end_g = time_in_ms();
+    fprintf(stderr, "time ms: %f\n\n", (double)(end_g-start_g));
 }
 
 int main(int argc, char *argv[]) {
@@ -151,13 +162,13 @@ int main(int argc, char *argv[]) {
 \"Well, the sun is setting and it will be a beautiful night,\" replied her mom.\n\
 The little girl looked up at the sky and smiled. \"I like it when the sun sets,\" she said.\n\
 \"I know, sweetie. The";
-    test_generate("That was the darkest day of the year.", "/tmp/stories15M.bin", 0.7f, 100, 0.9f, expected);
+    test_generate("That was the darkest day of the year.", "stories15M.bin", 0.7f, 100, 0.9f, expected);
 
 const char* expected2="It was dark and cold around. The little girl was feeling scared. She looked around and saw a big, dark room. She wanted to go in, but she was too scared.\n\
 Suddenly, she heard a noise. It was coming from the corner of the room. She slowly walked over and saw a big, black cat. It was meowing and seemed to be trying to get her attention.\n\
 The little girl was still scared, but she was also curious. She";
 
-    test_generate ("It was dark and cold around.", "/tmp/stories110M.bin", 0.3f, 103, 0.6f, expected2);
+    test_generate ("It was dark and cold around.", "stories110M.bin", 0.3f, 103, 0.6f, expected2);
     printf("ALL OK\n");
 
 }
