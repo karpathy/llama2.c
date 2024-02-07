@@ -13,13 +13,14 @@
     #include <unistd.h>
     #include <sys/mman.h>
 #endif
-#include <riscv-vector.h>
+#include <riscv_vector.h>
 // ----------------------------------------------------------------------------
 // Transformer model
 
 long time_m=0;
 int k_m=0;
 long time_in_ms();
+long time_m2=0;
 
 typedef struct {
     int dim; // transformer dimension
@@ -225,36 +226,37 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     int i;
     #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
-        // float *w_d[n];
-        // for (int j = 0; j < n; j++) w_d[j]=w[i][j];
-        // float val = 0.0f;
-        // //int vl=vsetvl_e32m4();
-        // int vl = 0;
-        // int vlm4 = vsetvlmax_e32m4();
-        // vfloat32m4_t v_a, v_b, v_mul;
-        // vfloat32m4_t v_add = vfadd_vv_f32m4 (0.0f, vlm4);
+        int vl = 0;
+        int vlm4 = vsetvlmax_e32m4();
+        vfloat32m4_t v_a, v_b, v_mul;
+        vfloat32m4_t v_add = vfmv_v_f_f32m4 (0.0f, vlm4);
+        int size=n;
+        float* x_v=x;
+        float* w_v=w;
 
-        // for (; size >vl; size-=vl){
-        //     vl = vsetvl_e32m4(size);
-        //     v_a = vle_v_f32m4 (w_d, vl);
-        //     v_b = vle_v_f32m4 (x, vl);
-        //     v_mul = vfmul_vv_f32m4 (v_a, v_b, vl);
-        //     v_add = vfadd_vv_32m4 (v_add, v_mul, vl);
-        //     x+=vl;   w_d+=vl;
-        // }
-        // w+=n;
-        // }
-
-        // vl=vsetvlmax_e32m1();
-        // vfloat32m1_t v_res = vfmv_v_f_f32m1(0.0, vl);
-        // v_res = vfredsum_vs_f32m4_f32m1(v_res, v_add, v_res, vlm4);
-        // vl=vsetvl_e32m4(d);
-        // v_a = vle_v_f32m4()
-        float val = 0.0f;
-        for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
+        for (; size >vl; size-=vl){
+            vl = vsetvl_e32m4(size);
+            v_a = vle32_v_f32m4 (x_v, vl);
+            v_b = vle32_v_f32m4 (w_v+i*n, vl);
+            v_mul = vfmul_vv_f32m4 (v_a, v_b, vl);
+            v_add = vfadd_vv_f32m4 (v_add, v_mul, vl);
+            x_v+=vl;   w_v+=vl;
         }
-        xout[i] = val;
+    vl=vsetvlmax_e32m1();
+    vfloat32m1_t v_res = vfmv_v_f_f32m1(0.0f, vl);
+    v_res = vfredosum_vs_f32m4_f32m1(v_res, v_add, v_res, vlm4);
+    vl=vsetvl_e32m4(size);
+    v_a = vle32_v_f32m4(x_v, vl);
+    v_b = vle32_v_f32m4(w_v+i*n, vl);
+    v_mul=vfmul_vv_f32m4 (v_a, v_b, vl);
+    v_res=vfredosum_vs_f32m4_f32m1 (v_res, v_mul, v_res, vl);
+
+    vse32_v_f32m1 (xout+i, v_res, 1);
+        // float val = 0.0f;
+        // for (int j = 0; j < n; j++) {
+        //     val += w[i * n + j] * x[j];
+        // }
+        // xout[i] = val;
     }
 }
 
@@ -321,6 +323,8 @@ float* forward(Transformer* transformer, int token, int pos) {
             }
         }
 
+
+        long start_mh = time_in_ms();  
         // multihead attention. iterate over all heads
         int h;
         #pragma omp parallel for private(h)
@@ -360,6 +364,8 @@ float* forward(Transformer* transformer, int token, int pos) {
                 }
             }
         }
+        long end_mh = time_in_ms();
+        time_m2+=(end_mh-start_mh);
 
         start_m1 = time_in_ms();          
         // final matmul to get the output of the attention
@@ -418,10 +424,8 @@ float* forward(Transformer* transformer, int token, int pos) {
     matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
     end_m1 = time_in_ms();
     time_m+=(end_m1-start_m1);
+    k_m+=1;    
 
-    k_m+=1;
-    fprintf(stderr, "matmul ms: %f %f\n", (double)(time_m)/(double)(k_m), (double)(time_m));
-    
     return s->logits;
 }
 // ----------------------------------------------------------------------------
@@ -847,6 +851,11 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
      long sum_el=0;
     for (size_t i=0; i<steps; i++) sum_el+=m[i];
     fprintf(stderr, "in generate: forward ms: %f\n", (double)(sum_el/steps));
+
+    fprintf(stderr, "matmul ms: %f\n", (double)(time_m)/(double)(k_m));
+    //fprintf(stderr, "matmul/forward %f %\n", (double)(time_m)/(double)(sum_el)*100);
+
+    fprintf (stderr, "multihead ms: %f\n", (double)(time_m2));
 
     printf("\n");
     long end3 = time_in_ms();
