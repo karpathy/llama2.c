@@ -133,7 +133,7 @@ int mprotect(void *addr, size_t len, int prot)
     uint32_t newProtect = __map_mmap_prot_page(prot);
     uint32_t oldProtect = 0;
     
-    if (VirtualProtect(addr, len, newProtect, &oldProtect))
+    if (VirtualProtect(addr, len, newProtect, (PDWORD)&oldProtect))
         return 0;
     
     errno =  __map_mman_error(GetLastError(), EPERM);

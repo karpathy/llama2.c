@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <time.h>
 #include <stdint.h>
+#include <io.h>
 
 #define ssize_t int64_t
 #define ftell _ftelli64
