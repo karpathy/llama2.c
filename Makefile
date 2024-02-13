@@ -8,6 +8,10 @@ run: run.c
 	$(CC) -O3 -o run run.c -lm
 	$(CC) -O3 -o runq runq.c -lm
 
+.PHONY: runbf16
+runbf16: runbf16.c
+	$(CC) -O3 -o runbf16 runbf16.c -lm -fopenmp
+
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
 rundebug: run.c
