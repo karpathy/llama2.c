@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch import nn
+from utilities import check_dependencies
 
 from model import ModelArgs, Transformer
 
@@ -542,6 +543,7 @@ def torchscript_export(model, filepath, zero_params=False, gzip_output=False):
 
 if __name__ == "__main__":
 
+    check_dependencies()
     parser = argparse.ArgumentParser()
     parser.add_argument("filepath", type=str, help="the output filepath")
     parser.add_argument("--version", default=0, type=int, help="the version to export with")
