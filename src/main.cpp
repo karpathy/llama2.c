@@ -130,6 +130,7 @@ int main(int argc, char **argv)
     llama2cpp::Llama2 llama2(config);
 
     // run!
+    int status = EXIT_SUCCESS;
     if (args.mode == "generate")
     {
         llama2.generate(args.prompt);
@@ -142,5 +143,7 @@ int main(int argc, char **argv)
     {
         std::cerr << "unknown mode" << args.mode << std::endl;
         ConsoleArgs::error_usage();
+        status = EXIT_FAILURE;
     }
+    return status;
 }

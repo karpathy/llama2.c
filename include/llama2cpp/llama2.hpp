@@ -2,10 +2,11 @@
 #define LLAMA2CPP_LLAMA2_HPP
 #include <string>
 #include <iostream>
+#include <memory>
 #include <llama2cpp/transformer.hpp>
 #include <llama2cpp/tokenizer.hpp>
 #include <llama2cpp/sampler.hpp>
-#include <memory>
+#include <llama2cpp/tensor.hpp>
 
 namespace llama2cpp
 {
@@ -54,7 +55,6 @@ namespace llama2cpp
             }
         }
     }
-    
 
     /**
      * @brief LLama2 app config.
@@ -83,7 +83,7 @@ namespace llama2cpp
             build_transformer(&m_transformer, m_config.checkpoint_path.c_str());
             if (m_config.steps == 0 || m_config.steps > m_transformer.config.seq_len)
                 m_config.steps = m_transformer.config.seq_len; // override to ~max length
-            build_tokenizer(&m_tokenizer, m_config.tokenizer_path, m_transformer.config.vocab_size);
+            m_tokenizer = std::make_unique<Tokenizer>(m_config.tokenizer_path, m_transformer.config.vocab_size);
             build_sampler(&m_sampler, m_transformer.config.vocab_size, m_config.temperature, m_config.topp, m_config.rng_seed);
         }
 
@@ -91,7 +91,7 @@ namespace llama2cpp
         {
             // memory and file handles cleanup
             free_sampler(&m_sampler);
-            free_tokenizer(&m_tokenizer);
+            // free_tokenizer(&m_tokenizer);
             free_transformer(&m_transformer);
         }
 
@@ -101,7 +101,7 @@ namespace llama2cpp
             // encode the (string) prompt into tokens sequence
             int num_prompt_tokens = 0;
             int *prompt_tokens = (int *)malloc((prompt.length() + 3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
-            encode(&m_tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+            m_tokenizer->encode(prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
             if (num_prompt_tokens < 1)
             {
                 std::cerr << "something is wrong, expected at least 1 prompt token" << std::endl;
@@ -139,7 +139,7 @@ namespace llama2cpp
                 }
 
                 // print the token as string, decode it with the Tokenizer object
-                char *piece = decode(&m_tokenizer, token, next);
+                char *piece = m_tokenizer->decode(token, next);
                 safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
                 // fflush(stdout);
                 std::cout << std::flush;
@@ -228,7 +228,7 @@ namespace llama2cpp
                         sprintf(rendered_prompt, user_template, user_prompt);
                     }
                     // encode the rendered prompt into tokens
-                    encode(&m_tokenizer, rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+                    m_tokenizer->encode(rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
                     user_idx = 0; // reset the user index
                     user_turn = 0;
                     std::cout << "Assistant: ";
@@ -259,7 +259,7 @@ namespace llama2cpp
                 if (user_idx >= num_prompt_tokens && next != 2)
                 {
                     // the Assistant is responding, so print its output
-                    char *piece = decode(&m_tokenizer, token, next);
+                    char *piece = m_tokenizer->decode(token, next);
                     safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
                     // fflush(stdout);
                     std::cout << std::flush;
@@ -276,7 +276,7 @@ namespace llama2cpp
     private:
         Llama2Config m_config;
         Transformer m_transformer;
-        Tokenizer m_tokenizer;
+        Tokenizer::ptr m_tokenizer = nullptr;
         Sampler m_sampler;
     };
 

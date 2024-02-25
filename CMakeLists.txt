@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 
+option(BUILD_EXAMPLES OFF "Build examples")
+
 include_directories(include)
 
 add_executable(
@@ -22,3 +24,8 @@ add_executable(
     include/llama2cpp/transformer.hpp
     include/llama2cpp/llama2.hpp
 )
+
+if(BUILD_TESTS)
+    enable_testing()
+    add_executable(test_tokenizer tests/test_tokenizer.cpp)
+endif()
