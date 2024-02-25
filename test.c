@@ -43,7 +43,8 @@ void test_prompt_encodings() {
     char *tokenizer_path = "tokenizer.bin";
     int vocab_size = 32000;
     Tokenizer tokenizer;
-    build_tokenizer(&tokenizer, tokenizer_path, vocab_size);
+    init_tokenizer(&tokenizer, vocab_size);
+    build_tokenizer(&tokenizer, tokenizer_path);
 
     // test 0 (test the empty string) (I added this as a simple case)
     char *prompt0 = "";
