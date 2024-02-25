@@ -147,5 +147,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "unknown mode: %s\n", mode);
         error_usage();
     }
+
+    // memory and file handles cleanup
+    llama2cpp::free_sampler(&sampler);
+    llama2cpp::free_tokenizer(&tokenizer);
+    llama2cpp::free_transformer(&transformer);
     return 0;
 }
