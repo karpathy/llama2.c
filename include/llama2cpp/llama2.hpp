@@ -1,9 +1,11 @@
 #ifndef LLAMA2CPP_LLAMA2_HPP
 #define LLAMA2CPP_LLAMA2_HPP
 #include <string>
+#include <iostream>
 #include <llama2cpp/transformer.hpp>
 #include <llama2cpp/tokenizer.hpp>
 #include <llama2cpp/sampler.hpp>
+#include <memory>
 
 namespace llama2cpp
 {
@@ -15,7 +17,7 @@ namespace llama2cpp
         clock_gettime(CLOCK_REALTIME, &time);
         return time.tv_sec * 1000 + time.tv_nsec / 1000000;
     }
-    
+
     void safe_printf(char *piece)
     {
         // piece might be a raw byte token, and we only want to print printable chars or whitespace
@@ -39,78 +41,6 @@ namespace llama2cpp
         printf("%s", piece);
     }
 
-    void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps)
-    {
-        char *empty_prompt = "";
-        if (prompt == NULL)
-        {
-            prompt = empty_prompt;
-        }
-
-        // encode the (string) prompt into tokens sequence
-        int num_prompt_tokens = 0;
-        int *prompt_tokens = (int *)malloc((strlen(prompt) + 3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
-        encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
-        if (num_prompt_tokens < 1)
-        {
-            fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
-            exit(EXIT_FAILURE);
-        }
-
-        // start the main loop
-        long start = 0;               // used to time our code, only initialized after first iteration
-        int next;                     // will store the next token in the sequence
-        int token = prompt_tokens[0]; // kick off with the first token in the prompt
-        int pos = 0;                  // position in the sequence
-        while (pos < steps)
-        {
-
-            // forward the transformer to get logits for the next token
-            float *logits = forward(transformer, token, pos);
-
-            // advance the state machine
-            if (pos < num_prompt_tokens - 1)
-            {
-                // if we are still processing the input prompt, force the next prompt token
-                next = prompt_tokens[pos + 1];
-            }
-            else
-            {
-                // otherwise sample the next token from the logits
-                next = sample(sampler, logits);
-            }
-            pos++;
-
-            // data-dependent terminating condition: the BOS (=1) token delimits sequences
-            if (next == 1)
-            {
-                break;
-            }
-
-            // print the token as string, decode it with the Tokenizer object
-            char *piece = decode(tokenizer, token, next);
-            safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-            fflush(stdout);
-            token = next;
-
-            // init the timer here because the first iteration can be slower
-            if (start == 0)
-            {
-                start = time_in_ms();
-            }
-        }
-        printf("\n");
-
-        // report achieved tok/s (pos-1 because the timer starts after first iteration)
-        if (pos > 1)
-        {
-            long end = time_in_ms();
-            fprintf(stderr, "achieved tok/s: %f\n", (pos - 1) / (double)(end - start) * 1000);
-        }
-
-        free(prompt_tokens);
-    }
-
     void read_stdin(const char *guide, char *buffer, size_t bufsize)
     {
         // read a line from stdin, up to but not including \n
@@ -124,119 +54,231 @@ namespace llama2cpp
             }
         }
     }
+    
 
-    // ----------------------------------------------------------------------------
-    // chat loop
-    // I manually inspected the tokens for a few chat conversations compared to
-    // python reference and that seemed ok, but this was not thoroughly tested and
-    // is not safely implemented, it's more a proof of concept atm.
-
-    void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
-              char *cli_user_prompt, char *cli_system_prompt, int steps)
+    /**
+     * @brief LLama2 app config.
+     *
+     */
+    struct Llama2Config
     {
+        // default parameters
+        std::string checkpoint_path = ""; // e.g. out/model.bin
+        std::string tokenizer_path = "../tokenizer.bin";
+        float temperature = 1.0f;        // 0.0 = greedy deterministic. 1.0 = original. don't set higher
+        float topp = 0.9f;               // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+        int steps = 256;                 // number of steps to run for
+        unsigned long long rng_seed = 0; // seed rng with time by default
+    };
 
-        // buffers for reading the system prompt and user prompt from stdin
-        // you'll notice they are soomewhat haphazardly and unsafely set atm
-        char system_prompt[512];
-        char user_prompt[512];
-        char rendered_prompt[1152];
-        int num_prompt_tokens = 0;
-        int *prompt_tokens = (int *)malloc(1152 * sizeof(int));
-        int user_idx;
-
-        // start the main loop
-        int8_t user_turn = 1; // user starts
-        int next;             // will store the next token in the sequence
-        int token;            // stores the current token to feed into the transformer
-        int prev_token;
-        int pos = 0; // position in the sequence
-        while (pos < steps)
+    /**
+     * @brief Llama2 App.
+     *
+     */
+    class Llama2
+    {
+    public:
+        Llama2(const Llama2Config &config) : m_config(config)
         {
+            build_transformer(&m_transformer, m_config.checkpoint_path.c_str());
+            if (m_config.steps == 0 || m_config.steps > m_transformer.config.seq_len)
+                m_config.steps = m_transformer.config.seq_len; // override to ~max length
+            build_tokenizer(&m_tokenizer, m_config.tokenizer_path, m_transformer.config.vocab_size);
+            build_sampler(&m_sampler, m_transformer.config.vocab_size, m_config.temperature, m_config.topp, m_config.rng_seed);
+        }
 
-            // when it is the user's turn to contribute tokens to the dialog...
-            if (user_turn)
+        ~Llama2()
+        {
+            // memory and file handles cleanup
+            free_sampler(&m_sampler);
+            free_tokenizer(&m_tokenizer);
+            free_transformer(&m_transformer);
+        }
+
+        void generate(const std::string &prompt)
+        {
+            // llama2cpp::generate(&m_transformer, &m_tokenizer, &m_sampler, prompt, m_config.steps);
+            // encode the (string) prompt into tokens sequence
+            int num_prompt_tokens = 0;
+            int *prompt_tokens = (int *)malloc((prompt.length() + 3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
+            encode(&m_tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+            if (num_prompt_tokens < 1)
             {
-                // get the (optional) system prompt at position 0
-                if (pos == 0)
+                std::cerr << "something is wrong, expected at least 1 prompt token" << std::endl;
+                exit(EXIT_FAILURE);
+            }
+
+            // start the main loop
+            long start = 0;               // used to time our code, only initialized after first iteration
+            int next;                     // will store the next token in the sequence
+            int token = prompt_tokens[0]; // kick off with the first token in the prompt
+            int pos = 0;                  // position in the sequence
+            while (pos < m_config.steps)
+            {
+
+                // forward the transformer to get logits for the next token
+                float *logits = forward(&m_transformer, token, pos);
+
+                // advance the state machine
+                if (pos < num_prompt_tokens - 1)
                 {
-                    // at position 0, the user can also contribute a system prompt
-                    if (cli_system_prompt == NULL)
+                    // if we are still processing the input prompt, force the next prompt token
+                    next = prompt_tokens[pos + 1];
+                }
+                else
+                {
+                    // otherwise sample the next token from the logits
+                    next = sample(&m_sampler, logits);
+                }
+                pos++;
+
+                // data-dependent terminating condition: the BOS (=1) token delimits sequences
+                if (next == 1)
+                {
+                    break;
+                }
+
+                // print the token as string, decode it with the Tokenizer object
+                char *piece = decode(&m_tokenizer, token, next);
+                safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+                // fflush(stdout);
+                std::cout << std::flush;
+                token = next;
+
+                // init the timer here because the first iteration can be slower
+                if (start == 0)
+                {
+                    start = time_in_ms();
+                }
+            }
+            std::cout << std::endl;
+
+            // report achieved tok/s (pos-1 because the timer starts after first iteration)
+            if (pos > 1)
+            {
+                long end = time_in_ms();
+                fprintf(stderr, "achieved tok/s: %f\n", (pos - 1) / (double)(end - start) * 1000);
+            }
+
+            free(prompt_tokens);
+        }
+
+        void chat(const std::string &cli_user_prompt, const std::string &cli_system_prompt)
+        {
+            // I manually inspected the tokens for a few chat conversations compared to
+            // python reference and that seemed ok, but this was not thoroughly tested and
+            // is not safely implemented, it's more a proof of concept atm.
+
+            // buffers for reading the system prompt and user prompt from stdin
+            // you'll notice they are soomewhat haphazardly and unsafely set atm
+            char system_prompt[512];
+            char user_prompt[512];
+            char rendered_prompt[1152];
+            int num_prompt_tokens = 0;
+            int *prompt_tokens = (int *)malloc(1152 * sizeof(int));
+            int user_idx;
+
+            // start the main loop
+            int8_t user_turn = 1; // user starts
+            int next;             // will store the next token in the sequence
+            int token;            // stores the current token to feed into the transformer
+            int prev_token;
+            int pos = 0; // position in the sequence
+            while (pos < m_config.steps)
+            {
+
+                // when it is the user's turn to contribute tokens to the dialog...
+                if (user_turn)
+                {
+                    // get the (optional) system prompt at position 0
+                    if (pos == 0)
                     {
-                        // system prompt was not passed in, attempt to get it from stdin
-                        read_stdin("Enter system prompt (optional): ", system_prompt, sizeof(system_prompt));
+                        // at position 0, the user can also contribute a system prompt
+                        if (cli_system_prompt.empty())
+                        {
+                            // system prompt was not passed in, attempt to get it from stdin
+                            read_stdin("Enter system prompt (optional): ", system_prompt, sizeof(system_prompt));
+                        }
+                        else
+                        {
+                            // system prompt was passed in, use it
+                            strcpy(system_prompt, cli_system_prompt.c_str());
+                        }
+                    }
+                    // get the user prompt
+                    if (pos == 0 && cli_user_prompt.empty())
+                    {
+                        // user prompt for position 0 was passed in, use it
+                        strcpy(user_prompt, cli_user_prompt.c_str());
                     }
                     else
                     {
-                        // system prompt was passed in, use it
-                        strcpy(system_prompt, cli_system_prompt);
+                        // otherwise get user prompt from stdin
+                        read_stdin("User: ", user_prompt, sizeof(user_prompt));
                     }
+                    // render user/system prompts into the Llama 2 Chat schema
+                    if (pos == 0 && system_prompt[0] != '\0')
+                    {
+                        char system_template[] = "[INST] <<SYS>>\n%s\n<</SYS>>\n\n%s [/INST]";
+                        sprintf(rendered_prompt, system_template, system_prompt, user_prompt);
+                    }
+                    else
+                    {
+                        char user_template[] = "[INST] %s [/INST]";
+                        sprintf(rendered_prompt, user_template, user_prompt);
+                    }
+                    // encode the rendered prompt into tokens
+                    encode(&m_tokenizer, rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+                    user_idx = 0; // reset the user index
+                    user_turn = 0;
+                    std::cout << "Assistant: ";
                 }
-                // get the user prompt
-                if (pos == 0 && cli_user_prompt != NULL)
+
+                // determine the token to pass into the transformer next
+                if (user_idx < num_prompt_tokens)
                 {
-                    // user prompt for position 0 was passed in, use it
-                    strcpy(user_prompt, cli_user_prompt);
+                    // if we are still processing the input prompt, force the next prompt token
+                    token = prompt_tokens[user_idx++];
                 }
                 else
                 {
-                    // otherwise get user prompt from stdin
-                    read_stdin("User: ", user_prompt, sizeof(user_prompt));
+                    // otherwise use the next token sampled from previous turn
+                    token = next;
                 }
-                // render user/system prompts into the Llama 2 Chat schema
-                if (pos == 0 && system_prompt[0] != '\0')
+                // EOS (=2) token ends the Assistant turn
+                if (token == 2)
                 {
-                    char system_template[] = "[INST] <<SYS>>\n%s\n<</SYS>>\n\n%s [/INST]";
-                    sprintf(rendered_prompt, system_template, system_prompt, user_prompt);
+                    user_turn = 1;
                 }
-                else
+
+                // forward the transformer to get logits for the next token
+                float *logits = forward(&m_transformer, token, pos);
+                next = sample(&m_sampler, logits);
+                pos++;
+
+                if (user_idx >= num_prompt_tokens && next != 2)
                 {
-                    char user_template[] = "[INST] %s [/INST]";
-                    sprintf(rendered_prompt, user_template, user_prompt);
+                    // the Assistant is responding, so print its output
+                    char *piece = decode(&m_tokenizer, token, next);
+                    safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+                    // fflush(stdout);
+                    std::cout << std::flush;
                 }
-                // encode the rendered prompt into tokens
-                encode(tokenizer, rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
-                user_idx = 0; // reset the user index
-                user_turn = 0;
-                printf("Assistant: ");
+                if (next == 2)
+                {
+                    std::cout << std::endl;
+                }
             }
-
-            // determine the token to pass into the transformer next
-            if (user_idx < num_prompt_tokens)
-            {
-                // if we are still processing the input prompt, force the next prompt token
-                token = prompt_tokens[user_idx++];
-            }
-            else
-            {
-                // otherwise use the next token sampled from previous turn
-                token = next;
-            }
-            // EOS (=2) token ends the Assistant turn
-            if (token == 2)
-            {
-                user_turn = 1;
-            }
-
-            // forward the transformer to get logits for the next token
-            float *logits = forward(transformer, token, pos);
-            next = sample(sampler, logits);
-            pos++;
-
-            if (user_idx >= num_prompt_tokens && next != 2)
-            {
-                // the Assistant is responding, so print its output
-                char *piece = decode(tokenizer, token, next);
-                safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-                fflush(stdout);
-            }
-            if (next == 2)
-            {
-                printf("\n");
-            }
+            std::cout << std::endl;
+            free(prompt_tokens);
         }
-        printf("\n");
-        free(prompt_tokens);
-    }
+
+    private:
+        Llama2Config m_config;
+        Transformer m_transformer;
+        Tokenizer m_tokenizer;
+        Sampler m_sampler;
+    };
 
 }
 #endif

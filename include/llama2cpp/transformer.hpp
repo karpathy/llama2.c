@@ -143,7 +143,7 @@ namespace llama2cpp
         ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
         w->wcls = shared_weights ? w->token_embedding_table : ptr;
     }
-    void read_checkpoint(char *checkpoint, Config *config, TransformerWeights *weights,
+    void read_checkpoint(const char *checkpoint, Config *config, TransformerWeights *weights,
                          int *fd, float **data, ssize_t *file_size)
     {
         FILE *file = fopen(checkpoint, "rb");
@@ -181,7 +181,7 @@ namespace llama2cpp
         memory_map_weights(weights, config, weights_ptr, shared_weights);
     }
 
-    void build_transformer(Transformer *t, char *checkpoint_path)
+    void build_transformer(Transformer *t, const char *checkpoint_path)
     {
         // read in the Config and the Weights from the checkpoint
         read_checkpoint(checkpoint_path, &t->config, &t->weights, &t->fd, &t->data, &t->file_size);

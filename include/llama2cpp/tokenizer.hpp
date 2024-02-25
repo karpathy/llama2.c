@@ -32,7 +32,7 @@ namespace llama2cpp
         return strcmp(((TokenIndex *)a)->str, ((TokenIndex *)b)->str);
     }
 
-    void build_tokenizer(Tokenizer *t, char *tokenizer_path, int vocab_size)
+    void build_tokenizer(Tokenizer *t, const std::string &tokenizer_path, int vocab_size)
     {
         // i should have written the vocab_size into the tokenizer file... sigh
         t->vocab_size = vocab_size;
@@ -46,10 +46,10 @@ namespace llama2cpp
             t->byte_pieces[i * 2 + 1] = '\0';
         }
         // read in the file
-        FILE *file = fopen(tokenizer_path, "rb");
+        FILE *file = fopen(tokenizer_path.c_str(), "rb");
         if (!file)
         {
-            fprintf(stderr, "couldn't load %s\n", tokenizer_path);
+            fprintf(stderr, "couldn't load %s\n", tokenizer_path.c_str());
             exit(EXIT_FAILURE);
         }
         if (fread(&t->max_token_length, sizeof(int), 1, file) != 1)
@@ -114,24 +114,24 @@ namespace llama2cpp
     {
         // efficiently find the perfect match for str in vocab, return its index or -1 if not found
         TokenIndex tok = {.str = str}; // acts as the key to search for
-        TokenIndex *res = (TokenIndex*)bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
+        TokenIndex *res = (TokenIndex *)bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
         return res != NULL ? res->id : -1;
     }
 
-    void encode(Tokenizer *t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens)
+    void encode(Tokenizer *t, std::string text, int8_t bos, int8_t eos, int *tokens, int *n_tokens)
     {
         // encode the string text (input) into an upper-bound preallocated tokens[] array
         // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
-        if (text == NULL)
-        {
-            fprintf(stderr, "cannot encode NULL text\n");
-            exit(EXIT_FAILURE);
-        }
+        // if (text == NULL)
+        // {
+        //     fprintf(stderr, "cannot encode NULL text\n");
+        //     exit(EXIT_FAILURE);
+        // }
 
         if (t->sorted_vocab == NULL)
         {
             // lazily malloc and sort the vocabulary
-            t->sorted_vocab = (TokenIndex*)malloc(t->vocab_size * sizeof(TokenIndex));
+            t->sorted_vocab = (TokenIndex *)malloc(t->vocab_size * sizeof(TokenIndex));
             for (int i = 0; i < t->vocab_size; i++)
             {
                 t->sorted_vocab[i].str = t->vocab[i];
@@ -142,7 +142,7 @@ namespace llama2cpp
 
         // create a temporary buffer that will store merge candidates of always two consecutive tokens
         // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_length is 1)
-        char *str_buffer = (char*)malloc((t->max_token_length * 2 + 1 + 2) * sizeof(char));
+        char *str_buffer = (char *)malloc((t->max_token_length * 2 + 1 + 2) * sizeof(char));
         size_t str_len = 0;
 
         // start at 0 tokens
@@ -171,7 +171,7 @@ namespace llama2cpp
         // U+10000	U+10FFFF    11110xxx	10xxxxxx	10xxxxxx	10xxxxxx
 
         // process the raw (UTF-8) byte sequence of the input string
-        for (char *c = text; *c != '\0'; c++)
+        for (auto c = text.begin(); c != text.end(); ++c)
         {
 
             // reset buffer if the current byte is ASCII or a leading byte
