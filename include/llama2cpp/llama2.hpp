@@ -84,14 +84,12 @@ namespace llama2cpp
             if (m_config.steps == 0 || m_config.steps > m_transformer.config.seq_len)
                 m_config.steps = m_transformer.config.seq_len; // override to ~max length
             m_tokenizer = std::make_unique<Tokenizer>(m_config.tokenizer_path, m_transformer.config.vocab_size);
-            build_sampler(&m_sampler, m_transformer.config.vocab_size, m_config.temperature, m_config.topp, m_config.rng_seed);
+            m_sampler = std::make_unique<Sampler>(m_transformer.config.vocab_size, m_config.temperature, m_config.topp, m_config.rng_seed);
         }
 
         ~Llama2()
         {
             // memory and file handles cleanup
-            free_sampler(&m_sampler);
-            // free_tokenizer(&m_tokenizer);
             free_transformer(&m_transformer);
         }
 
@@ -128,7 +126,7 @@ namespace llama2cpp
                 else
                 {
                     // otherwise sample the next token from the logits
-                    next = sample(&m_sampler, logits);
+                    next = m_sampler->sample(logits);
                 }
                 pos++;
 
@@ -253,7 +251,7 @@ namespace llama2cpp
 
                 // forward the transformer to get logits for the next token
                 float *logits = forward(&m_transformer, token, pos);
-                next = sample(&m_sampler, logits);
+                next = m_sampler->sample(logits);
                 pos++;
 
                 if (user_idx >= num_prompt_tokens && next != 2)
@@ -277,7 +275,7 @@ namespace llama2cpp
         Llama2Config m_config;
         Transformer m_transformer;
         Tokenizer::ptr m_tokenizer = nullptr;
-        Sampler m_sampler;
+        Sampler::ptr m_sampler = nullptr;
     };
 
 }

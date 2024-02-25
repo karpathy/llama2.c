@@ -34,7 +34,9 @@ namespace llama2cpp
     /**
      * @brief Tokenize prompt
      *
-     * @TODO: rewrite as class.
+     * @TODO: rewrite a generic tokenizer using tensors. 
+     * TokenizerBase -> SentencePieceTokenier.
+     * https://github.com/google/sentencepiece
      *
      */
     class Tokenizer
@@ -107,7 +109,7 @@ namespace llama2cpp
             // encode the string text (input) into an upper-bound preallocated tokens[] array
             // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
 
-            if (sorted_vocab == NULL)
+            if (sorted_vocab == nullptr)
             {
                 // lazily malloc and sort the vocabulary
                 sorted_vocab = (TokenIndex *)malloc(vocab_size * sizeof(TokenIndex));
@@ -259,9 +261,9 @@ namespace llama2cpp
         }
 
     private:
-        char **vocab;
-        float *vocab_scores;
-        TokenIndex *sorted_vocab;
+        char **vocab; // @TODO: convert this to 2D tensor.
+        float *vocab_scores; // @TODO convert this to 1D tensor.
+        TokenIndex *sorted_vocab; //@ TODO convert this to 1D tensor.
         int vocab_size;
         unsigned int max_token_length;
         unsigned char byte_pieces[BYTE_STR_SIZE]; // stores all single-byte strings
