@@ -739,6 +739,9 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         exit(EXIT_FAILURE);
     }
 
+    // Print length of tokenized prompt.
+    fprintf(stderr, "# of prompt tokens: %d\n", num_prompt_tokens);
+
     // start the main loop
     long start = 0;  // used to time our code, only initialized after first iteration
     long ctx = 0;    // used to time context-encoding
