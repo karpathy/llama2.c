@@ -78,19 +78,17 @@ namespace llama2cpp
     class Llama2
     {
     public:
-        Llama2(const Llama2Config &config) : m_config(config)
+        Llama2(const Llama2Config &config) : m_config(config), m_transformer(nullptr), m_tokenizer(nullptr), m_sampler(nullptr)
         {
-            build_transformer(&m_transformer, m_config.checkpoint_path.c_str());
-            if (m_config.steps == 0 || m_config.steps > m_transformer.config.seq_len)
-                m_config.steps = m_transformer.config.seq_len; // override to ~max length
-            m_tokenizer = std::make_unique<Tokenizer>(m_config.tokenizer_path, m_transformer.config.vocab_size);
-            m_sampler = std::make_unique<Sampler>(m_transformer.config.vocab_size, m_config.temperature, m_config.topp, m_config.rng_seed);
+            m_transformer = std::make_unique<Transformer>(m_config.checkpoint_path);
+            if (m_config.steps == 0 || m_config.steps > m_transformer->getConfig().seq_len)
+                m_config.steps = m_transformer->getConfig().seq_len; // override to ~max length
+            m_tokenizer = std::make_unique<Tokenizer>(m_config.tokenizer_path, m_transformer->getConfig().vocab_size);
+            m_sampler = std::make_unique<Sampler>(m_transformer->getConfig().vocab_size, m_config.temperature, m_config.topp, m_config.rng_seed);
         }
 
         ~Llama2()
         {
-            // memory and file handles cleanup
-            free_transformer(&m_transformer);
         }
 
         void generate(const std::string &prompt)
@@ -115,7 +113,7 @@ namespace llama2cpp
             {
 
                 // forward the transformer to get logits for the next token
-                float *logits = forward(&m_transformer, token, pos);
+                float *logits = m_transformer->forward(token, pos);
 
                 // advance the state machine
                 if (pos < num_prompt_tokens - 1)
@@ -139,7 +137,6 @@ namespace llama2cpp
                 // print the token as string, decode it with the Tokenizer object
                 char *piece = m_tokenizer->decode(token, next);
                 safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-                // fflush(stdout);
                 std::cout << std::flush;
                 token = next;
 
@@ -155,7 +152,8 @@ namespace llama2cpp
             if (pos > 1)
             {
                 long end = time_in_ms();
-                fprintf(stderr, "achieved tok/s: %f\n", (pos - 1) / (double)(end - start) * 1000);
+                float64_t token_rate = (pos - 1) / static_cast<float64_t>(end - start) * 1000;
+                std::cout << "acheived tok/s:" << token_rate << std::endl;
             }
 
             free(prompt_tokens);
@@ -250,7 +248,7 @@ namespace llama2cpp
                 }
 
                 // forward the transformer to get logits for the next token
-                float *logits = forward(&m_transformer, token, pos);
+                float *logits = m_transformer->forward(token, pos);
                 next = m_sampler->sample(logits);
                 pos++;
 
@@ -273,9 +271,9 @@ namespace llama2cpp
 
     private:
         Llama2Config m_config;
-        Transformer m_transformer;
-        Tokenizer::ptr m_tokenizer = nullptr;
-        Sampler::ptr m_sampler = nullptr;
+        Transformer::ptr m_transformer;
+        Tokenizer::ptr m_tokenizer;
+        Sampler::ptr m_sampler;
     };
 
 }
