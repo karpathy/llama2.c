@@ -68,7 +68,7 @@ def download():
     print(f"Number of shards: {len(shard_filenames)}")
     print(f"Example story:\n{data[0]}")
 
-def train_vocab(vocab_size):
+def train_vocab(vocab_size, dataset_dir):
     """
     Trains a custom sentencepiece tokenizer on the TinyStories dataset.
     The custom tokenizer files will be saved in DATA_CACHE_DIR/tok{N} directories,
@@ -77,20 +77,20 @@ def train_vocab(vocab_size):
     assert vocab_size > 0, "Vocab size must be positive"
 
     # output file prefix path for sentencepiece
-    prefix = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
+    prefix = os.path.join(DATA_CACHE_DIR, f"{dataset_dir}/tok{vocab_size}")
 
     # how many shards we'll use for vocab training, kept low for efficiency
     num_shards = 10
 
     # 1) export a large chunk of text as a single text file tiny.txt
-    tiny_file = os.path.join(DATA_CACHE_DIR, "tiny.txt")
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
+    tiny_file = os.path.join(DATA_CACHE_DIR, f'{dataset_dir}/tiny.txt')
+    data_dir = os.path.join(DATA_CACHE_DIR, dataset_dir)
     shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
 
     print(f"Writing temporary file {tiny_file} with {num_shards} shards...")
     with open(tiny_file, "w", encoding="utf-8") as of:
         for shard in tqdm(shard_filenames[:num_shards]):
-            with open(shard, "r") as f:
+            with open(shard, "r", encoding="UTF-8") as f:
                 data = json.load(f)
             for example in data:
                 text = example["story"]
@@ -124,11 +124,11 @@ def train_vocab(vocab_size):
     print("Done.")
 
 
-def process_shard(args, vocab_size):
+def process_shard(args, dataset_dir, vocab_size):
     shard_id, shard = args
-    tokenizer_model = get_tokenizer_model_path(vocab_size)
+    tokenizer_model = get_tokenizer_model_path(dataset_dir, vocab_size)
     enc = Tokenizer(tokenizer_model)
-    with open(shard, "r") as f:
+    with open(shard, "r", encoding="UTF-8") as f:
         data = json.load(f)
     all_tokens = []
     for example in tqdm(data, position=shard_id):
@@ -144,7 +144,7 @@ def process_shard(args, vocab_size):
         tokenized_filename = shard.replace(".json", ".bin")
     else:
         # save .bin files into a new tok{N} directory
-        bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
+        bin_dir = os.path.join(DATA_CACHE_DIR, dataset_dir)
         shard_basename = os.path.basename(shard)
         bin_basename = shard_basename.replace(".json", ".bin")
         tokenized_filename = os.path.join(bin_dir, bin_basename)
@@ -156,17 +156,17 @@ def process_shard(args, vocab_size):
     print(f"Saved {tokenized_filename}, average seqlen: {avg_seq_len:.2f}")
 
 
-def pretokenize(vocab_size):
+def pretokenize(vocab_size, dataset_dir):
     # iterate the shards and tokenize all of them one by one
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
+    data_dir = os.path.join(DATA_CACHE_DIR, dataset_dir)
     shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
     if vocab_size > 0:
         # .bin files will be saved into tok{N} directory, create it once here
-        bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
+        bin_dir = os.path.join(DATA_CACHE_DIR, dataset_dir)
         os.makedirs(bin_dir, exist_ok=True)
 
     # process all the shards in a process pool
-    fun = partial(process_shard, vocab_size=vocab_size)
+    fun = partial(process_shard, dataset_dir=dataset_dir, vocab_size=vocab_size)
     with ProcessPoolExecutor() as executor:
         executor.map(fun, enumerate(shard_filenames))
     print("Done.")
@@ -175,11 +175,12 @@ def pretokenize(vocab_size):
 class PretokDataset(torch.utils.data.IterableDataset):
     """Loads pretokenized examples from disk and yields them as PyTorch tensors."""
 
-    def __init__(self, split, max_seq_len, vocab_size, vocab_source):
+    def __init__(self, split, max_seq_len, vocab_size, dataset_dir, vocab_source):
         super().__init__()
         self.split = split
         self.max_seq_len = max_seq_len
         self.vocab_size = vocab_size
+        self.dataset_dir = dataset_dir
         self.vocab_source = vocab_source
 
     def __iter__(self):
@@ -198,7 +199,7 @@ class PretokDataset(torch.utils.data.IterableDataset):
             shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
         elif self.vocab_source == "custom":
             # the .bin files are in tok{N} directory
-            bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{self.vocab_size}")
+            bin_dir = os.path.join(DATA_CACHE_DIR, self.dataset_dir)
             shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
         # train/test split. let's use only shard 0 for test split, rest train
         shard_filenames = shard_filenames[1:] if self.split == "train" else shard_filenames[:1]
@@ -225,7 +226,7 @@ class PretokDataset(torch.utils.data.IterableDataset):
 # -----------------------------------------------------------------------------
 # public interface functions
 
-def get_tokenizer_model_path(vocab_size):
+def get_tokenizer_model_path(dataset_dir, vocab_size):
     """
     Returns path to the sentencepiece tokenizer model for a given vocab size
     vocab_size = 0 designates the default Llama 2 tokenizer, in that case
@@ -234,7 +235,7 @@ def get_tokenizer_model_path(vocab_size):
     if vocab_size == 0:
         return None
     else:
-        return os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}.model")
+        return os.path.join(DATA_CACHE_DIR, f"{dataset_dir}/tok{vocab_size}.model")
 
 class Task:
 
@@ -268,14 +269,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("stage", type=str, choices=["download", "pretokenize", "train_vocab"])
     parser.add_argument("--vocab_size", type=int, default=0, help="pretokenization vocab size. 0 = use Llama 2 tokenizer.")
+    parser.add_argument("--dataset_dir", type=str, default="TinyStories_all_data")
     args = parser.parse_args()
 
     # depending on the stage call the appropriate function
     if args.stage == "download":
         download()
     elif args.stage == "train_vocab":
-        train_vocab(vocab_size=args.vocab_size)
+        train_vocab(vocab_size=args.vocab_size, dataset_dir=args.dataset_dir)
     elif args.stage == "pretokenize":
-        pretokenize(vocab_size=args.vocab_size)
+        pretokenize(vocab_size=args.vocab_size, dataset_dir=args.dataset_dir)
     else:
         raise ValueError(f"Unknown stage {args.stage}")

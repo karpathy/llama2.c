@@ -71,6 +71,7 @@ warmup_iters = 1000  # how many steps to warm up for
 device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = "bfloat16"  # float32|bfloat16|float16
 compile = True  # use PyTorch 2.0 to compile the model to be faster
+dataset_dir = "TinyStories_all_data"
 # -----------------------------------------------------------------------------
 config_keys = [
     k
@@ -134,6 +135,7 @@ iter_batches = partial(
     batch_size=batch_size,
     max_seq_len=max_seq_len,
     vocab_size=vocab_size,
+    dataset_dir=dataset_dir,
     vocab_source=vocab_source,
     device=device,
     num_workers=0,
