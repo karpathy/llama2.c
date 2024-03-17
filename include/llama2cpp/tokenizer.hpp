@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <memory>
 #include <fstream>
+#include <algorithm>
 #include <llama2cpp/tensor.hpp>
 
 // ----------------------------------------------------------------------------
@@ -16,21 +17,33 @@ namespace llama2cpp
 
     struct TokenIndex
     {
-        char *str;
+        std::string str;
         int32_t id;
     };
 
-    int compare_tokens(const void *a, const void *b)
+    // int compare_tokens(const void *a, const void *b)
+    bool compare_tokens(const TokenIndex &a, const TokenIndex &b)
     {
-        return strcmp(((TokenIndex *)a)->str, ((TokenIndex *)b)->str);
+        // return strcmp(((TokenIndex *)a)->str, ((TokenIndex *)b)->str);
+        return a.str < b.str;
     }
 
-    int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size)
+    // int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size)
+    int str_lookup(const std::string &str, TokenIndex *sorted_vocab, int vocab_size)
     {
         // efficiently find the perfect match for str in vocab, return its index or -1 if not found
         TokenIndex tok = {.str = str}; // acts as the key to search for
-        TokenIndex *res = (TokenIndex *)bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
-        return res != NULL ? res->id : -1;
+        // TokenIndex *res = (TokenIndex *)bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
+        // return res != NULL ? res->id : -1;
+        auto it = std::lower_bound(sorted_vocab, sorted_vocab + vocab_size, tok, compare_tokens);
+
+        // If we didn't reach the end and the string matches
+        if (it != (sorted_vocab + vocab_size) && it->str == str)
+        {
+            return it->id;
+        }
+
+        return -1; // Not found
     }
 
     /**
@@ -93,38 +106,42 @@ namespace llama2cpp
                 free(vocab[i]);
             }
             free(vocab);
-            // free(vocab_scores);
-            free(sorted_vocab);
         }
 
-        void encode(std::string text, int8_t bos, int8_t eos, Tensor<CPU, int, 1> &tokens, int *n_tokens)
+        void encode(std::string text, const int8_t bos, const int8_t eos, Tensor<CPU, int, 1> &tokens, int &n_tokens)
         {
             // encode the string text (input) into an upper-bound preallocated tokens[] array
             // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
 
-            if (sorted_vocab == nullptr)
+            if (!sorted_vocab)
             {
                 // lazily malloc and sort the vocabulary
-                sorted_vocab = (TokenIndex *)malloc(vocab_size * sizeof(TokenIndex));
+                sorted_vocab = std::make_unique<TokenIndex[]>(vocab_size);
+                // Shape shape{static_cast<size_t>(vocab_size)};
+                // sorted_vocab.reShape(shape);
                 for (int i = 0; i < vocab_size; i++)
                 {
-                    sorted_vocab[i].str = vocab[i];
+                    sorted_vocab[i].str = std::string(vocab[i]);
                     sorted_vocab[i].id = i;
                 }
-                qsort(sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
+                std::sort(sorted_vocab.get(), sorted_vocab.get() + vocab_size, compare_tokens);
             }
 
             // create a temporary buffer that will store merge candidates of always two consecutive tokens
             // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_length is 1)
-            char *str_buffer = (char *)malloc((max_token_length * 2 + 1 + 2) * sizeof(char));
+            std::string str_buffer;
+            str_buffer.resize(max_token_length * 2 + 1 + 2);
+            // char *str_buffer = (char *)malloc((max_token_length * 2 + 1 + 2) * sizeof(char));
             size_t str_len = 0;
 
             // start at 0 tokens
-            *n_tokens = 0;
+            n_tokens = 0;
 
             // add optional BOS (=1) token, if desired
             if (bos)
-                tokens[(*n_tokens)++] = 1;
+            {
+                tokens[(n_tokens)++] = 1;
+            }
 
             // add_dummy_prefix is true by default
             // so prepend a dummy prefix token to the input string, but only if text != ""
@@ -132,8 +149,8 @@ namespace llama2cpp
             // energy to read more of the sentencepiece code to figure out what it's doing
             if (text[0] != '\0')
             {
-                int dummy_prefix = str_lookup(" ", sorted_vocab, vocab_size);
-                tokens[(*n_tokens)++] = dummy_prefix;
+                int dummy_prefix = str_lookup(" ", sorted_vocab.get(), vocab_size);
+                tokens[(n_tokens)++] = dummy_prefix;
             }
 
             // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
@@ -172,12 +189,12 @@ namespace llama2cpp
                 }
 
                 // ok c+1 is not a continuation byte, so we've read in a full codepoint
-                int id = str_lookup(str_buffer, sorted_vocab, vocab_size);
+                int id = str_lookup(str_buffer, sorted_vocab.get(), vocab_size);
 
                 if (id != -1)
                 {
                     // we found this codepoint in vocab, add it as a token
-                    tokens[(*n_tokens)++] = id;
+                    tokens[(n_tokens)++] = id;
                 }
                 else
                 {
@@ -186,24 +203,24 @@ namespace llama2cpp
                     // so the individual bytes only start at index 3
                     for (int i = 0; i < str_len; i++)
                     {
-                        tokens[(*n_tokens)++] = (unsigned char)str_buffer[i] + 3;
+                        tokens[(n_tokens)++] = static_cast<unsigned char>(str_buffer[i]) + 3;
                     }
                 }
                 str_len = 0; // protect against a sequence of stray UTF8 continuation bytes
             }
 
             // merge the best consecutive pair each iteration, according the scores in vocab_scores
-            while (1)
+            while (true)
             {
                 float best_score = -1e10;
                 int best_id = -1;
                 int best_idx = -1;
 
-                for (int i = 0; i < (*n_tokens - 1); i++)
+                for (int i = 0; i < (n_tokens - 1); i++)
                 {
                     // check if we can merge the pair (tokens[i], tokens[i+1])
-                    sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i + 1]]);
-                    int id = str_lookup(str_buffer, sorted_vocab, vocab_size);
+                    // sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i + 1]]);
+                    int id = str_lookup(str_buffer, sorted_vocab.get(), vocab_size);
                     if (id != -1 && vocab_scores[id] > best_score)
                     {
                         // this merge pair exists in vocab! record its score and position
@@ -221,18 +238,16 @@ namespace llama2cpp
                 // merge the consecutive pair (best_idx, best_idx+1) into new token best_id
                 tokens[best_idx] = best_id;
                 // delete token at position best_idx+1, shift the entire sequence back 1
-                for (int i = best_idx + 1; i < (*n_tokens - 1); i++)
+                for (int i = best_idx + 1; i < (n_tokens - 1); i++)
                 {
                     tokens[i] = tokens[i + 1];
                 }
-                (*n_tokens)--; // token length decreased
+                (n_tokens)--; // token length decreased
             }
 
             // add optional EOS (=2) token, if desired
             if (eos)
-                tokens[(*n_tokens)++] = 2;
-
-            free(str_buffer);
+                tokens[(n_tokens)++] = 2;
         }
 
         auto decode(int prev_token, int token) -> char *
@@ -255,8 +270,10 @@ namespace llama2cpp
 
     private:
         char **vocab; // @TODO: convert this to 2D tensor.
-        Tensor<CPU, float32_t, 1> vocab_scores;
-        TokenIndex *sorted_vocab; //@ TODO convert this to 1D tensor.
+        Tensor<CPU, float32_t, 1UL> vocab_scores;
+        // TokenIndex *sorted_vocab; //@ TODO convert this to 1D tensor.
+        std::unique_ptr<TokenIndex[]> sorted_vocab;
+        // Tensor<CPU, TokenIndex, 1UL> sorted_vocab;
         int vocab_size;
         unsigned int max_token_length;
         unsigned char byte_pieces[BYTE_STR_SIZE]; // stores all single-byte strings

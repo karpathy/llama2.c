@@ -32,6 +32,8 @@ add_executable(
     run_llama src/main.cpp
 )
 target_link_libraries(run_llama PRIVATE llama2cpp_core)
+target_compile_options(run_llama PRIVATE -fsanitize=address)
+target_link_options(run_llama PRIVATE -fsanitize=address)
 
 if(BUILD_TESTS)
     # enable_testing() # TODO add gtest

@@ -100,7 +100,7 @@ namespace llama2cpp
 
             Shape shape = {prompt.length() + 3};
             Tensor<CPU, int, 1> prompt_tokens(shape);
-            m_tokenizer->encode(prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+            m_tokenizer->encode(prompt, 1, 0, prompt_tokens, num_prompt_tokens);
 
             if (num_prompt_tokens < 1)
             {
@@ -228,7 +228,7 @@ namespace llama2cpp
                         sprintf(rendered_prompt, user_template, user_prompt);
                     }
                     // encode the rendered prompt into tokens
-                    m_tokenizer->encode(rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+                    m_tokenizer->encode(rendered_prompt, 1, 0, prompt_tokens, num_prompt_tokens);
                     user_idx = 0; // reset the user index
                     user_turn = 0;
                     std::cout << "Assistant: ";
