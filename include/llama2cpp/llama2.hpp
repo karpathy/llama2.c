@@ -8,6 +8,7 @@
 #include <llama2cpp/tokenizer.hpp>
 #include <llama2cpp/sampler.hpp>
 #include <llama2cpp/tensor.hpp>
+#include <llama2cpp/types.hpp>
 
 namespace llama2cpp
 {
@@ -66,9 +67,9 @@ namespace llama2cpp
         // default parameters
         std::string checkpoint_path = ""; // e.g. out/model.bin
         std::string tokenizer_path = "../tokenizer.bin";
-        float temperature = 1.0f;        // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-        float topp = 0.9f;               // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-        int steps = 256;                 // number of steps to run for
+        float32_t temperature = 1.0f;        // 0.0 = greedy deterministic. 1.0 = original. don't set higher
+        float32_t topp = 0.9f;               // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+        int32_t steps = 256;                 // number of steps to run for
         unsigned long long rng_seed = 0; // seed rng with time by default
     };
 
@@ -94,15 +95,13 @@ namespace llama2cpp
 
         void generate(const std::string &prompt)
         {
-            // llama2cpp::generate(&m_transformer, &m_tokenizer, &m_sampler, prompt, m_config.steps);
             // encode the (string) prompt into tokens sequence
             int num_prompt_tokens = 0;
-            // std::vector<int> prompt_tokens(prompt.length() + 3);
-            // CPU<int> cpu;
-            // Memory<CPU, int> prompt_tokens(prompt.length() + 3);
+
             Shape shape = {prompt.length() + 3};
             Tensor<CPU, int, 1> prompt_tokens(shape);
-            m_tokenizer->encode(prompt, 1, 0, prompt_tokens.data(), &num_prompt_tokens);
+            m_tokenizer->encode(prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+
             if (num_prompt_tokens < 1)
             {
                 std::cerr << "something is wrong, expected at least 1 prompt token" << std::endl;
@@ -161,7 +160,6 @@ namespace llama2cpp
                 std::cout << "acheived tok/s:" << token_rate << std::endl;
             }
 
-            // free(prompt_tokens);
         }
 
         void chat(const std::string &cli_user_prompt, const std::string &cli_system_prompt)
@@ -176,8 +174,8 @@ namespace llama2cpp
             char user_prompt[512];
             char rendered_prompt[1152];
             int num_prompt_tokens = 0;
-            // int *prompt_tokens = (int *)malloc(1152 * sizeof(int));
-            std::vector<int> prompt_tokens(1152);
+            Shape shape = {1152};
+            Tensor<CPU, int, 1> prompt_tokens(shape);
             int user_idx;
 
             // start the main loop
@@ -230,7 +228,7 @@ namespace llama2cpp
                         sprintf(rendered_prompt, user_template, user_prompt);
                     }
                     // encode the rendered prompt into tokens
-                    m_tokenizer->encode(rendered_prompt, 1, 0, prompt_tokens.data(), &num_prompt_tokens);
+                    m_tokenizer->encode(rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
                     user_idx = 0; // reset the user index
                     user_turn = 0;
                     std::cout << "Assistant: ";
@@ -271,7 +269,6 @@ namespace llama2cpp
                 }
             }
             std::cout << std::endl;
-            // free(prompt_tokens);
         }
 
     private:

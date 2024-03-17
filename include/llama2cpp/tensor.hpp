@@ -13,14 +13,7 @@ namespace llama2cpp
     public:
         Shape(std::initializer_list<size_t> shape) : m_shape(shape), m_stride(), m_num_dims(0)
         {
-            m_num_dims = m_shape.size();
-            m_stride.resize(m_num_dims, 1);
-            m_stride[m_num_dims - 1] = 1;
-            for (auto i = m_num_dims - 1; i >= 1; --i)
-            {
-                m_stride[i - 1] = m_shape[i] * m_stride[i];
-                std::cout << i << " " << m_shape[i] << " " << m_stride[i] << std::endl;
-            }
+            initialize();
         }
 
         template <typename... ARGS>
@@ -43,6 +36,16 @@ namespace llama2cpp
         }
 
     private:
+        void initialize()
+        {
+            m_num_dims = m_shape.size();
+            m_stride.resize(m_num_dims, 1);
+            m_stride[m_num_dims - 1] = 1;
+            for (auto i = m_num_dims - 1; i >= 1; --i)
+            {
+                m_stride[i - 1] = m_shape[i] * m_stride[i];
+            }
+        }
         std::vector<size_t> m_shape;
         std::vector<size_t> m_stride;
         size_t m_num_dims;

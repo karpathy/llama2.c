@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <memory>
+#include <llama2cpp/tensor.hpp>
 
 // ----------------------------------------------------------------------------
 // The Byte Pair Encoding (BPE) Tokenizer that translates strings <-> tokens
@@ -15,7 +16,7 @@ namespace llama2cpp
     struct TokenIndex
     {
         char *str;
-        int id;
+        int32_t id;
     };
 
     int compare_tokens(const void *a, const void *b)
@@ -104,7 +105,7 @@ namespace llama2cpp
             free(sorted_vocab);
         }
 
-        void encode(std::string text, int8_t bos, int8_t eos, int *tokens, int *n_tokens)
+        void encode(std::string text, int8_t bos, int8_t eos, Tensor<CPU, int, 1>& tokens, int *n_tokens)
         {
             // encode the string text (input) into an upper-bound preallocated tokens[] array
             // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
