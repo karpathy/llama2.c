@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <memory>
+#include <fstream>
 #include <llama2cpp/tensor.hpp>
 
 // ----------------------------------------------------------------------------
@@ -35,7 +36,7 @@ namespace llama2cpp
     /**
      * @brief Tokenize prompt
      *
-     * @TODO: rewrite a generic tokenizer using tensors. 
+     * @TODO: rewrite a generic tokenizer using tensors.
      * TokenizerBase -> SentencePieceTokenier.
      * https://github.com/google/sentencepiece
      *
@@ -47,51 +48,42 @@ namespace llama2cpp
 
         Tokenizer(const std::string &tokenizer_path, int vocab_size_)
         {
+            loadTokenizer(tokenizer_path, vocab_size_);
+        }
+
+        void loadTokenizer(const std::string &tokenizer_path, int vocab_size_)
+        {
             // i should have written the vocab_size into the tokenizer file... sigh
             vocab_size = vocab_size_;
             // malloc space to hold the scores and the strings
             vocab = (char **)malloc(vocab_size * sizeof(char *));
-            vocab_scores = (float *)malloc(vocab_size * sizeof(float));
+            // vocab_scores = (float *)malloc(vocab_size * sizeof(float));
+            Shape shape{static_cast<size_t>(vocab_size)};
+            vocab_scores.reShape(shape);
             sorted_vocab = NULL; // initialized lazily
             for (int i = 0; i < 256; i++)
             {
-                byte_pieces[i * 2] = (unsigned char)i;
+                byte_pieces[i * 2] = static_cast<unsigned char>(i);
                 byte_pieces[i * 2 + 1] = '\0';
             }
             // read in the file
-            FILE *file = fopen(tokenizer_path.c_str(), "rb");
+            std::ifstream file(tokenizer_path, std::ios::binary);
             if (!file)
             {
-                fprintf(stderr, "couldn't load %s\n", tokenizer_path.c_str());
+                std::cerr << "Error loading file:" << tokenizer_path << std::endl;
                 exit(EXIT_FAILURE);
             }
-            if (fread(&max_token_length, sizeof(int), 1, file) != 1)
-            {
-                fprintf(stderr, "failed read\n");
-                exit(EXIT_FAILURE);
-            }
-            int len;
+            file.read(reinterpret_cast<char *>(&max_token_length), sizeof(int));
+            int len = 0;
             for (int i = 0; i < vocab_size; i++)
             {
-                if (fread(vocab_scores + i, sizeof(float), 1, file) != 1)
-                {
-                    fprintf(stderr, "failed read\n");
-                    exit(EXIT_FAILURE);
-                }
-                if (fread(&len, sizeof(int), 1, file) != 1)
-                {
-                    fprintf(stderr, "failed read\n");
-                    exit(EXIT_FAILURE);
-                }
-                vocab[i] = (char *)malloc(len + 1);
-                if (fread(vocab[i], len, 1, file) != 1)
-                {
-                    fprintf(stderr, "failed read\n");
-                    exit(EXIT_FAILURE);
-                }
-                vocab[i][len] = '\0'; // add the string terminating token
+                file.read(reinterpret_cast<char *>(&vocab_scores[i]), sizeof(float));
+                file.read(reinterpret_cast<char *>(&len), sizeof(int));
+                vocab[i] = reinterpret_cast<char *>(malloc(len + 1));
+                file.read(vocab[i], len);
+                vocab[i][len] = '\0';
             }
-            fclose(file);
+            file.close();
         }
 
         ~Tokenizer()
@@ -101,11 +93,11 @@ namespace llama2cpp
                 free(vocab[i]);
             }
             free(vocab);
-            free(vocab_scores);
+            // free(vocab_scores);
             free(sorted_vocab);
         }
 
-        void encode(std::string text, int8_t bos, int8_t eos, Tensor<CPU, int, 1>& tokens, int *n_tokens)
+        void encode(std::string text, int8_t bos, int8_t eos, Tensor<CPU, int, 1> &tokens, int *n_tokens)
         {
             // encode the string text (input) into an upper-bound preallocated tokens[] array
             // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
@@ -263,7 +255,7 @@ namespace llama2cpp
 
     private:
         char **vocab; // @TODO: convert this to 2D tensor.
-        float *vocab_scores; // @TODO convert this to 1D tensor.
+        Tensor<CPU, float32_t, 1> vocab_scores;
         TokenIndex *sorted_vocab; //@ TODO convert this to 1D tensor.
         int vocab_size;
         unsigned int max_token_length;

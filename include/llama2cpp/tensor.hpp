@@ -11,6 +11,10 @@ namespace llama2cpp
     class Shape
     {
     public:
+        Shape() : m_shape(), m_stride(), m_num_dims(0)
+        {
+        }
+
         Shape(std::initializer_list<size_t> shape) : m_shape(shape), m_stride(), m_num_dims(0)
         {
             initialize();
@@ -64,6 +68,10 @@ namespace llama2cpp
         using unique_ptr = typename std::unique_ptr<Tensor<COMPUTE, T, DIM>>; ///< unique pointer type
         static constexpr const size_t dimension = DIM;                        ///< dimension of the tensor
 
+        Tensor() : m_shape(), m_memory()
+        {
+        }
+
         Tensor(Shape shape) : m_shape(shape), m_memory(shape.size())
         {
         }
@@ -104,6 +112,12 @@ namespace llama2cpp
         }
 
         auto data() -> pointer { return m_memory.data(); }
+
+        void reShape(const Shape &shape)
+        {
+            m_shape = shape;
+            m_memory.resize(shape.size());
+        }
 
     private:
         Shape m_shape;

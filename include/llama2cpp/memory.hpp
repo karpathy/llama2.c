@@ -16,9 +16,9 @@ namespace llama2cpp
     {
         using allocator_type = std::allocator<T>;
 
-        static void fill(const T *begin_, size_t num_elements, T val)
+        static void fill(T *begin_, size_t num_elements, T val)
         {
-            std::memset(begin_, val, num_elements * sizeof(T));
+            std::fill(begin_, begin_ + num_elements, val);
         }
 
         static void copy(const T *src_, T *dest_, size_t num_elements)
@@ -62,7 +62,7 @@ namespace llama2cpp
          * @brief Construct a new Memory object
          *
          */
-        Memory() : m_alloc() {}
+        Memory() : m_alloc(), m_data(nullptr), m_size(0), m_allocated_size(0) {}
 
         /**
          * @brief Construct a new Memory object
@@ -162,9 +162,15 @@ namespace llama2cpp
             if (num_elements > m_allocated_size)
             {
                 auto temp = m_alloc.allocate(num_elements);
-                COMPUTE<T>::copy(m_data, temp, m_size);
+                if (m_data != nullptr)
+                {
+                    COMPUTE<T>::copy(m_data, temp, m_size);
+                }
                 COMPUTE<T>::fill(temp + m_size, num_elements - m_size, val);
-                m_alloc.deallocate(m_data, m_allocated_size);
+                if (m_data != nullptr)
+                {
+                    m_alloc.deallocate(m_data, m_allocated_size);
+                }
                 m_data = temp;
                 m_allocated_size = num_elements;
                 m_size = num_elements;
