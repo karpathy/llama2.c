@@ -21,11 +21,11 @@ namespace llama2cpp
         return time.tv_sec * 1000 + time.tv_nsec / 1000000;
     }
 
-    void safe_printf(char *piece)
+    void safe_printf(const std::string &piece)
     {
         // piece might be a raw byte token, and we only want to print printable chars or whitespace
         // because some of the other bytes can be various control codes, backspace, etc.
-        if (piece == NULL)
+        if (piece.empty())
         {
             return;
         }
@@ -41,7 +41,8 @@ namespace llama2cpp
                 return; // bad byte, don't print it
             }
         }
-        printf("%s", piece);
+        // printf("%s", piece);
+        std::cout << piece;
     }
 
     void read_stdin(const char *guide, char *buffer, size_t bufsize)
@@ -67,9 +68,9 @@ namespace llama2cpp
         // default parameters
         std::string checkpoint_path = ""; // e.g. out/model.bin
         std::string tokenizer_path = "../tokenizer.bin";
-        float32_t temperature = 1.0f;        // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-        float32_t topp = 0.9f;               // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-        int32_t steps = 256;                 // number of steps to run for
+        float32_t temperature = 1.0f;    // 0.0 = greedy deterministic. 1.0 = original. don't set higher
+        float32_t topp = 0.9f;           // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+        int32_t steps = 256;             // number of steps to run for
         unsigned long long rng_seed = 0; // seed rng with time by default
     };
 
@@ -139,7 +140,7 @@ namespace llama2cpp
                 }
 
                 // print the token as string, decode it with the Tokenizer object
-                char *piece = m_tokenizer->decode(token, next);
+                auto piece = m_tokenizer->decode(token, next);
                 safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
                 std::cout << std::flush;
                 token = next;
@@ -159,7 +160,6 @@ namespace llama2cpp
                 float64_t token_rate = (pos - 1) / static_cast<float64_t>(end - start) * 1000;
                 std::cout << "acheived tok/s:" << token_rate << std::endl;
             }
-
         }
 
         void chat(const std::string &cli_user_prompt, const std::string &cli_system_prompt)
@@ -259,7 +259,7 @@ namespace llama2cpp
                 if (user_idx >= num_prompt_tokens && next != 2)
                 {
                     // the Assistant is responding, so print its output
-                    char *piece = m_tokenizer->decode(token, next);
+                    auto piece = m_tokenizer->decode(token, next);
                     safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
                     std::cout << std::flush;
                 }

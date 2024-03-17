@@ -36,6 +36,10 @@ namespace llama2cpp
 
         auto size() const -> const size_t
         {
+            if (m_shape.empty())
+            {
+                return 0;
+            }
             return m_shape[0] * m_stride[0];
         }
 
@@ -117,6 +121,16 @@ namespace llama2cpp
         {
             m_shape = shape;
             m_memory.resize(shape.size());
+        }
+
+        auto shape() const -> const Shape
+        {
+            return m_shape;
+        }
+
+        auto size() const -> const size_t
+        {
+            return m_shape.size();
         }
 
     private:
