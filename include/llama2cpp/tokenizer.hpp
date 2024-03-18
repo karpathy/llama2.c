@@ -42,6 +42,73 @@ namespace llama2cpp
         return TOKEN_NOT_FOUND;
     }
 
+    class Vocabulary
+    {
+    public:
+        using word_t = std::vector<char>;
+
+        Vocabulary() : m_vocab(), m_sorted_vocab(), vocab_size(0)
+        {
+        }
+
+        auto getPiece(const int token) -> char *
+        {
+            return m_vocab[token].data();
+        }
+
+        auto query(const std::string &query_str) -> int
+        {
+            return str_lookup(query_str, m_sorted_vocab.data(), vocab_size);
+        }
+
+        bool isInitialized()
+        {
+            return !m_sorted_vocab.empty();
+        }
+
+        void initialize()
+        {
+            m_sorted_vocab.resize(vocab_size);
+
+            for (int i = 0; i < vocab_size; i++)
+            {
+                m_sorted_vocab.at(i).str = std::string(m_vocab[i].data());
+                m_sorted_vocab.at(i).id = i;
+            }
+            std::sort(m_sorted_vocab.begin(), m_sorted_vocab.end());
+        }
+
+        void addVocab(const int index, const word_t &word)
+        {
+            m_vocab.at(index) = word;
+        }
+
+        void resize(const size_t size)
+        {
+            m_vocab.resize(size);
+            vocab_size = size;
+        }
+
+        auto size() const -> const size_t
+        {
+            return m_vocab.size();
+        }
+
+    private:
+        std::vector<std::vector<char>> m_vocab;
+        std::vector<TokenIndex> m_sorted_vocab;
+        int vocab_size;
+    };
+
+    class TokenizerBase
+    {
+    public:
+        TokenizerBase() = default;
+        ~TokenizerBase() = default;
+        virtual void encode(std::string text, const int8_t bos, const int8_t eos, Tensor<CPU, int, 1> &tokens, int &n_tokens) = 0;
+        virtual auto decode(int prev_token, int token) -> std::string = 0;
+    };
+
     /**
      * @brief Tokenize prompt
      *
@@ -50,12 +117,12 @@ namespace llama2cpp
      * https://github.com/google/sentencepiece
      *
      */
-    class Tokenizer
+    class Tokenizer : public TokenizerBase
     {
     public:
         using ptr = std::unique_ptr<Tokenizer>;
 
-        Tokenizer(const std::string &tokenizer_path, int vocab_size_)
+        Tokenizer(const std::string &tokenizer_path, int vocab_size_) : TokenizerBase()
         {
             loadTokenizer(tokenizer_path, vocab_size_);
         }
@@ -63,11 +130,10 @@ namespace llama2cpp
         void loadTokenizer(const std::string &tokenizer_path, int vocab_size_)
         {
             // i should have written the vocab_size into the tokenizer file... sigh
-            vocab_size = vocab_size_;
-            vocab.resize(vocab_size);
-            Shape shape{static_cast<size_t>(vocab_size)};
+
+            m_vocabulary.resize(vocab_size_);
+            Shape shape{static_cast<size_t>(vocab_size_)};
             vocab_scores.reShape(shape);
-            sorted_vocab.clear();
             for (int i = 0; i < 256; i++)
             {
                 byte_pieces[i * 2] = static_cast<unsigned char>(i);
@@ -82,13 +148,14 @@ namespace llama2cpp
             }
             file.read(reinterpret_cast<char *>(&max_token_length), sizeof(int));
             int len = 0;
-            for (int i = 0; i < vocab_size; i++)
+            for (int i = 0; i < vocab_size_; i++)
             {
                 file.read(reinterpret_cast<char *>(&vocab_scores[i]), sizeof(float));
                 file.read(reinterpret_cast<char *>(&len), sizeof(int));
-                vocab[i].resize(len + 1);
-                file.read(vocab[i].data(), len);
-                vocab[i][len] = '\0';
+                Vocabulary::word_t word(len + 1);
+                file.read(word.data(), len);
+                word[len] = '\0';
+                m_vocabulary.addVocab(i, word);
             }
             file.close();
         }
@@ -102,19 +169,9 @@ namespace llama2cpp
             // encode the string text (input) into an upper-bound preallocated tokens[] array
             // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
 
-            if (sorted_vocab.empty())
+            if (!m_vocabulary.isInitialized())
             {
-                // lazily malloc and sort the vocabulary
-                // sorted_vocab = std::make_unique<std::vector<TokenIndex>>();
-                sorted_vocab.resize(vocab_size);
-                // Shape shape{static_cast<size_t>(vocab_size)};
-                // sorted_vocab.reShape(shape);
-                for (int i = 0; i < vocab_size; i++)
-                {
-                    sorted_vocab.at(i).str = std::string(vocab[i].data());
-                    sorted_vocab.at(i).id = i;
-                }
-                std::sort(sorted_vocab.begin(), sorted_vocab.end());
+                m_vocabulary.initialize();
             }
 
             // create a temporary buffer that will store merge candidates of always two consecutive tokens
@@ -138,7 +195,7 @@ namespace llama2cpp
             // energy to read more of the sentencepiece code to figure out what it's doing
             if (text[0] != '\0')
             {
-                int dummy_prefix = str_lookup(" ", sorted_vocab.data(), vocab_size);
+                int dummy_prefix = m_vocabulary.query(" ");
                 tokens[(n_tokens)++] = dummy_prefix;
             }
 
@@ -178,7 +235,7 @@ namespace llama2cpp
                 }
 
                 // ok c+1 is not a continuation byte, so we've read in a full codepoint
-                int id = str_lookup(str_buffer, sorted_vocab.data(), vocab_size);
+                int id = m_vocabulary.query(str_buffer);
 
                 if (id != TOKEN_NOT_FOUND)
                 {
@@ -209,7 +266,7 @@ namespace llama2cpp
                 {
                     // check if we can merge the pair (tokens[i], tokens[i+1])
                     // sprintf(str_buffer, "%s%s", vocab[tokens[i]], vocab[tokens[i + 1]]);
-                    int id = str_lookup(str_buffer, sorted_vocab.data(), vocab_size);
+                    int id = m_vocabulary.query(str_buffer);
                     if (id != -1 && vocab_scores[id] > best_score)
                     {
                         // this merge pair exists in vocab! record its score and position
@@ -243,7 +300,7 @@ namespace llama2cpp
 
         auto decode(int prev_token, int token) -> std::string
         {
-            char *piece = vocab[token].data();
+            char *piece = m_vocabulary.getPiece(token);
             // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
             if (prev_token == 1 && piece[0] == ' ')
             {
@@ -260,10 +317,8 @@ namespace llama2cpp
         }
 
     private:
-        std::vector<std::vector<char>> vocab;
         Tensor<CPU, float32_t, 1UL> vocab_scores;
-        std::vector<TokenIndex> sorted_vocab;
-        int vocab_size;
+        Vocabulary m_vocabulary;
         unsigned int max_token_length;
         unsigned char byte_pieces[BYTE_STR_SIZE]; // stores all single-byte strings
     };
