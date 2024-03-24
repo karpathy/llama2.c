@@ -7,6 +7,8 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <fstream>
+#include <llama2cpp/tensor.hpp>
 
 namespace llama2cpp
 {
@@ -66,61 +68,61 @@ namespace llama2cpp
         float *value_cache; // (layer, seq_len, dim)
     };
 
-    void memory_map_weights(TransformerWeights *w, TransformerConfig *p, float *ptr, int shared_weights)
+    void memory_map_weights(TransformerWeights *weights, TransformerConfig &config, float *ptr, int shared_weights)
     {
-        int head_size = p->dim / p->n_heads;
+        int head_size = config.dim / config.n_heads;
         // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
-        unsigned long long n_layers = p->n_layers;
-        w->token_embedding_table = ptr;
-        ptr += p->vocab_size * p->dim;
-        w->rms_att_weight = ptr;
-        ptr += n_layers * p->dim;
-        w->wq = ptr;
-        ptr += n_layers * p->dim * (p->n_heads * head_size);
-        w->wk = ptr;
-        ptr += n_layers * p->dim * (p->n_kv_heads * head_size);
-        w->wv = ptr;
-        ptr += n_layers * p->dim * (p->n_kv_heads * head_size);
-        w->wo = ptr;
-        ptr += n_layers * (p->n_heads * head_size) * p->dim;
-        w->rms_ffn_weight = ptr;
-        ptr += n_layers * p->dim;
-        w->w1 = ptr;
-        ptr += n_layers * p->dim * p->hidden_dim;
-        w->w2 = ptr;
-        ptr += n_layers * p->hidden_dim * p->dim;
-        w->w3 = ptr;
-        ptr += n_layers * p->dim * p->hidden_dim;
-        w->rms_final_weight = ptr;
-        ptr += p->dim;
-        ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
-        ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
-        w->wcls = shared_weights ? w->token_embedding_table : ptr;
+        unsigned long long n_layers = config.n_layers;
+        weights->token_embedding_table = ptr;
+        ptr += config.vocab_size * config.dim;
+        weights->rms_att_weight = ptr;
+        ptr += n_layers * config.dim;
+        weights->wq = ptr;
+        ptr += n_layers * config.dim * (config.n_heads * head_size);
+        weights->wk = ptr;
+        ptr += n_layers * config.dim * (config.n_kv_heads * head_size);
+        weights->wv = ptr;
+        ptr += n_layers * config.dim * (config.n_kv_heads * head_size);
+        weights->wo = ptr;
+        ptr += n_layers * (config.n_heads * head_size) * config.dim;
+        weights->rms_ffn_weight = ptr;
+        ptr += n_layers * config.dim;
+        weights->w1 = ptr;
+        ptr += n_layers * config.dim * config.hidden_dim;
+        weights->w2 = ptr;
+        ptr += n_layers * config.hidden_dim * config.dim;
+        weights->w3 = ptr;
+        ptr += n_layers * config.dim * config.hidden_dim;
+        weights->rms_final_weight = ptr;
+        ptr += config.dim;
+        ptr += config.seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
+        ptr += config.seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
+        weights->wcls = shared_weights ? weights->token_embedding_table : ptr;
     }
 
-    void read_checkpoint(const char *checkpoint, TransformerConfig *config, TransformerWeights *weights,
+    void read_checkpoint(const std::string &checkpoint_path, TransformerConfig &config, TransformerWeights *weights,
                          int *fd, float **data, ssize_t *file_size)
     {
-        FILE *file = fopen(checkpoint, "rb");
+        FILE *file = fopen(checkpoint_path.c_str(), "rb");
         if (!file)
         {
-            fprintf(stderr, "Couldn't open file %s\n", checkpoint);
+            fprintf(stderr, "Couldn't open file %s\n", checkpoint_path.c_str());
             exit(EXIT_FAILURE);
         }
         // read in the config header
-        if (fread(config, sizeof(TransformerConfig), 1, file) != 1)
+        if (fread(&config, sizeof(TransformerConfig), 1, file) != 1)
         {
             exit(EXIT_FAILURE);
         }
         // negative vocab size is hacky way of signaling unshared weights. bit yikes.
-        int shared_weights = config->vocab_size > 0 ? 1 : 0;
-        config->vocab_size = abs(config->vocab_size);
+        int shared_weights = config.vocab_size > 0 ? 1 : 0;
+        config.vocab_size = abs(config.vocab_size);
         // figure out the file size
         fseek(file, 0, SEEK_END); // move file pointer to end of file
         *file_size = ftell(file); // get the file size, in bytes
         fclose(file);
         // memory map the Transformer weights into the data pointer
-        *fd = open(checkpoint, O_RDONLY); // open in read only mode
+        *fd = open(checkpoint_path.c_str(), O_RDONLY); // open in read only mode
         if (*fd == -1)
         {
             fprintf(stderr, "open failed!\n");
@@ -134,43 +136,106 @@ namespace llama2cpp
         }
         float *weights_ptr = *data + sizeof(TransformerConfig) / sizeof(float);
         memory_map_weights(weights, config, weights_ptr, shared_weights);
+
+        // // C++
+        // std::ifstream file(checkpoint_path, std::ios::binary);
+        // if (!file)
+        // {
+        //     std::cerr << "Couldn't open file " << checkpoint_path << '\n';
+        //     std::exit(EXIT_FAILURE);
+        // }
+        // file.read(reinterpret_cast<char *>(&config), sizeof(TransformerConfig));
+        // // negative vocab size is hacky way of signaling unshared weights. bit yikes.
+        // int shared_weights = config->vocab_size > 0 ? 1 : 0;
+        // config->vocab_size = abs(config->vocab_size);
+        // // figure out the file size
     }
 
-    void malloc_run_state(RunState *s, TransformerConfig *p)
+    void malloc_run_state(RunState &s, TransformerConfig &config)
     {
         // we calloc instead of malloc to keep valgrind happy
-        int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-        s->x = (float *)calloc(p->dim, sizeof(float));
-        s->xb = (float *)calloc(p->dim, sizeof(float));
-        s->xb2 = (float *)calloc(p->dim, sizeof(float));
-        s->hb = (float *)calloc(p->hidden_dim, sizeof(float));
-        s->hb2 = (float *)calloc(p->hidden_dim, sizeof(float));
-        s->q = (float *)calloc(p->dim, sizeof(float));
-        s->key_cache = (float *)calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
-        s->value_cache = (float *)calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
-        s->att = (float *)calloc(p->n_heads * p->seq_len, sizeof(float));
-        s->logits = (float *)calloc(p->vocab_size, sizeof(float));
+        int kv_dim = (config.dim * config.n_kv_heads) / config.n_heads;
+        s.x = (float *)calloc(config.dim, sizeof(float));
+        s.xb = (float *)calloc(config.dim, sizeof(float));
+        s.xb2 = (float *)calloc(config.dim, sizeof(float));
+        s.hb = (float *)calloc(config.hidden_dim, sizeof(float));
+        s.hb2 = (float *)calloc(config.hidden_dim, sizeof(float));
+        s.q = (float *)calloc(config.dim, sizeof(float));
+        s.key_cache = (float *)calloc(config.n_layers * config.seq_len * kv_dim, sizeof(float));
+        s.value_cache = (float *)calloc(config.n_layers * config.seq_len * kv_dim, sizeof(float));
+        s.att = (float *)calloc(config.n_heads * config.seq_len, sizeof(float));
+        s.logits = (float *)calloc(config.vocab_size, sizeof(float));
         // ensure all mallocs went fine
-        if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q || !s->key_cache || !s->value_cache || !s->att || !s->logits)
+        if (!s.x || !s.xb || !s.xb2 || !s.hb || !s.hb2 || !s.q || !s.key_cache || !s.value_cache || !s.att || !s.logits)
         {
-            fprintf(stderr, "malloc failed!\n");
-            exit(EXIT_FAILURE);
+            std::cerr << "malloc failed" << std::endl;
+            std::exit(EXIT_FAILURE);
         }
     }
 
-    void free_run_state(RunState *s)
+    void free_run_state(RunState &s)
     {
-        free(s->x);
-        free(s->xb);
-        free(s->xb2);
-        free(s->hb);
-        free(s->hb2);
-        free(s->q);
-        free(s->att);
-        free(s->logits);
-        free(s->key_cache);
-        free(s->value_cache);
+        free(s.x);
+        free(s.xb);
+        free(s.xb2);
+        free(s.hb);
+        free(s.hb2);
+        free(s.q);
+        free(s.att);
+        free(s.logits);
+        free(s.key_cache);
+        free(s.value_cache);
     }
+
+    class Attention
+    {
+    public:
+        Attention() {}
+        void forward() {}
+
+    private:
+    };
+
+    class FeedForward
+    {
+    public:
+        FeedForward() {}
+        void forward()
+        {
+            // self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+        }
+
+    private:
+    };
+
+    class TransformerBlock
+    {
+    public:
+        TransformerBlock() {}
+        void forward()
+        {
+            // forward attention.
+            // forward FFN.
+        }
+
+    private:
+    };
+
+    class Linear
+    {
+    public:
+        Linear(float *wcls, int in_dim, int out_dim) : m_wcls(wcls), m_in_dim(in_dim), m_out_dim(out_dim) {}
+
+        void forward(float *x, float *out)
+        {
+            matmul(out, x, m_wcls, m_in_dim, m_out_dim);
+        }
+
+    private:
+        float *m_wcls;
+        int m_in_dim;
+        int m_out_dim;
+    };
 
     class Transformer
     {
@@ -179,52 +244,54 @@ namespace llama2cpp
         Transformer(const std::string &checkpoint_path)
         {
             // read in the Config and the Weights from the checkpoint
-            read_checkpoint(checkpoint_path.c_str(), &config, &weights, &fd, &data, &file_size);
+            read_checkpoint(checkpoint_path, m_config, &m_weights, &m_fd, &m_data, &m_file_size);
             // allocate the RunState buffers
-            malloc_run_state(&state, &config);
+            malloc_run_state(m_state, m_config);
+            // m_linear = std::make_unique<Linear>(&m_weights, &m_config);
+            m_linear = std::make_unique<Linear>(m_weights.wcls, m_config.dim, m_config.vocab_size);
         }
 
         ~Transformer()
         {
             // close the memory mapping
-            if (data != MAP_FAILED)
+            if (m_data != MAP_FAILED)
             {
-                munmap(data, file_size);
+                munmap(m_data, m_file_size);
             }
-            if (fd != -1)
+            if (m_fd != -1)
             {
-                close(fd);
+                close(m_fd);
             }
             // free the RunState buffers
-            free_run_state(&state);
+            free_run_state(m_state);
         }
 
         auto forward(int token, int pos) -> float32_t *
         {
             // a few convenience variables
-            TransformerConfig *p = &config;
-            TransformerWeights *w = &weights;
-            RunState *s = &state;
+            // TransformerConfig *p = &config;
+            TransformerWeights *w = &m_weights;
+            RunState *s = &m_state;
             float *x = s->x;
-            int dim = p->dim;
-            int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-            int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
-            int hidden_dim = p->hidden_dim;
-            int head_size = dim / p->n_heads;
+            int dim = m_config.dim;
+            int kv_dim = (m_config.dim * m_config.n_kv_heads) / m_config.n_heads;
+            int kv_mul = m_config.n_heads / m_config.n_kv_heads; // integer multiplier of the kv sharing in multiquery
+            int hidden_dim = m_config.hidden_dim;
+            int head_size = dim / m_config.n_heads;
 
             // copy the token embedding into x
             float *content_row = w->token_embedding_table + token * dim;
             memcpy(x, content_row, dim * sizeof(*x));
 
             // forward all the layers
-            for (unsigned long long l = 0; l < p->n_layers; l++)
+            for (unsigned long long l = 0; l < m_config.n_layers; l++)
             {
 
                 // attention rmsnorm
                 rmsnorm(s->xb, x, w->rms_att_weight + l * dim, dim);
 
                 // key and value point to the kv cache
-                int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
+                int loff = l * m_config.seq_len * kv_dim; // kv cache layer offset for convenience
                 s->k = s->key_cache + loff + pos * kv_dim;
                 s->v = s->value_cache + loff + pos * kv_dim;
 
@@ -255,12 +322,12 @@ namespace llama2cpp
                 // multihead attention. iterate over all heads
                 int h;
 #pragma omp parallel for private(h)
-                for (h = 0; h < p->n_heads; h++)
+                for (h = 0; h < m_config.n_heads; h++)
                 {
                     // get the query vector for this head
                     float *q = s->q + h * head_size;
                     // attention scores for this head
-                    float *att = s->att + h * p->seq_len;
+                    float *att = s->att + h * m_config.seq_len;
                     // iterate over all timesteps, including the current one
                     for (int t = 0; t <= pos; t++)
                     {
@@ -339,23 +406,25 @@ namespace llama2cpp
             rmsnorm(x, x, w->rms_final_weight, dim);
 
             // classifier into logits
-            matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
+            // matmul(s->logits, x, w->wcls, m_config.dim, m_config.vocab_size);
+            m_linear->forward(x, s->logits);
             return s->logits;
         }
 
-        auto getConfig() const -> const TransformerConfig&
+        auto getConfig() const -> const TransformerConfig &
         {
-            return config;
+            return m_config;
         }
 
     private:
-        TransformerConfig config;   // the hyperparameters of the architecture (the blueprint)
-        TransformerWeights weights; // the weights of the model
-        RunState state;             // buffers for the "wave" of activations in the forward pass
+        TransformerConfig m_config;   // the hyperparameters of the architecture (the blueprint)
+        TransformerWeights m_weights; // the weights of the model
+        RunState m_state;             // buffers for the "wave" of activations in the forward pass
         // some more state needed to properly clean up the memory mapping (sigh)
-        int fd;            // file descriptor for memory mapping
-        float *data;       // memory mapped data pointer
-        ssize_t file_size; // size of the checkpoint file in bytes
+        int m_fd;            // file descriptor for memory mapping
+        float *m_data;       // memory mapped data pointer
+        ssize_t m_file_size; // size of the checkpoint file in bytes
+        std::unique_ptr<Linear> m_linear;
     };
 
 }
