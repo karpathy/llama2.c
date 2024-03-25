@@ -190,6 +190,7 @@ namespace llama2cpp
     class Attention
     {
     public:
+        using ptr = std::unique_ptr<Attention>;
         Attention() {}
         void forward() {}
 
@@ -199,31 +200,82 @@ namespace llama2cpp
     class FeedForward
     {
     public:
-        FeedForward() {}
-        void forward()
+        using ptr = std::unique_ptr<FeedForward>;
+        FeedForward(float *w1_, float *w2_, float *w3_, float *hb_, float *hb2_, int dim, int hidden_dim) : m_dim(dim), m_hidden_dim(hidden_dim), m_w1(w1_), m_w2(w2_), m_w3(w3_), m_hb(hb_), m_hb2(hb2_) {}
+
+        /**
+         * @brief forward pass for feedforward layer.
+         *
+         * self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+         */
+        void forward(float *in, float *out)
         {
-            // self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+            matmul(m_hb, in, m_w1, m_dim, m_hidden_dim);
+            matmul(m_hb2, in, m_w3, m_dim, m_hidden_dim);
+
+            // SwiGLU non-linearity
+            for (int i = 0; i < m_hidden_dim; i++)
+            {
+                float val = m_hb[i];
+                // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+                val *= (1.0f / (1.0f + expf(-val)));
+                // elementwise multiply with w3(x)
+                val *= m_hb2[i];
+                m_hb[i] = val;
+            }
+            // this->silu();
+
+            // final matmul to get the output of the ffn
+            matmul(out, m_hb, m_w2, m_hidden_dim, m_dim);
         }
 
+        auto dim() const -> const int { return m_dim; }
+
     private:
+        int m_dim; // transformer dimension.
+        int m_hidden_dim;
+        float *m_w1;
+        float *m_w2;
+        float *m_w3;
+        float *m_hb;
+        float *m_hb2;
     };
 
     class TransformerBlock
     {
     public:
-        TransformerBlock() {}
-        void forward()
+        using ptr = std::unique_ptr<TransformerBlock>;
+        TransformerBlock(float *w1_, float *w2_, float *w3_, float *hb_, float *hb2_, int dim, int hidden_dim, float *rms_ffn_weight) : m_attention(nullptr), m_feedforward(nullptr), m_rms_ffn_weight(rms_ffn_weight)
+        {
+            m_feedforward = std::make_unique<FeedForward>(w1_, w2_, w3_, hb_, hb2_, dim, hidden_dim);
+        }
+        void forward(float *x, float *h, float *out)
         {
             // forward attention.
+
+            // ffn rmsnorm
+            rmsnorm(h, x, m_rms_ffn_weight, m_feedforward->dim());
             // forward FFN.
+            m_feedforward->forward(h, out);
+
+            // residual connection
+            for (int i = 0; i < m_feedforward->dim(); i++)
+            {
+                x[i] += out[i];
+            }
         }
 
     private:
+        Attention::ptr m_attention;
+        FeedForward::ptr m_feedforward;
+        float *m_rms_ffn_weight;
     };
 
     class Linear
     {
     public:
+        using ptr = std::unique_ptr<Linear>;
+
         Linear(float *wcls, int in_dim, int out_dim) : m_wcls(wcls), m_in_dim(in_dim), m_out_dim(out_dim) {}
 
         void forward(float *x, float *out)
@@ -249,6 +301,14 @@ namespace llama2cpp
             malloc_run_state(m_state, m_config);
             // m_linear = std::make_unique<Linear>(&m_weights, &m_config);
             m_linear = std::make_unique<Linear>(m_weights.wcls, m_config.dim, m_config.vocab_size);
+            for (unsigned long long l = 0; l < m_config.n_layers; l++)
+            {
+                float *w1 = m_weights.w1 + l * m_config.dim * m_config.hidden_dim;
+                float *w2 = m_weights.w2 + l * m_config.dim * m_config.hidden_dim;
+                float *w3 = m_weights.w3 + l * m_config.dim * m_config.hidden_dim;
+                float *rms_ffn_weight_ = m_weights.rms_ffn_weight + l * m_config.dim;
+                m_layers.push_back(std::make_unique<TransformerBlock>(w1, w2, w3, m_state.hb, m_state.hb2, m_config.dim, m_config.hidden_dim, rms_ffn_weight_));
+            }
         }
 
         ~Transformer()
@@ -373,40 +433,13 @@ namespace llama2cpp
                     x[i] += s->xb2[i];
                 }
 
-                // ffn rmsnorm
-                rmsnorm(s->xb, x, w->rms_ffn_weight + l * dim, dim);
-
-                // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
-                // first calculate self.w1(x) and self.w3(x)
-                matmul(s->hb, s->xb, w->w1 + l * dim * hidden_dim, dim, hidden_dim);
-                matmul(s->hb2, s->xb, w->w3 + l * dim * hidden_dim, dim, hidden_dim);
-
-                // SwiGLU non-linearity
-                for (int i = 0; i < hidden_dim; i++)
-                {
-                    float val = s->hb[i];
-                    // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-                    val *= (1.0f / (1.0f + expf(-val)));
-                    // elementwise multiply with w3(x)
-                    val *= s->hb2[i];
-                    s->hb[i] = val;
-                }
-
-                // final matmul to get the output of the ffn
-                matmul(s->xb, s->hb, w->w2 + l * dim * hidden_dim, hidden_dim, dim);
-
-                // residual connection
-                for (int i = 0; i < dim; i++)
-                {
-                    x[i] += s->xb[i];
-                }
+                m_layers[l]->forward(x, s->xb, s->xb);
             }
 
             // final rmsnorm
             rmsnorm(x, x, w->rms_final_weight, dim);
 
             // classifier into logits
-            // matmul(s->logits, x, w->wcls, m_config.dim, m_config.vocab_size);
             m_linear->forward(x, s->logits);
             return s->logits;
         }
@@ -424,7 +457,9 @@ namespace llama2cpp
         int m_fd;            // file descriptor for memory mapping
         float *m_data;       // memory mapped data pointer
         ssize_t m_file_size; // size of the checkpoint file in bytes
-        std::unique_ptr<Linear> m_linear;
+        Linear::ptr m_linear;
+        std::vector<TransformerBlock::ptr> m_layers;
+        // std::vector<FeedForward::ptr> m_feedforward;
     };
 
 }

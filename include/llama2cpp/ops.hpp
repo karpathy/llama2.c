@@ -24,6 +24,12 @@ namespace llama2cpp
         }
     }
 
+    /**
+     * @brief Softmax in-place
+     *
+     * @param x input tensor.
+     * @param size size of the tensor.
+     */
     void softmax(float *x, int size)
     {
         // find max value (for numerical stability)
@@ -35,6 +41,7 @@ namespace llama2cpp
                 max_val = x[i];
             }
         }
+
         // exp and sum
         float sum = 0.0f;
         for (int i = 0; i < size; i++)
@@ -42,6 +49,7 @@ namespace llama2cpp
             x[i] = expf(x[i] - max_val);
             sum += x[i];
         }
+
         // normalize
         for (int i = 0; i < size; i++)
         {
@@ -49,10 +57,23 @@ namespace llama2cpp
         }
     }
 
+    /**
+     * @brief Matrix multiplication operation
+     *
+     * W (d,n) @ x (n,) -> xout (d,)
+     * by far the most amount of time is spent inside this little function
+     *
+     * TODO: implement a generic method for tensors.
+     *
+     * @param xout output tensor.
+     * @param x input tensor.
+     * @param w weight matrix.
+     * @param n input vector dimension.
+     * @param d output vector dimension.
+     */
     void matmul(float *xout, float *x, float *w, int n, int d)
     {
-        // W (d,n) @ x (n,) -> xout (d,)
-        // by far the most amount of time is spent inside this little function
+
         int i;
 #pragma omp parallel for private(i)
         for (i = 0; i < d; i++)
