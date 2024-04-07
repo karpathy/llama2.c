@@ -7,3 +7,4 @@
  - Once that is done, refactor them into tensors.
  - No need to memory map, copy them into buffers in the memory as that would be more scalable for cuda in future.
  - Redo SWIGLU
+ - Implement tensor slicing

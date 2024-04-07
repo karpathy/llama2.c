@@ -114,11 +114,13 @@ namespace llama2cpp
             int next;                     // will store the next token in the sequence
             int token = prompt_tokens[0]; // kick off with the first token in the prompt
             int pos = 0;                  // position in the sequence
+            Tensor<CPU, float32_t> logits(Shape(m_transformer->getConfig().vocab_size));
             while (pos < m_config.steps)
             {
 
                 // forward the transformer to get logits for the next token
-                float *logits = m_transformer->forward(token, pos);
+
+                m_transformer->forward(token, pos, logits);
 
                 // advance the state machine
                 if (pos < num_prompt_tokens - 1)
@@ -129,7 +131,7 @@ namespace llama2cpp
                 else
                 {
                     // otherwise sample the next token from the logits
-                    next = m_sampler->sample(logits);
+                    next = m_sampler->sample(logits.data());
                 }
                 pos++;
 
@@ -184,6 +186,7 @@ namespace llama2cpp
             int token;            // stores the current token to feed into the transformer
             int prev_token;
             int pos = 0; // position in the sequence
+            Tensor<CPU, float32_t> logits(Shape(m_transformer->getConfig().vocab_size));
             while (pos < m_config.steps)
             {
 
@@ -252,8 +255,8 @@ namespace llama2cpp
                 }
 
                 // forward the transformer to get logits for the next token
-                float *logits = m_transformer->forward(token, pos);
-                next = m_sampler->sample(logits);
+                m_transformer->forward(token, pos, logits);
+                next = m_sampler->sample(logits.data());
                 pos++;
 
                 if (user_idx >= num_prompt_tokens && next != 2)

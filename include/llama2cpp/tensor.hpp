@@ -24,7 +24,7 @@ namespace llama2cpp
         {
         }
 
-        Shape(size_t dim) : m_shape({dim}), m_stride(), m_num_dims(1)
+        Shape(const size_t dim) : m_shape({dim}), m_stride(), m_num_dims(1)
         {
             initialize();
         }
@@ -47,6 +47,11 @@ namespace llama2cpp
         {
             assert(idx < m_shape[m_num_dims - 1]);
             return idx * m_stride[m_num_dims - 1];
+        }
+
+        auto operator[](size_t idx) const -> const size_t
+        {
+            return m_shape.at(idx);
         }
 
         auto size() const -> const size_t
@@ -218,6 +223,11 @@ namespace llama2cpp
         void copyFrom(const pointer p, size_t num_elements)
         {
             m_memory.copyFrom(p, num_elements);
+        }
+        void copyFrom(TensorView<value_type> &tensor)
+        {
+            m_memory.copyFrom(tensor.data(), tensor.size());
+            this->setShape(tensor.shape());
         }
 
     private:

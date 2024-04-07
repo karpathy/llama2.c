@@ -336,31 +336,31 @@ namespace llama2cpp
     {
     public:
         using ptr = std::unique_ptr<TransformerBlock>;
-        explicit TransformerBlock(Attention::ptr attention, FeedForward::ptr feed_forward, float *rms_ffn_weight, unsigned long long l, int dim)
-            : m_attention(std::move(attention)), m_feedforward(std::move(feed_forward)), m_rms_ffn_weight(rms_ffn_weight), m_l(l), m_dim(dim), m_xh(Shape(dim)), m_xh2(Shape(dim))
+        explicit TransformerBlock(Attention::ptr attention, FeedForward::ptr feed_forward, TensorView<float> &rms_ffn_weight, TensorView<float32_t> &wo, TensorView<float32_t> &w_rms_att, int dim)
+            : m_attention(std::move(attention)), m_feedforward(std::move(feed_forward)), m_w_rms_ffn(rms_ffn_weight), m_xh(Shape(dim)), m_xh2(Shape(dim)), m_wo(wo), m_w_rms_att(w_rms_att)
         {
         }
 
-        void forward(TensorView<float32_t> &x, int pos_, float *wo, float *rms_att_weight)
+        void forward(TensorView<float32_t> &x, int pos_)
         {
 
             // attention rmsnorm
-            rmsnorm(m_xh.data(), x.data(), rms_att_weight + m_l * m_dim, m_dim);
+            rmsnorm(m_xh, x, m_w_rms_att);
 
             // forward attention.
             m_attention->forward(m_xh.data(), m_xh.data(), pos_);
 
             // final matmul to get the output of the attention
-            matmul(m_xh2.data(), m_xh.data(), wo + m_l * m_dim * m_dim, m_dim, m_dim);
+            matmul(m_xh2, m_xh, m_wo);
 
             // residual connection back into x
-            for (int i = 0; i < m_dim; i++)
+            for (int i = 0; i < x.shape()[0]; i++)
             {
                 x(i) += m_xh2(i);
             }
 
             // ffn rmsnorm
-            rmsnorm(m_xh.data(), x.data(), m_rms_ffn_weight, m_feedforward->dim());
+            rmsnorm(m_xh, x, m_w_rms_ffn);
 
             // forward FFN.
             m_feedforward->forward(m_xh.data(), m_xh.data());
@@ -375,13 +375,13 @@ namespace llama2cpp
     private:
         Attention::ptr m_attention;
         FeedForward::ptr m_feedforward;
-        float *m_rms_ffn_weight;
-        unsigned long long m_l;
-        int m_dim;
+        // unsigned long long m_l;
         Tensor<CPU, float32_t> m_xh;  // hidden state same a x but used inside branch
         Tensor<CPU, float32_t> m_xh2; // hidden state2 same a x but used inside branch
         // weights for matmuls. note dim == n_heads * head_size
-        // TensorView<float32_t> m_wo; // (layer, n_heads * head_size, dim)
+        TensorView<float32_t> m_wo;        // (n_heads * head_size, dim)
+        TensorView<float32_t> m_w_rms_att; // (dim)
+        TensorView<float32_t> m_w_rms_ffn; // (dim)
     };
 
     class Linear
@@ -417,6 +417,9 @@ namespace llama2cpp
         void initializeLayers()
         {
             int kv_dim = (m_config.dim * m_config.n_kv_heads) / m_config.n_heads;
+            int dim = m_config.dim;
+            int head_size = m_config.dim / m_config.n_heads;
+
             for (unsigned long long l = 0; l < m_config.n_layers; l++)
             {
                 // Attention layer
@@ -424,32 +427,32 @@ namespace llama2cpp
                 float *wq = m_weights.wq + l * m_config.dim * m_config.dim;
                 float *wk = m_weights.wk + l * m_config.dim * kv_dim;
                 float *wv = m_weights.wv + l * m_config.dim * kv_dim;
-                int head_size = m_config.dim / m_config.n_heads;
 
                 Attention::ptr attention = std::make_unique<Attention>(wq, wk, wv,
                                                                        m_state.key_cache,
                                                                        m_state.value_cache,
                                                                        loff_, kv_dim,
-                                                                       m_config.dim,
+                                                                       dim,
                                                                        m_config.n_heads,
                                                                        m_config.n_kv_heads,
                                                                        m_config.seq_len);
 
                 // FF layer
-                float *w1 = m_weights.w1 + l * m_config.dim * m_config.hidden_dim;
-                float *w2 = m_weights.w2 + l * m_config.dim * m_config.hidden_dim;
-                float *w3 = m_weights.w3 + l * m_config.dim * m_config.hidden_dim;
-                float *rms_ffn_weight_ = m_weights.rms_ffn_weight + l * m_config.dim;
+                float *w1 = m_weights.w1 + l * dim * m_config.hidden_dim;
+                float *w2 = m_weights.w2 + l * dim * m_config.hidden_dim;
+                float *w3 = m_weights.w3 + l * dim * m_config.hidden_dim;
                 FeedForward::ptr feedforward = std::make_unique<FeedForward>(w1, w2, w3,
                                                                              m_state.hb,
                                                                              m_state.hb2,
-                                                                             m_config.dim,
+                                                                             dim,
                                                                              m_config.hidden_dim);
-                // TensorView<float32_t> wo(m_weights.wo,Shape())
-                m_layers.push_back(std::make_unique<TransformerBlock>(std::move(attention), std::move(feedforward), rms_ffn_weight_, l, m_config.dim));
+                TensorView<float32_t> wo(m_weights.wo + l * dim * dim, Shape(dim, dim));
+                TensorView<float32_t> w_rms_att(m_weights.rms_att_weight + l * dim, Shape(dim));
+                TensorView<float32_t> w_rms_ffn(m_weights.rms_ffn_weight + l * dim, Shape(dim));
+                m_layers.push_back(std::make_unique<TransformerBlock>(std::move(attention), std::move(feedforward), w_rms_ffn, wo, w_rms_att, dim));
             }
 
-            TensorView<float32_t> wcls(m_weights.wcls, Shape(m_config.vocab_size, m_config.dim));
+            TensorView<float32_t> wcls(m_weights.wcls, Shape(m_config.vocab_size, dim));
             m_linear = std::make_unique<Linear>(wcls);
         }
 
@@ -468,35 +471,32 @@ namespace llama2cpp
             free_run_state(m_state);
         }
 
-        auto forward(int token, int pos) -> float32_t *
+        void forward(int token, int pos, TensorView<float32_t> &logits)
         {
             // a few convenience variables
             TransformerWeights *w = &m_weights;
             RunState *s = &m_state;
-            // float *x = s->x;
-            int dim = m_config.dim;
+            size_t dim = static_cast<size_t>(m_config.dim);
 
             // copy the token embedding into x
-            float *content_row = w->token_embedding_table + token * dim;
+            TensorView<float32_t> content_row(w->token_embedding_table + token * dim, Shape(dim));
 
             Tensor<CPU, float32_t> x_in(Shape(static_cast<size_t>(dim)));
-            x_in.copyFrom(content_row, static_cast<size_t>(dim));
+            x_in.copyFrom(content_row);
 
-            TensorView<float32_t> rms_final_weight_(w->rms_final_weight, Shape(static_cast<size_t>(dim)));
+            TensorView<float32_t> rms_final_weight_(w->rms_final_weight, Shape(dim));
 
             // forward all the layers
             for (auto &layer : m_layers)
             {
-                layer->forward(x_in, pos, w->wo, w->rms_att_weight);
+                layer->forward(x_in, pos);
             }
 
             // final rmsnorm
             rmsnorm(x_in, x_in, rms_final_weight_);
 
             // classifier into logits
-            TensorView<float32_t> logits(s->logits, Shape(m_config.vocab_size));
             m_linear->forward(x_in, logits);
-            return logits.data();
         }
 
         auto getConfig() const -> const TransformerConfig &
