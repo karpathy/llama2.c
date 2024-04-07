@@ -334,19 +334,31 @@ namespace llama2cpp
     {
     public:
         using ptr = std::unique_ptr<TransformerBlock>;
-        TransformerBlock(FeedForward::ptr feed_forward, float *rms_ffn_weight)
-            : m_attention(nullptr), m_feedforward(std::move(feed_forward)), m_rms_ffn_weight(rms_ffn_weight)
+        TransformerBlock(Attention::ptr attention, FeedForward::ptr feed_forward, float *rms_ffn_weight, unsigned long long l, int dim)
+            : m_attention(std::move(attention)), m_feedforward(std::move(feed_forward)), m_rms_ffn_weight(rms_ffn_weight), m_l(l), m_dim(dim)
         {
         }
 
-        void forward(float *x, float *h, float *out)
+        void forward(float *x, float *q, float *k, float *v, float *att, float *xb2, int pos_, float *h, float *out, float *wo, float *rms_att_weight)
         {
-            // attention norm
+            // attention rmsnorm
+            rmsnorm(h, x, rms_att_weight + m_l * m_dim, m_dim);
 
             // forward attention.
+            m_attention->forward(h, q, k, v, att, h, pos_);
+
+            // final matmul to get the output of the attention
+            matmul(xb2, h, wo + m_l * m_dim * m_dim, m_dim, m_dim);
+
+            // residual connection back into x
+            for (int i = 0; i < m_dim; i++)
+            {
+                x[i] += xb2[i];
+            }
 
             // ffn rmsnorm
             rmsnorm(h, x, m_rms_ffn_weight, m_feedforward->dim());
+
             // forward FFN.
             m_feedforward->forward(h, out);
 
@@ -361,6 +373,8 @@ namespace llama2cpp
         Attention::ptr m_attention;
         FeedForward::ptr m_feedforward;
         float *m_rms_ffn_weight;
+        unsigned long long m_l;
+        int m_dim;
     };
 
     class Linear
@@ -406,6 +420,7 @@ namespace llama2cpp
                 float *wk = m_weights.wk + l * m_config.dim * kv_dim;
                 float *wv = m_weights.wv + l * m_config.dim * kv_dim;
                 int head_size = m_config.dim / m_config.n_heads;
+
                 Attention::ptr attention = std::make_unique<Attention>(wq, wk, wv,
                                                                        m_state.key_cache,
                                                                        m_state.value_cache,
@@ -414,7 +429,6 @@ namespace llama2cpp
                                                                        m_config.n_heads,
                                                                        m_config.n_kv_heads,
                                                                        m_config.seq_len);
-                m_attn_layers.push_back(std::move(attention));
 
                 // FF layer
                 float *w1 = m_weights.w1 + l * m_config.dim * m_config.hidden_dim;
@@ -426,7 +440,7 @@ namespace llama2cpp
                                                                              m_state.hb2,
                                                                              m_config.dim,
                                                                              m_config.hidden_dim);
-                m_layers.push_back(std::make_unique<TransformerBlock>(std::move(feedforward), rms_ffn_weight_));
+                m_layers.push_back(std::make_unique<TransformerBlock>(std::move(attention), std::move(feedforward), rms_ffn_weight_, l, m_config.dim));
             }
 
             m_linear = std::make_unique<Linear>(m_weights.wcls, m_config.dim, m_config.vocab_size);
@@ -454,10 +468,6 @@ namespace llama2cpp
             RunState *s = &m_state;
             float *x = s->x;
             int dim = m_config.dim;
-            int kv_dim = (m_config.dim * m_config.n_kv_heads) / m_config.n_heads;
-            int kv_mul = m_config.n_heads / m_config.n_kv_heads; // integer multiplier of the kv sharing in multiquery
-            int hidden_dim = m_config.hidden_dim;
-            int head_size = dim / m_config.n_heads;
 
             // copy the token embedding into x
             float *content_row = w->token_embedding_table + token * dim;
@@ -466,24 +476,7 @@ namespace llama2cpp
             // forward all the layers
             for (unsigned long long l = 0; l < m_config.n_layers; l++)
             {
-
-                // attention rmsnorm
-                rmsnorm(s->xb, x, w->rms_att_weight + l * dim, dim);
-
-
-                m_attn_layers[l]->forward(s->xb, s->q, s->k, s->v, s->att, s->xb, pos);
-
-
-                // final matmul to get the output of the attention
-                matmul(s->xb2, s->xb, w->wo + l * dim * dim, dim, dim);
-
-                // residual connection back into x
-                for (int i = 0; i < dim; i++)
-                {
-                    x[i] += s->xb2[i];
-                }
-
-                m_layers[l]->forward(x, s->xb, s->xb);
+                m_layers[l]->forward(x, s->q, s->k, s->v, s->att, s->xb2, pos, s->xb, s->xb, w->wo, w->rms_att_weight);
             }
 
             // final rmsnorm
@@ -509,7 +502,6 @@ namespace llama2cpp
         ssize_t m_file_size; // size of the checkpoint file in bytes
         Linear::ptr m_linear;
         std::vector<TransformerBlock::ptr> m_layers;
-        std::vector<Attention::ptr> m_attn_layers;
     };
 
 }
