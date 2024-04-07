@@ -100,7 +100,7 @@ namespace llama2cpp
             int num_prompt_tokens = 0;
 
             Shape shape = {prompt.length() + 3};
-            Tensor<CPU, int, 1> prompt_tokens(shape);
+            Tensor<CPU, int> prompt_tokens(shape);
             m_tokenizer->encode(prompt, 1, 0, prompt_tokens, num_prompt_tokens);
 
             if (num_prompt_tokens < 1)
@@ -175,7 +175,7 @@ namespace llama2cpp
             char rendered_prompt[1152];
             int num_prompt_tokens = 0;
             Shape shape = {1152};
-            Tensor<CPU, int, 1> prompt_tokens(shape);
+            Tensor<CPU, int> prompt_tokens(shape);
             int user_idx;
 
             // start the main loop

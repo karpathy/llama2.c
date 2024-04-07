@@ -105,7 +105,7 @@ namespace llama2cpp
     public:
         TokenizerBase() = default;
         ~TokenizerBase() = default;
-        virtual void encode(std::string text, const int8_t bos, const int8_t eos, Tensor<CPU, int, 1> &tokens, int &n_tokens) = 0;
+        virtual void encode(std::string text, const int8_t bos, const int8_t eos, Tensor<CPU, int> &tokens, int &n_tokens) = 0;
         virtual auto decode(int prev_token, int token) -> std::string = 0;
     };
 
@@ -164,7 +164,7 @@ namespace llama2cpp
         {
         }
 
-        void encode(std::string text, const int8_t bos, const int8_t eos, Tensor<CPU, int, 1> &tokens, int &n_tokens)
+        void encode(std::string text, const int8_t bos, const int8_t eos, Tensor<CPU, int> &tokens, int &n_tokens)
         {
             // encode the string text (input) into an upper-bound preallocated tokens[] array
             // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
@@ -317,7 +317,7 @@ namespace llama2cpp
         }
 
     private:
-        Tensor<CPU, float32_t, 1UL> vocab_scores;
+        Tensor<CPU, float32_t> vocab_scores;
         Vocabulary m_vocabulary;
         unsigned int max_token_length;
         unsigned char byte_pieces[BYTE_STR_SIZE]; // stores all single-byte strings

@@ -3,12 +3,12 @@
 #include <string>
 #include <cstdlib>
 #include <memory>
-#include <llama2cpp/ops.hpp>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fstream>
-#include <llama2cpp/tensor.hpp>
+#include "llama2cpp/tensor.hpp"
+#include "llama2cpp/ops.hpp"
 
 namespace llama2cpp
 {
@@ -53,9 +53,9 @@ namespace llama2cpp
     struct RunState
     {
         // current wave of activations
-        float *x;      // activation at current time stamp (dim,)
-        float *xb;     // same, but inside a residual branch (dim,)
-        float *xb2;    // an additional buffer just for convenience (dim,)
+        // float *x;      // activation at current time stamp (dim,)
+        // float *xb;     // same, but inside a residual branch (dim,)
+        // float *xb2;    // an additional buffer just for convenience (dim,)
         float *hb;     // buffer for hidden dimension in the ffn (hidden_dim,)
         float *hb2;    // buffer for hidden dimension in the ffn (hidden_dim,)
         float *q;      // query (dim,)
@@ -155,18 +155,18 @@ namespace llama2cpp
     {
         // we calloc instead of malloc to keep valgrind happy
         int kv_dim = (config.dim * config.n_kv_heads) / config.n_heads;
-        s.x = (float *)calloc(config.dim, sizeof(float));
-        s.xb = (float *)calloc(config.dim, sizeof(float));
-        s.xb2 = (float *)calloc(config.dim, sizeof(float));
+        // s.x = (float *)calloc(config.dim, sizeof(float));
+        // s.xb = (float *)calloc(config.dim, sizeof(float));
+        // s.xb2 = (float *)calloc(config.dim, sizeof(float));
         s.hb = (float *)calloc(config.hidden_dim, sizeof(float));
         s.hb2 = (float *)calloc(config.hidden_dim, sizeof(float));
         s.q = (float *)calloc(config.dim, sizeof(float));
         s.key_cache = (float *)calloc(config.n_layers * config.seq_len * kv_dim, sizeof(float));
         s.value_cache = (float *)calloc(config.n_layers * config.seq_len * kv_dim, sizeof(float));
-        s.att = (float *)calloc(config.n_heads * config.seq_len, sizeof(float));
+        // s.att = (float *)calloc(config.n_heads * config.seq_len, sizeof(float));
         s.logits = (float *)calloc(config.vocab_size, sizeof(float));
         // ensure all mallocs went fine
-        if (!s.x || !s.xb || !s.xb2 || !s.hb || !s.hb2 || !s.q || !s.key_cache || !s.value_cache || !s.att || !s.logits)
+        if (!s.hb || !s.hb2 || !s.q || !s.key_cache || !s.value_cache || !s.logits)
         {
             std::cerr << "malloc failed" << std::endl;
             std::exit(EXIT_FAILURE);
@@ -175,13 +175,13 @@ namespace llama2cpp
 
     void free_run_state(RunState &s)
     {
-        free(s.x);
-        free(s.xb);
-        free(s.xb2);
+        // free(s.x);
+        // free(s.xb);
+        // free(s.xb2);
         free(s.hb);
         free(s.hb2);
         free(s.q);
-        free(s.att);
+        // free(s.att);
         free(s.logits);
         free(s.key_cache);
         free(s.value_cache);
@@ -191,19 +191,19 @@ namespace llama2cpp
     {
     public:
         using ptr = std::unique_ptr<Attention>;
-        Attention(float *wq, float *wk, float *wv, float *key_cache, float *value_cache, int loff, int kv_dim, int dim, int n_heads, int kv_heads, int seq_len)
-            : m_wq(wq), m_wk(wk), m_wv(wv), m_key_cache(key_cache), m_value_cache(value_cache), m_loff(loff), m_kv_dim(kv_dim), m_dim(dim), m_n_heads(n_heads), m_kv_heads(kv_heads), m_head_size(dim / n_heads), m_seq_len(seq_len) {}
+        explicit Attention(float *wq, float *wk, float *wv, float *key_cache, float *value_cache, int loff, int kv_dim, int dim, int n_heads, int kv_heads, int seq_len)
+            : m_wq(wq), m_wk(wk), m_wv(wv), m_key_cache(key_cache), m_value_cache(value_cache), m_loff(loff), m_kv_dim(kv_dim), m_dim(dim), m_n_heads(n_heads), m_kv_heads(kv_heads), m_head_size(dim / n_heads), m_seq_len(seq_len), m_q(Shape(dim)), m_att(Shape(n_heads * seq_len)) {}
 
-        void forward(float *in, float *q, float *k, float *v, float *att, float *xb, int pos_)
+        void forward(float *in, float *xb, int pos_)
         {
             // key and value point to the kv cache
-            k = m_key_cache + m_loff + pos_ * m_kv_dim;
-            v = m_value_cache + m_loff + pos_ * m_kv_dim;
+            TensorView<float32_t> k(m_key_cache + m_loff + pos_ * m_kv_dim, Shape(m_dim));
+            TensorView<float32_t> v(m_value_cache + m_loff + pos_ * m_kv_dim, Shape(m_dim));
 
             // qkv matmuls for this position
-            matmul(q, in, m_wq, m_dim, m_dim);
-            matmul(k, in, m_wk, m_dim, m_kv_dim);
-            matmul(v, in, m_wv, m_dim, m_kv_dim);
+            matmul(m_q.data(), in, m_wq, m_dim, m_dim);
+            matmul(k.data(), in, m_wk, m_dim, m_kv_dim);
+            matmul(v.data(), in, m_wv, m_dim, m_kv_dim);
 
             // RoPE relative positional encoding: complex-valued rotate q and k in each head
             for (int i = 0; i < m_dim; i += 2)
@@ -216,7 +216,7 @@ namespace llama2cpp
                 int rotn = i < m_kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
                 for (int v = 0; v < rotn; v++)
                 {
-                    float *vec = v == 0 ? q : k; // the vector to rotate (query or key)
+                    float *vec = v == 0 ? m_q.data() : k.data(); // the vector to rotate (query or key)
                     float v0 = vec[i];
                     float v1 = vec[i + 1];
                     vec[i] = v0 * fcr - v1 * fci;
@@ -231,9 +231,9 @@ namespace llama2cpp
             for (h = 0; h < m_n_heads; h++)
             {
                 // get the query vector for this head
-                float *q_ = q + h * m_head_size;
+                float *q_ = m_q.data() + h * m_head_size;
                 // attention scores for this head
-                float *att_ = att + h * m_seq_len;
+                float *att_ = m_att.data() + h * m_seq_len;
                 // iterate over all timesteps, including the current one
                 for (int t = 0; t <= pos_; t++)
                 {
@@ -284,6 +284,8 @@ namespace llama2cpp
         int m_kv_heads;
         int m_head_size;
         int m_seq_len;
+        Tensor<CPU, float32_t> m_q;
+        Tensor<CPU, float32_t> m_att;
     };
 
     class FeedForward
@@ -334,38 +336,39 @@ namespace llama2cpp
     {
     public:
         using ptr = std::unique_ptr<TransformerBlock>;
-        TransformerBlock(Attention::ptr attention, FeedForward::ptr feed_forward, float *rms_ffn_weight, unsigned long long l, int dim)
-            : m_attention(std::move(attention)), m_feedforward(std::move(feed_forward)), m_rms_ffn_weight(rms_ffn_weight), m_l(l), m_dim(dim)
+        explicit TransformerBlock(Attention::ptr attention, FeedForward::ptr feed_forward, float *rms_ffn_weight, unsigned long long l, int dim)
+            : m_attention(std::move(attention)), m_feedforward(std::move(feed_forward)), m_rms_ffn_weight(rms_ffn_weight), m_l(l), m_dim(dim), m_xh(Shape(dim)), m_xh2(Shape(dim))
         {
         }
 
-        void forward(float *x, float *q, float *k, float *v, float *att, float *xb2, int pos_, float *h, float *out, float *wo, float *rms_att_weight)
+        void forward(TensorView<float32_t> &x, int pos_, float *wo, float *rms_att_weight)
         {
+
             // attention rmsnorm
-            rmsnorm(h, x, rms_att_weight + m_l * m_dim, m_dim);
+            rmsnorm(m_xh.data(), x.data(), rms_att_weight + m_l * m_dim, m_dim);
 
             // forward attention.
-            m_attention->forward(h, q, k, v, att, h, pos_);
+            m_attention->forward(m_xh.data(), m_xh.data(), pos_);
 
             // final matmul to get the output of the attention
-            matmul(xb2, h, wo + m_l * m_dim * m_dim, m_dim, m_dim);
+            matmul(m_xh2.data(), m_xh.data(), wo + m_l * m_dim * m_dim, m_dim, m_dim);
 
             // residual connection back into x
             for (int i = 0; i < m_dim; i++)
             {
-                x[i] += xb2[i];
+                x(i) += m_xh2(i);
             }
 
             // ffn rmsnorm
-            rmsnorm(h, x, m_rms_ffn_weight, m_feedforward->dim());
+            rmsnorm(m_xh.data(), x.data(), m_rms_ffn_weight, m_feedforward->dim());
 
             // forward FFN.
-            m_feedforward->forward(h, out);
+            m_feedforward->forward(m_xh.data(), m_xh.data());
 
             // residual connection
             for (int i = 0; i < m_feedforward->dim(); i++)
             {
-                x[i] += out[i];
+                x(i) += m_xh(i);
             }
         }
 
@@ -375,6 +378,10 @@ namespace llama2cpp
         float *m_rms_ffn_weight;
         unsigned long long m_l;
         int m_dim;
+        Tensor<CPU, float32_t> m_xh;  // hidden state same a x but used inside branch
+        Tensor<CPU, float32_t> m_xh2; // hidden state2 same a x but used inside branch
+        // weights for matmuls. note dim == n_heads * head_size
+        // TensorView<float32_t> m_wo; // (layer, n_heads * head_size, dim)
     };
 
     class Linear
@@ -382,17 +389,15 @@ namespace llama2cpp
     public:
         using ptr = std::unique_ptr<Linear>;
 
-        Linear(float *wcls, int in_dim, int out_dim) : m_wcls(wcls), m_in_dim(in_dim), m_out_dim(out_dim) {}
+        Linear(TensorView<float32_t> &wcls) : m_wcls(wcls) {}
 
-        void forward(float *x, float *out)
+        void forward(const TensorView<float32_t> &x, TensorView<float32_t> &out)
         {
-            matmul(out, x, m_wcls, m_in_dim, m_out_dim);
+            matmul(out, x, m_wcls);
         }
 
     private:
-        float *m_wcls;
-        int m_in_dim;
-        int m_out_dim;
+        TensorView<float32_t> m_wcls; // classification weights (out_dim, in_dim)
     };
 
     class Transformer
@@ -440,10 +445,12 @@ namespace llama2cpp
                                                                              m_state.hb2,
                                                                              m_config.dim,
                                                                              m_config.hidden_dim);
+                // TensorView<float32_t> wo(m_weights.wo,Shape())
                 m_layers.push_back(std::make_unique<TransformerBlock>(std::move(attention), std::move(feedforward), rms_ffn_weight_, l, m_config.dim));
             }
 
-            m_linear = std::make_unique<Linear>(m_weights.wcls, m_config.dim, m_config.vocab_size);
+            TensorView<float32_t> wcls(m_weights.wcls, Shape(m_config.vocab_size, m_config.dim));
+            m_linear = std::make_unique<Linear>(wcls);
         }
 
         ~Transformer()
@@ -466,25 +473,30 @@ namespace llama2cpp
             // a few convenience variables
             TransformerWeights *w = &m_weights;
             RunState *s = &m_state;
-            float *x = s->x;
+            // float *x = s->x;
             int dim = m_config.dim;
 
             // copy the token embedding into x
             float *content_row = w->token_embedding_table + token * dim;
-            memcpy(x, content_row, dim * sizeof(*x));
+
+            Tensor<CPU, float32_t> x_in(Shape(static_cast<size_t>(dim)));
+            x_in.copyFrom(content_row, static_cast<size_t>(dim));
+
+            TensorView<float32_t> rms_final_weight_(w->rms_final_weight, Shape(static_cast<size_t>(dim)));
 
             // forward all the layers
-            for (unsigned long long l = 0; l < m_config.n_layers; l++)
+            for (auto &layer : m_layers)
             {
-                m_layers[l]->forward(x, s->q, s->k, s->v, s->att, s->xb2, pos, s->xb, s->xb, w->wo, w->rms_att_weight);
+                layer->forward(x_in, pos, w->wo, w->rms_att_weight);
             }
 
             // final rmsnorm
-            rmsnorm(x, x, w->rms_final_weight, dim);
+            rmsnorm(x_in, x_in, rms_final_weight_);
 
             // classifier into logits
-            m_linear->forward(x, s->logits);
-            return s->logits;
+            TensorView<float32_t> logits(s->logits, Shape(m_config.vocab_size));
+            m_linear->forward(x_in, logits);
+            return logits.data();
         }
 
         auto getConfig() const -> const TransformerConfig &

@@ -242,6 +242,11 @@ namespace llama2cpp
             return size() == 0;
         }
 
+        auto copyFrom(pointer data, size_t num_elements)
+        {
+            COMPUTE<T>::copy(data, m_data, num_elements);
+        }
+
         // TODO: implement iterators.
 
     private:

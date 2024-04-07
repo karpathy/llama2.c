@@ -2,6 +2,7 @@
 #define LLAMA2CPP_OPS_HPP
 #include <string>
 #include <math.h>
+#include "llama2cpp/tensor.hpp"
 
 namespace llama2cpp
 {
@@ -71,7 +72,7 @@ namespace llama2cpp
      * @param n input vector dimension.
      * @param d output vector dimension.
      */
-    void matmul(float *xout, float *x, float *w, int n, int d)
+    void matmul(float *xout, const float *x, const float *w, int n, int d)
     {
 
         int i;
@@ -87,6 +88,32 @@ namespace llama2cpp
         }
     }
 
+    template <typename T>
+    void matmul(TensorView<T> &xout, const TensorView<T> &xin, const TensorView<T> &w)
+    {
+        // TODO compute based matmul
+        matmul(xout.data(), xin.data(), w.data(), xin.size(), xout.size());
+    }
+
+    template <typename T>
+    void rmsnorm(TensorView<T> &out, TensorView<T> &x, const TensorView<T> &weight)
+    {
+
+        // calculate sum of squares
+        T ss = static_cast<T>(0);
+        for (auto j = 0; j < x.size(); ++j)
+        {
+            ss += x(j) * x(j);
+        }
+        ss /= x.size();
+        ss += 1e-5f;
+        ss = 1.0f / sqrtf(ss);
+        // normalize and scale
+        for (auto j = 0; j < x.size(); ++j)
+        {
+            out(j) = weight(j) * (ss * x(j));
+        }
+    }
 
 }
 #endif

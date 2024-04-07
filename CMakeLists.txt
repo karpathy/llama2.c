@@ -36,10 +36,14 @@ target_compile_options(run_llama PRIVATE -fsanitize=address)
 target_link_options(run_llama PRIVATE -fsanitize=address)
 
 if(BUILD_TESTS)
-    # enable_testing() # TODO add gtest
+    enable_testing() # TODO add gtest
+    include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
+
     add_executable(test_tokenizer tests/test_tokenizer.cpp)
-    target_link_libraries(test_tokenizer PRIVATE llama2cpp_core)
+    target_link_libraries(test_tokenizer PRIVATE llama2cpp_core gtest gtest_main)
+    add_test(test_tokenizer test_tokenizer)
 
     add_executable(test_tensor tests/test_tensor.cpp)
-    target_link_libraries(test_tensor PRIVATE llama2cpp_core)
+    target_link_libraries(test_tensor PRIVATE llama2cpp_core gtest gtest_main)
+    add_test(test_tensor test_tensor)
 endif()
