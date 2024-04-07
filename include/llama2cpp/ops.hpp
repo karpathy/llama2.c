@@ -6,7 +6,7 @@
 namespace llama2cpp
 {
 
-    void rmsnorm(float *o, float *x, float *weight, int size)
+    void rmsnorm(float *out, float *x, float *weight, int size)
     {
         // calculate sum of squares
         float ss = 0.0f;
@@ -20,7 +20,7 @@ namespace llama2cpp
         // normalize and scale
         for (int j = 0; j < size; j++)
         {
-            o[j] = weight[j] * (ss * x[j]);
+            out[j] = weight[j] * (ss * x[j]);
         }
     }
 
@@ -86,6 +86,7 @@ namespace llama2cpp
             xout[i] = val;
         }
     }
+
 
 }
 #endif

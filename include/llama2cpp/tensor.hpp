@@ -59,6 +59,40 @@ namespace llama2cpp
         size_t m_num_dims;
     };
 
+    template <class T, size_t DIM>
+    class TensorView
+    {
+    public:
+        using value_type = T;                                            ///< datatype
+        using reference = value_type &;                                  ///< reference type
+        using const_reference = const value_type &;                      ///< const reference type
+        using pointer = value_type *;                                    ///< pointer type
+        using size_type = size_t;                                        ///< size type
+        using ptr = typename std::shared_ptr<TensorView<T, DIM>>;        ///< shared pointer type
+        using unique_ptr = typename std::unique_ptr<TensorView<T, DIM>>; ///< unique pointer type
+        static constexpr const size_t dimension = DIM;                   ///< dimension of the tensor
+
+        TensorView(pointer data, Shape shape) : m_data(data), m_shape(shape) {}
+
+        template <typename... ARGS>
+        auto operator()(ARGS... args) -> reference
+        {
+            assert(m_data != nullptr);
+            return m_data + m_shape(args...);
+        }
+
+        template <typename... ARGS>
+        auto operator()(ARGS... args) const -> const_reference
+        {
+            assert(m_data != nullptr);
+            return m_data + m_shape(args...);
+        }
+
+    private:
+        pointer m_data;
+        Shape m_shape;
+    };
+
     template <template <class> class COMPUTE, class T, size_t DIM>
     class Tensor
     {

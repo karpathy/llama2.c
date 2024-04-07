@@ -191,17 +191,107 @@ namespace llama2cpp
     {
     public:
         using ptr = std::unique_ptr<Attention>;
-        Attention() {}
-        void forward() {}
+        Attention(float *wq, float *wk, float *wv, float *key_cache, float *value_cache, int loff, int kv_dim, int dim, int n_heads, int kv_heads, int seq_len)
+            : m_wq(wq), m_wk(wk), m_wv(wv), m_key_cache(key_cache), m_value_cache(value_cache), m_loff(loff), m_kv_dim(kv_dim), m_dim(dim), m_n_heads(n_heads), m_kv_heads(kv_heads), m_head_size(dim / n_heads), m_seq_len(seq_len) {}
+
+        void forward(float *in, float *q, float *k, float *v, float *att, float *xb, int pos_)
+        {
+            // key and value point to the kv cache
+            k = m_key_cache + m_loff + pos_ * m_kv_dim;
+            v = m_value_cache + m_loff + pos_ * m_kv_dim;
+
+            // qkv matmuls for this position
+            matmul(q, in, m_wq, m_dim, m_dim);
+            matmul(k, in, m_wk, m_dim, m_kv_dim);
+            matmul(v, in, m_wv, m_dim, m_kv_dim);
+
+            // RoPE relative positional encoding: complex-valued rotate q and k in each head
+            for (int i = 0; i < m_dim; i += 2)
+            {
+                int head_dim = i % m_head_size;
+                float freq = 1.0f / powf(10000.0f, head_dim / (float)m_head_size);
+                float val = pos_ * freq;
+                float fcr = cosf(val);
+                float fci = sinf(val);
+                int rotn = i < m_kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
+                for (int v = 0; v < rotn; v++)
+                {
+                    float *vec = v == 0 ? q : k; // the vector to rotate (query or key)
+                    float v0 = vec[i];
+                    float v1 = vec[i + 1];
+                    vec[i] = v0 * fcr - v1 * fci;
+                    vec[i + 1] = v0 * fci + v1 * fcr;
+                }
+            }
+
+            // multihead attention. iterate over all heads
+            int kv_mul = m_n_heads / m_kv_heads;
+            int h;
+#pragma omp parallel for private(h)
+            for (h = 0; h < m_n_heads; h++)
+            {
+                // get the query vector for this head
+                float *q_ = q + h * m_head_size;
+                // attention scores for this head
+                float *att_ = att + h * m_seq_len;
+                // iterate over all timesteps, including the current one
+                for (int t = 0; t <= pos_; t++)
+                {
+                    // get the key vector for this head and at this timestep
+                    float *k_ = m_key_cache + m_loff + t * m_kv_dim + (h / kv_mul) * m_head_size;
+                    // calculate the attention score as the dot product of q and k
+                    float score = 0.0f;
+                    for (int i = 0; i < m_head_size; i++)
+                    {
+                        score += q_[i] * k_[i];
+                    }
+                    score /= sqrtf(m_head_size);
+                    // save the score to the attention buffer
+                    att_[t] = score;
+                }
+
+                // softmax the scores to get attention weights, from 0..pos inclusively
+                softmax(att_, pos_ + 1);
+
+                // weighted sum of the values, store back into xb
+                float *xb_ = xb + h * m_head_size;
+                memset(xb_, 0, m_head_size * sizeof(float));
+                for (int t = 0; t <= pos_; t++)
+                {
+                    // get the value vector for this head and at this timestep
+                    float *v_ = m_value_cache + m_loff + t * m_kv_dim + (h / kv_mul) * m_head_size;
+                    // get the attention weight for this timestep
+                    float a = att_[t];
+                    // accumulate the weighted value into xb
+                    for (int i = 0; i < m_head_size; i++)
+                    {
+                        xb_[i] += a * v_[i];
+                    }
+                }
+            }
+        }
 
     private:
+        float *m_wq;
+        float *m_wk;
+        float *m_wv;
+        float *m_key_cache;
+        float *m_value_cache;
+        int m_loff; // kv cache layer offset for convenience
+        int m_kv_dim;
+        int m_dim;
+        int m_n_heads;
+        int m_kv_heads;
+        int m_head_size;
+        int m_seq_len;
     };
 
     class FeedForward
     {
     public:
         using ptr = std::unique_ptr<FeedForward>;
-        FeedForward(float *w1_, float *w2_, float *w3_, float *hb_, float *hb2_, int dim, int hidden_dim) : m_dim(dim), m_hidden_dim(hidden_dim), m_w1(w1_), m_w2(w2_), m_w3(w3_), m_hb(hb_), m_hb2(hb2_) {}
+        FeedForward(float *w1_, float *w2_, float *w3_, float *hb_, float *hb2_, int dim, int hidden_dim)
+            : m_dim(dim), m_hidden_dim(hidden_dim), m_w1(w1_), m_w2(w2_), m_w3(w3_), m_hb(hb_), m_hb2(hb2_) {}
 
         /**
          * @brief forward pass for feedforward layer.
@@ -223,7 +313,6 @@ namespace llama2cpp
                 val *= m_hb2[i];
                 m_hb[i] = val;
             }
-            // this->silu();
 
             // final matmul to get the output of the ffn
             matmul(out, m_hb, m_w2, m_hidden_dim, m_dim);
@@ -234,23 +323,26 @@ namespace llama2cpp
     private:
         int m_dim; // transformer dimension.
         int m_hidden_dim;
-        float *m_w1;
-        float *m_w2;
-        float *m_w3;
-        float *m_hb;
-        float *m_hb2;
+        float *m_w1;  // (layer, hidden_dim, dim)
+        float *m_w2;  // (layer, hidden_dim, dim)
+        float *m_w3;  // (layer, hidden_dim, dim)
+        float *m_hb;  // buffer for hidden dimension (hidden_dim,)
+        float *m_hb2; // buffer for hidden dimension (hidden_dim,)
     };
 
     class TransformerBlock
     {
     public:
         using ptr = std::unique_ptr<TransformerBlock>;
-        TransformerBlock(float *w1_, float *w2_, float *w3_, float *hb_, float *hb2_, int dim, int hidden_dim, float *rms_ffn_weight) : m_attention(nullptr), m_feedforward(nullptr), m_rms_ffn_weight(rms_ffn_weight)
+        TransformerBlock(FeedForward::ptr feed_forward, float *rms_ffn_weight)
+            : m_attention(nullptr), m_feedforward(std::move(feed_forward)), m_rms_ffn_weight(rms_ffn_weight)
         {
-            m_feedforward = std::make_unique<FeedForward>(w1_, w2_, w3_, hb_, hb2_, dim, hidden_dim);
         }
+
         void forward(float *x, float *h, float *out)
         {
+            // attention norm
+
             // forward attention.
 
             // ffn rmsnorm
@@ -299,16 +391,45 @@ namespace llama2cpp
             read_checkpoint(checkpoint_path, m_config, &m_weights, &m_fd, &m_data, &m_file_size);
             // allocate the RunState buffers
             malloc_run_state(m_state, m_config);
-            // m_linear = std::make_unique<Linear>(&m_weights, &m_config);
-            m_linear = std::make_unique<Linear>(m_weights.wcls, m_config.dim, m_config.vocab_size);
+
+            initializeLayers();
+        }
+
+        void initializeLayers()
+        {
+            int kv_dim = (m_config.dim * m_config.n_kv_heads) / m_config.n_heads;
             for (unsigned long long l = 0; l < m_config.n_layers; l++)
             {
+                // Attention layer
+                int loff_ = l * m_config.seq_len * kv_dim; // kv cache layer offset for convenience
+                float *wq = m_weights.wq + l * m_config.dim * m_config.dim;
+                float *wk = m_weights.wk + l * m_config.dim * kv_dim;
+                float *wv = m_weights.wv + l * m_config.dim * kv_dim;
+                int head_size = m_config.dim / m_config.n_heads;
+                Attention::ptr attention = std::make_unique<Attention>(wq, wk, wv,
+                                                                       m_state.key_cache,
+                                                                       m_state.value_cache,
+                                                                       loff_, kv_dim,
+                                                                       m_config.dim,
+                                                                       m_config.n_heads,
+                                                                       m_config.n_kv_heads,
+                                                                       m_config.seq_len);
+                m_attn_layers.push_back(std::move(attention));
+
+                // FF layer
                 float *w1 = m_weights.w1 + l * m_config.dim * m_config.hidden_dim;
                 float *w2 = m_weights.w2 + l * m_config.dim * m_config.hidden_dim;
                 float *w3 = m_weights.w3 + l * m_config.dim * m_config.hidden_dim;
                 float *rms_ffn_weight_ = m_weights.rms_ffn_weight + l * m_config.dim;
-                m_layers.push_back(std::make_unique<TransformerBlock>(w1, w2, w3, m_state.hb, m_state.hb2, m_config.dim, m_config.hidden_dim, rms_ffn_weight_));
+                FeedForward::ptr feedforward = std::make_unique<FeedForward>(w1, w2, w3,
+                                                                             m_state.hb,
+                                                                             m_state.hb2,
+                                                                             m_config.dim,
+                                                                             m_config.hidden_dim);
+                m_layers.push_back(std::make_unique<TransformerBlock>(std::move(feedforward), rms_ffn_weight_));
             }
+
+            m_linear = std::make_unique<Linear>(m_weights.wcls, m_config.dim, m_config.vocab_size);
         }
 
         ~Transformer()
@@ -329,7 +450,6 @@ namespace llama2cpp
         auto forward(int token, int pos) -> float32_t *
         {
             // a few convenience variables
-            // TransformerConfig *p = &config;
             TransformerWeights *w = &m_weights;
             RunState *s = &m_state;
             float *x = s->x;
@@ -350,79 +470,9 @@ namespace llama2cpp
                 // attention rmsnorm
                 rmsnorm(s->xb, x, w->rms_att_weight + l * dim, dim);
 
-                // key and value point to the kv cache
-                int loff = l * m_config.seq_len * kv_dim; // kv cache layer offset for convenience
-                s->k = s->key_cache + loff + pos * kv_dim;
-                s->v = s->value_cache + loff + pos * kv_dim;
 
-                // qkv matmuls for this position
-                matmul(s->q, s->xb, w->wq + l * dim * dim, dim, dim);
-                matmul(s->k, s->xb, w->wk + l * dim * kv_dim, dim, kv_dim);
-                matmul(s->v, s->xb, w->wv + l * dim * kv_dim, dim, kv_dim);
+                m_attn_layers[l]->forward(s->xb, s->q, s->k, s->v, s->att, s->xb, pos);
 
-                // RoPE relative positional encoding: complex-valued rotate q and k in each head
-                for (int i = 0; i < dim; i += 2)
-                {
-                    int head_dim = i % head_size;
-                    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-                    float val = pos * freq;
-                    float fcr = cosf(val);
-                    float fci = sinf(val);
-                    int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-                    for (int v = 0; v < rotn; v++)
-                    {
-                        float *vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
-                        float v0 = vec[i];
-                        float v1 = vec[i + 1];
-                        vec[i] = v0 * fcr - v1 * fci;
-                        vec[i + 1] = v0 * fci + v1 * fcr;
-                    }
-                }
-
-                // multihead attention. iterate over all heads
-                int h;
-#pragma omp parallel for private(h)
-                for (h = 0; h < m_config.n_heads; h++)
-                {
-                    // get the query vector for this head
-                    float *q = s->q + h * head_size;
-                    // attention scores for this head
-                    float *att = s->att + h * m_config.seq_len;
-                    // iterate over all timesteps, including the current one
-                    for (int t = 0; t <= pos; t++)
-                    {
-                        // get the key vector for this head and at this timestep
-                        float *k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                        // calculate the attention score as the dot product of q and k
-                        float score = 0.0f;
-                        for (int i = 0; i < head_size; i++)
-                        {
-                            score += q[i] * k[i];
-                        }
-                        score /= sqrtf(head_size);
-                        // save the score to the attention buffer
-                        att[t] = score;
-                    }
-
-                    // softmax the scores to get attention weights, from 0..pos inclusively
-                    softmax(att, pos + 1);
-
-                    // weighted sum of the values, store back into xb
-                    float *xb = s->xb + h * head_size;
-                    memset(xb, 0, head_size * sizeof(float));
-                    for (int t = 0; t <= pos; t++)
-                    {
-                        // get the value vector for this head and at this timestep
-                        float *v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                        // get the attention weight for this timestep
-                        float a = att[t];
-                        // accumulate the weighted value into xb
-                        for (int i = 0; i < head_size; i++)
-                        {
-                            xb[i] += a * v[i];
-                        }
-                    }
-                }
 
                 // final matmul to get the output of the attention
                 matmul(s->xb2, s->xb, w->wo + l * dim * dim, dim, dim);
@@ -459,7 +509,7 @@ namespace llama2cpp
         ssize_t m_file_size; // size of the checkpoint file in bytes
         Linear::ptr m_linear;
         std::vector<TransformerBlock::ptr> m_layers;
-        // std::vector<FeedForward::ptr> m_feedforward;
+        std::vector<Attention::ptr> m_attn_layers;
     };
 
 }
