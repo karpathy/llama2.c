@@ -56,13 +56,13 @@ namespace llama2cpp
         // float *x;      // activation at current time stamp (dim,)
         // float *xb;     // same, but inside a residual branch (dim,)
         // float *xb2;    // an additional buffer just for convenience (dim,)
-        float *hb;     // buffer for hidden dimension in the ffn (hidden_dim,)
-        float *hb2;    // buffer for hidden dimension in the ffn (hidden_dim,)
-        float *q;      // query (dim,)
-        float *k;      // key (dim,)
-        float *v;      // value (dim,)
-        float *att;    // buffer for scores/attention values (n_heads, seq_len)
-        float *logits; // output logits
+        // float *hb;     // buffer for hidden dimension in the ffn (hidden_dim,)
+        // float *hb2;    // buffer for hidden dimension in the ffn (hidden_dim,)
+        // float *q;      // query (dim,)
+        // float *k;      // key (dim,)
+        // float *v;      // value (dim,)
+        // float *att;    // buffer for scores/attention values (n_heads, seq_len)
+        // float *logits; // output logits
         // kv cache
         float *key_cache;   // (layer, seq_len, dim)
         float *value_cache; // (layer, seq_len, dim)
@@ -158,15 +158,15 @@ namespace llama2cpp
         // s.x = (float *)calloc(config.dim, sizeof(float));
         // s.xb = (float *)calloc(config.dim, sizeof(float));
         // s.xb2 = (float *)calloc(config.dim, sizeof(float));
-        s.hb = (float *)calloc(config.hidden_dim, sizeof(float));
-        s.hb2 = (float *)calloc(config.hidden_dim, sizeof(float));
-        s.q = (float *)calloc(config.dim, sizeof(float));
+        // s.hb = (float *)calloc(config.hidden_dim, sizeof(float));
+        // s.hb2 = (float *)calloc(config.hidden_dim, sizeof(float));
+        // s.q = (float *)calloc(config.dim, sizeof(float));
         s.key_cache = (float *)calloc(config.n_layers * config.seq_len * kv_dim, sizeof(float));
         s.value_cache = (float *)calloc(config.n_layers * config.seq_len * kv_dim, sizeof(float));
         // s.att = (float *)calloc(config.n_heads * config.seq_len, sizeof(float));
-        s.logits = (float *)calloc(config.vocab_size, sizeof(float));
+        // s.logits = (float *)calloc(config.vocab_size, sizeof(float));
         // ensure all mallocs went fine
-        if (!s.hb || !s.hb2 || !s.q || !s.key_cache || !s.value_cache || !s.logits)
+        if ( !s.key_cache || !s.value_cache )
         {
             std::cerr << "malloc failed" << std::endl;
             std::exit(EXIT_FAILURE);
@@ -178,11 +178,11 @@ namespace llama2cpp
         // free(s.x);
         // free(s.xb);
         // free(s.xb2);
-        free(s.hb);
-        free(s.hb2);
-        free(s.q);
+        // free(s.hb);
+        // free(s.hb2);
+        // free(s.q);
         // free(s.att);
-        free(s.logits);
+        // free(s.logits);
         free(s.key_cache);
         free(s.value_cache);
     }
@@ -292,18 +292,18 @@ namespace llama2cpp
     {
     public:
         using ptr = std::unique_ptr<FeedForward>;
-        FeedForward(float *w1_, float *w2_, float *w3_, float *hb_, float *hb2_, int dim, int hidden_dim)
-            : m_dim(dim), m_hidden_dim(hidden_dim), m_w1(w1_), m_w2(w2_), m_w3(w3_), m_hb(hb_), m_hb2(hb2_) {}
+        FeedForward(TensorView<float> &w1_, TensorView<float> &w2_, TensorView<float> &w3_, int dim, int hidden_dim)
+            : m_dim(dim), m_hidden_dim(hidden_dim), m_w1(w1_), m_w2(w2_), m_w3(w3_), m_hb(Shape(hidden_dim)), m_hb2(Shape(hidden_dim)) {}
 
         /**
          * @brief forward pass for feedforward layer.
          *
          * self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
          */
-        void forward(float *in, float *out)
+        void forward(TensorView<float> &in, TensorView<float> &out)
         {
-            matmul(m_hb, in, m_w1, m_dim, m_hidden_dim);
-            matmul(m_hb2, in, m_w3, m_dim, m_hidden_dim);
+            matmul(m_hb, in, m_w1);
+            matmul(m_hb2, in, m_w3);
 
             // SwiGLU non-linearity
             for (int i = 0; i < m_hidden_dim; i++)
@@ -317,19 +317,17 @@ namespace llama2cpp
             }
 
             // final matmul to get the output of the ffn
-            matmul(out, m_hb, m_w2, m_hidden_dim, m_dim);
+            matmul(out, m_hb, m_w2);
         }
-
-        auto dim() const -> const int { return m_dim; }
 
     private:
         int m_dim; // transformer dimension.
         int m_hidden_dim;
-        float *m_w1;  // (layer, hidden_dim, dim)
-        float *m_w2;  // (layer, hidden_dim, dim)
-        float *m_w3;  // (layer, hidden_dim, dim)
-        float *m_hb;  // buffer for hidden dimension (hidden_dim,)
-        float *m_hb2; // buffer for hidden dimension (hidden_dim,)
+        TensorView<float> m_w1;       // (hidden_dim, dim)
+        TensorView<float> m_w2;       // (hidden_dim, dim)
+        TensorView<float> m_w3;       // (hidden_dim, dim)
+        Tensor<CPU, float32_t> m_hb;  // buffer for hidden dimension (hidden_dim,)
+        Tensor<CPU, float32_t> m_hb2; // buffer for hidden dimension (hidden_dim,)
     };
 
     class TransformerBlock
@@ -363,10 +361,10 @@ namespace llama2cpp
             rmsnorm(m_xh, x, m_w_rms_ffn);
 
             // forward FFN.
-            m_feedforward->forward(m_xh.data(), m_xh.data());
+            m_feedforward->forward(m_xh, m_xh);
 
             // residual connection
-            for (int i = 0; i < m_feedforward->dim(); i++)
+            for (int i = 0; i < m_xh.shape()[0]; i++)
             {
                 x(i) += m_xh(i);
             }
@@ -419,6 +417,7 @@ namespace llama2cpp
             int kv_dim = (m_config.dim * m_config.n_kv_heads) / m_config.n_heads;
             int dim = m_config.dim;
             int head_size = m_config.dim / m_config.n_heads;
+            int hidden_dim = m_config.hidden_dim;
 
             for (unsigned long long l = 0; l < m_config.n_layers; l++)
             {
@@ -438,12 +437,10 @@ namespace llama2cpp
                                                                        m_config.seq_len);
 
                 // FF layer
-                float *w1 = m_weights.w1 + l * dim * m_config.hidden_dim;
-                float *w2 = m_weights.w2 + l * dim * m_config.hidden_dim;
-                float *w3 = m_weights.w3 + l * dim * m_config.hidden_dim;
+                TensorView<float32_t> w1(m_weights.w1 + l * dim * hidden_dim, Shape(hidden_dim, dim));
+                TensorView<float32_t> w2(m_weights.w2 + l * dim * hidden_dim, Shape(hidden_dim, dim));
+                TensorView<float32_t> w3(m_weights.w3 + l * dim * hidden_dim, Shape(hidden_dim, dim));
                 FeedForward::ptr feedforward = std::make_unique<FeedForward>(w1, w2, w3,
-                                                                             m_state.hb,
-                                                                             m_state.hb2,
                                                                              dim,
                                                                              m_config.hidden_dim);
                 TensorView<float32_t> wo(m_weights.wo + l * dim * dim, Shape(dim, dim));
