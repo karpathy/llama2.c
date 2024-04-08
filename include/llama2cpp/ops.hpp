@@ -88,6 +88,15 @@ namespace llama2cpp
         }
     }
 
+    /**
+     * @brief Matrix multiplication
+     * xout = w * xin
+     *
+     * @tparam T datatype
+     * @param xout output tensor (m)
+     * @param xin input tensor (n)
+     * @param w weight matrix (mxn)
+     */
     template <typename T>
     void matmul(TensorView<T> &xout, const TensorView<T> &xin, const TensorView<T> &w)
     {

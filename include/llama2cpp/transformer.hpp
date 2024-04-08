@@ -166,7 +166,7 @@ namespace llama2cpp
         // s.att = (float *)calloc(config.n_heads * config.seq_len, sizeof(float));
         // s.logits = (float *)calloc(config.vocab_size, sizeof(float));
         // ensure all mallocs went fine
-        if ( !s.key_cache || !s.value_cache )
+        if (!s.key_cache || !s.value_cache)
         {
             std::cerr << "malloc failed" << std::endl;
             std::exit(EXIT_FAILURE);
@@ -191,92 +191,95 @@ namespace llama2cpp
     {
     public:
         using ptr = std::unique_ptr<Attention>;
-        explicit Attention(float *wq, float *wk, float *wv, float *key_cache, float *value_cache, int loff, int kv_dim, int dim, int n_heads, int kv_heads, int seq_len)
+        explicit Attention(TensorView<float32_t> &wq, TensorView<float32_t> &wk, TensorView<float32_t> &wv, float *key_cache, float *value_cache, int loff, int kv_dim, int dim, int n_heads, int kv_heads, int seq_len)
             : m_wq(wq), m_wk(wk), m_wv(wv), m_key_cache(key_cache), m_value_cache(value_cache), m_loff(loff), m_kv_dim(kv_dim), m_dim(dim), m_n_heads(n_heads), m_kv_heads(kv_heads), m_head_size(dim / n_heads), m_seq_len(seq_len), m_q(Shape(dim)), m_att(Shape(n_heads * seq_len)) {}
 
-        void forward(float *in, float *xb, int pos_)
+        void forward(TensorView<float> &in, TensorView<float> &xb, int pos_)
         {
+            // in shape (dim), xb shape (dim)
+
             // key and value point to the kv cache
             TensorView<float32_t> k(m_key_cache + m_loff + pos_ * m_kv_dim, Shape(m_dim));
             TensorView<float32_t> v(m_value_cache + m_loff + pos_ * m_kv_dim, Shape(m_dim));
 
             // qkv matmuls for this position
-            matmul(m_q.data(), in, m_wq, m_dim, m_dim);
-            matmul(k.data(), in, m_wk, m_dim, m_kv_dim);
-            matmul(v.data(), in, m_wv, m_dim, m_kv_dim);
+            matmul(m_q, in, m_wq);
+            matmul(k, in, m_wk);
+            matmul(v, in, m_wv);
 
             // RoPE relative positional encoding: complex-valued rotate q and k in each head
             for (int i = 0; i < m_dim; i += 2)
             {
                 int head_dim = i % m_head_size;
-                float freq = 1.0f / powf(10000.0f, head_dim / (float)m_head_size);
-                float val = pos_ * freq;
-                float fcr = cosf(val);
-                float fci = sinf(val);
+                float32_t freq = 1.0f / powf(10000.0f, head_dim / static_cast<float32_t>(m_head_size));
+                float32_t val = pos_ * freq;
+                float32_t fcr = cosf(val);
+                float32_t fci = sinf(val);
                 int rotn = i < m_kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
                 for (int v = 0; v < rotn; v++)
                 {
-                    float *vec = v == 0 ? m_q.data() : k.data(); // the vector to rotate (query or key)
-                    float v0 = vec[i];
-                    float v1 = vec[i + 1];
+                    float32_t *vec = v == 0 ? m_q.data() : k.data(); // the vector to rotate (query or key)
+                    float32_t v0 = vec[i];
+                    float32_t v1 = vec[i + 1];
                     vec[i] = v0 * fcr - v1 * fci;
                     vec[i + 1] = v0 * fci + v1 * fcr;
                 }
             }
 
             // multihead attention. iterate over all heads
+            // @TODO write modular head implementation
             int kv_mul = m_n_heads / m_kv_heads;
             int h;
 #pragma omp parallel for private(h)
             for (h = 0; h < m_n_heads; h++)
             {
                 // get the query vector for this head
-                float *q_ = m_q.data() + h * m_head_size;
+                TensorView<float32_t> q_(m_q.data() + h * m_head_size, Shape(m_head_size));
                 // attention scores for this head
-                float *att_ = m_att.data() + h * m_seq_len;
+                TensorView<float32_t> att_(m_att.data() + h * m_seq_len, Shape(m_seq_len));
                 // iterate over all timesteps, including the current one
                 for (int t = 0; t <= pos_; t++)
                 {
                     // get the key vector for this head and at this timestep
-                    float *k_ = m_key_cache + m_loff + t * m_kv_dim + (h / kv_mul) * m_head_size;
+                    TensorView<float32_t> k_(m_key_cache + m_loff + t * m_kv_dim + (h / kv_mul) * m_head_size, Shape(m_head_size));
                     // calculate the attention score as the dot product of q and k
                     float score = 0.0f;
                     for (int i = 0; i < m_head_size; i++)
                     {
-                        score += q_[i] * k_[i];
+                        score += q_(i) * k_(i);
                     }
                     score /= sqrtf(m_head_size);
                     // save the score to the attention buffer
-                    att_[t] = score;
+                    att_(t) = score;
                 }
 
                 // softmax the scores to get attention weights, from 0..pos inclusively
-                softmax(att_, pos_ + 1);
+                softmax(att_.data(), pos_ + 1);
 
                 // weighted sum of the values, store back into xb
-                float *xb_ = xb + h * m_head_size;
-                memset(xb_, 0, m_head_size * sizeof(float));
+                TensorView<float32_t> xb_(xb.data() + h * m_head_size, Shape(m_head_size));
+                memset(xb_.data(), 0, m_head_size * sizeof(float32_t)); //@TODO implement API to set value
                 for (int t = 0; t <= pos_; t++)
                 {
                     // get the value vector for this head and at this timestep
-                    float *v_ = m_value_cache + m_loff + t * m_kv_dim + (h / kv_mul) * m_head_size;
+                    TensorView<float32_t> v_(m_value_cache + m_loff + t * m_kv_dim + (h / kv_mul) * m_head_size, Shape(m_head_size));
                     // get the attention weight for this timestep
-                    float a = att_[t];
+                    float32_t a = att_[t];
                     // accumulate the weighted value into xb
                     for (int i = 0; i < m_head_size; i++)
                     {
-                        xb_[i] += a * v_[i];
+                        xb_(i) += a * v_(i);
                     }
                 }
             }
         }
 
     private:
-        float *m_wq;
-        float *m_wk;
-        float *m_wv;
-        float *m_key_cache;
-        float *m_value_cache;
+        TensorView<float32_t> m_wq; // query (dim, n_heads * head_size)
+        TensorView<float32_t> m_wk; // key (dim, kv_dim * head_size)
+        TensorView<float32_t> m_wv; // value (dim, kv_dim * head_size)
+        float32_t *m_key_cache;
+        float32_t *m_value_cache;
         int m_loff; // kv cache layer offset for convenience
         int m_kv_dim;
         int m_dim;
@@ -346,7 +349,7 @@ namespace llama2cpp
             rmsnorm(m_xh, x, m_w_rms_att);
 
             // forward attention.
-            m_attention->forward(m_xh.data(), m_xh.data(), pos_);
+            m_attention->forward(m_xh, m_xh, pos_);
 
             // final matmul to get the output of the attention
             matmul(m_xh2, m_xh, m_wo);
@@ -416,6 +419,7 @@ namespace llama2cpp
         {
             int kv_dim = (m_config.dim * m_config.n_kv_heads) / m_config.n_heads;
             int dim = m_config.dim;
+            auto n_heads = m_config.n_heads;
             int head_size = m_config.dim / m_config.n_heads;
             int hidden_dim = m_config.hidden_dim;
 
@@ -423,9 +427,9 @@ namespace llama2cpp
             {
                 // Attention layer
                 int loff_ = l * m_config.seq_len * kv_dim; // kv cache layer offset for convenience
-                float *wq = m_weights.wq + l * m_config.dim * m_config.dim;
-                float *wk = m_weights.wk + l * m_config.dim * kv_dim;
-                float *wv = m_weights.wv + l * m_config.dim * kv_dim;
+                TensorView<float> wq(m_weights.wq + l * m_config.dim * m_config.dim, Shape(dim, n_heads * head_size));
+                TensorView<float> wk(m_weights.wk + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
+                TensorView<float> wv(m_weights.wv + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
 
                 Attention::ptr attention = std::make_unique<Attention>(wq, wk, wv,
                                                                        m_state.key_cache,
