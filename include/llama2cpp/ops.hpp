@@ -124,5 +124,49 @@ namespace llama2cpp
         }
     }
 
+    /**
+     * @brief Addition of 2 tensors
+     * result = a + b
+     *
+     * @tparam T datatype
+     * @param result sum of 2 tensors
+     * @param a tensor 1
+     * @param b tensor 2
+     */
+    template <typename T>
+    void add(TensorView<T> &result, TensorView<T> &a, TensorView<T> &b)
+    {
+        assert(a.size() == b.size());
+        assert(a.size() == result.size());
+        for (size_t i = 0; i < a.shape()[0]; ++i)
+        {
+            result(i) = a(i) + b(i);
+        }
+    }
+
+    template <typename T>
+    void silu_inpl(TensorView<T> &x)
+    {
+        // SwiGLU non-linearity
+        for (int i = 0; i < x.size(); i++)
+        {
+            auto val = x[i];
+            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+            val *= (1.0f / (1.0f + expf(-val)));
+            x[i] = val;
+        }
+    }
+
+    template <typename T>
+    void hadamard_prod(TensorView<T> &result, TensorView<T> &a, TensorView<T> &b)
+    {
+        assert(a.size() == b.size());
+        assert(a.size() == result.size());
+        for (size_t i = 0; i < a.size(); ++i)
+        {
+            result[i] = a[i] * b[i];
+        }
+    }
+
 }
 #endif
