@@ -206,7 +206,7 @@ def version2_export(model, filepath, group_size=64):
     shared_classifier = torch.equal(model.tok_embeddings.weight, model.output.weight)
     if not shared_classifier:
         weights.append(model.output.weight)
-    for w in weights:
+    for i, w in enumerate(weights):
         assert w.numel() % group_size == 0, f"weight {i} has numel {w.numel()}, not a multiple of group_size {group_size}"
 
     # write
