@@ -1,6 +1,6 @@
 #include <iostream>
-#include <llama2cpp/tensor.hpp>
-#include <llama2cpp/ops.hpp>
+#include <llama2cpp/transformer/tensor.hpp>
+#include <llama2cpp/transformer/ops.hpp>
 #include "gtest/gtest.h"
 
 TEST(testTensor, creation)

@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 3.16.3)
-# option(BUILD_TESTS ON "Build unit tests")
+option(BUILD_TESTS ON "Build unit tests")
 project(llama2cpp
         VERSION 0.1.0
         LANGUAGES CXX 
@@ -15,18 +15,34 @@ option(BUILD_EXAMPLES OFF "Build examples")
 
 include_directories(include)
 
-file(GLOB HDR_FILES ${PROJECT_SOURCE_DIR}/include/${PROJECT_NAME}/*.hpp)
+file(GLOB HDR_FILES ${PROJECT_SOURCE_DIR}/include/${PROJECT_NAME}/transformer/*.hpp)
+
+add_library(transformer_cpp INTERFACE)
+target_sources(transformer_cpp
+        PUBLIC
+                ${HDR_FILES}
+)
+target_include_directories(transformer_cpp 
+    INTERFACE 
+        $<BUILD_INTERFACE:${PROJECT_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+
 
 add_library(llama2cpp_core SHARED)
 target_sources(llama2cpp_core
         PUBLIC
-                ${HDR_FILES}
+        ${PROJECT_SOURCE_DIR}/include/${PROJECT_NAME}/llama2.hpp
+        ${PROJECT_SOURCE_DIR}/include/${PROJECT_NAME}/sampler.hpp
+        ${PROJECT_SOURCE_DIR}/include/${PROJECT_NAME}/tokenizer.hpp
+        ${PROJECT_SOURCE_DIR}/include/${PROJECT_NAME}/utils.hpp
 )
+
 target_include_directories(llama2cpp_core PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/llama2cpp_core>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/llama2cpp>
   $<INSTALL_INTERFACE:include/llama2cpp_core>  # <prefix>/include/mylib
 )
 set_target_properties(llama2cpp_core PROPERTIES LINKER_LANGUAGE CXX)
+target_link_libraries(llama2cpp_core transformer_cpp)
 
 add_executable(
     run_llama src/main.cpp
