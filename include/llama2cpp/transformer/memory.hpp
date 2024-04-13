@@ -212,7 +212,7 @@ class Memory {
     // TODO: implement iterators.
 
    private:
-    std::allocator<value_type> m_alloc;
+    allocator_type m_alloc;
     pointer m_data;
     size_type m_size;
     size_type m_allocated_size;

@@ -51,23 +51,6 @@ struct TransformerWeights {
     float *wcls;
 };
 
-struct RunState {
-    // current wave of activations
-    // float *x;      // activation at current time stamp (dim,)
-    // float *xb;     // same, but inside a residual branch (dim,)
-    // float *xb2;    // an additional buffer just for convenience (dim,)
-    // float *hb;     // buffer for hidden dimension in the ffn (hidden_dim,)
-    // float *hb2;    // buffer for hidden dimension in the ffn (hidden_dim,)
-    // float *q;      // query (dim,)
-    // float *k;      // key (dim,)
-    // float *v;      // value (dim,)
-    // float *att;    // buffer for scores/attention values (n_heads, seq_len)
-    // float *logits; // output logits
-    // kv cache
-    float *key_cache;    // (layer, seq_len, dim)
-    float *value_cache;  // (layer, seq_len, dim)
-};
-
 void memory_map_weights(TransformerWeights *weights, TransformerConfig &config, float *ptr, int shared_weights) {
     int head_size = config.dim / config.n_heads;
     // make sure the multiplications below are done in 64bit to fit the
@@ -146,23 +129,6 @@ void read_checkpoint(const std::string &checkpoint_path, TransformerConfig &conf
     // // figure out the file size
 }
 
-void malloc_run_state(RunState &s, TransformerConfig &config) {
-    // we calloc instead of malloc to keep valgrind happy
-    int kv_dim = (config.dim * config.n_kv_heads) / config.n_heads;
-    s.key_cache = (float *)calloc(config.n_layers * config.seq_len * kv_dim, sizeof(float));
-    s.value_cache = (float *)calloc(config.n_layers * config.seq_len * kv_dim, sizeof(float));
-    // ensure all mallocs went fine
-    if (!s.key_cache || !s.value_cache) {
-        std::cerr << "malloc failed" << std::endl;
-        std::exit(EXIT_FAILURE);
-    }
-}
-
-void free_run_state(RunState &s) {
-    free(s.key_cache);
-    free(s.value_cache);
-}
-
 template <template <class> class COMPUTE, class T>
 class Attention {
    public:
@@ -170,14 +136,13 @@ class Attention {
     using value_type = T;
     using compute = COMPUTE<T>;
 
-    explicit Attention(TensorView<float32_t> &wq, TensorView<float32_t> &wk, TensorView<float32_t> &wv, float *key_cache, float *value_cache, int loff,
-                       int kv_dim, int dim, int n_heads, int kv_heads, int seq_len)
+    explicit Attention(TensorView<float32_t> &wq, TensorView<float32_t> &wk, TensorView<float32_t> &wv, int kv_dim, int dim, int n_heads, int kv_heads,
+                       int seq_len)
         : m_wq(wq),
           m_wk(wk),
           m_wv(wv),
-          m_key_cache(key_cache),
-          m_value_cache(value_cache),
-          m_loff(loff),
+          m_key_cache(Shape(seq_len * kv_dim)),
+          m_value_cache(Shape(seq_len * kv_dim)),
           m_kv_dim(kv_dim),
           m_dim(dim),
           m_n_heads(n_heads),
@@ -191,8 +156,8 @@ class Attention {
         // in shape (dim), xb shape (dim)
 
         // key and value point to the kv cache
-        TensorView<float32_t> k(m_key_cache + m_loff + pos_ * m_kv_dim, Shape(m_dim));
-        TensorView<float32_t> v(m_value_cache + m_loff + pos_ * m_kv_dim, Shape(m_dim));
+        TensorView<float32_t> k(m_key_cache.data() + pos_ * m_kv_dim, Shape(m_dim));
+        TensorView<float32_t> v(m_value_cache.data() + pos_ * m_kv_dim, Shape(m_dim));
 
         // qkv matmuls for this position
         matmul(m_q, in, m_wq);
@@ -230,7 +195,7 @@ class Attention {
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos_; t++) {
                 // get the key vector for this head and at this timestep
-                TensorView<float32_t> k_(m_key_cache + m_loff + t * m_kv_dim + (h / kv_mul) * m_head_size, Shape(m_head_size));
+                TensorView<float32_t> k_(m_key_cache.data() + t * m_kv_dim + (h / kv_mul) * m_head_size, Shape(m_head_size));
                 // calculate the attention score as the dot product of q and k
                 float32_t score = dot_prod(q_, k_);
                 score /= sqrtf(m_head_size);
@@ -248,7 +213,7 @@ class Attention {
                    m_head_size * sizeof(float32_t));  //@TODO implement API to set value
             for (int t = 0; t <= pos_; t++) {
                 // get the value vector for this head and at this timestep
-                TensorView<float32_t> v_(m_value_cache + m_loff + t * m_kv_dim + (h / kv_mul) * m_head_size, Shape(m_head_size));
+                TensorView<float32_t> v_(m_value_cache.data() + t * m_kv_dim + (h / kv_mul) * m_head_size, Shape(m_head_size));
                 // get the attention weight for this timestep
                 float32_t a = att_[t];
                 // accumulate the weighted value into xb
@@ -260,20 +225,19 @@ class Attention {
     }
 
    private:
-    TensorView<float32_t> m_wq;  // query (dim, n_heads * head_size)
-    TensorView<float32_t> m_wk;  // key (dim, kv_dim * head_size)
-    TensorView<float32_t> m_wv;  // value (dim, kv_dim * head_size)
-    float32_t *m_key_cache;
-    float32_t *m_value_cache;
-    int m_loff;  // kv cache layer offset for convenience
-    int m_kv_dim;
-    int m_dim;
-    int m_n_heads;
-    int m_kv_heads;
-    int m_head_size;
-    int m_seq_len;
-    Tensor<CPU, float32_t> m_q;
-    Tensor<CPU, float32_t> m_att;
+    TensorView<float32_t> m_wq;            // query (dim, n_heads * head_size)
+    TensorView<float32_t> m_wk;            // key (dim, kv_dim * head_size)
+    TensorView<float32_t> m_wv;            // value (dim, kv_dim * head_size)
+    Tensor<CPU, float32_t> m_key_cache;    // key cache (seq_len * kv_dim)
+    Tensor<CPU, float32_t> m_value_cache;  // value cache (seq_len * kv_dim)
+    int m_kv_dim;                          // key value cache dimension ((dim * n_kv_heads) / n_heads)
+    int m_dim;                             // transformer dimension
+    int m_n_heads;                         // number of heads.
+    int m_kv_heads;                        // number of key/value heads (can be < query heads because of multiquery)
+    int m_head_size;                       // (dim / n_heads)
+    int m_seq_len;                         // max sequence length
+    Tensor<CPU, float32_t> m_q;            // query tensor
+    Tensor<CPU, float32_t> m_att;          // attention tensor
 };
 
 template <template <class> class COMPUTE, class T>
@@ -386,8 +350,6 @@ class Transformer {
     explicit Transformer(const std::string &checkpoint_path) {
         // read in the Config and the Weights from the checkpoint
         read_checkpoint(checkpoint_path, m_config, &m_weights, &m_fd, &m_data, &m_file_size);
-        // allocate the RunState buffers
-        malloc_run_state(m_state, m_config);
 
         initializeLayers();
     }
@@ -406,14 +368,14 @@ class Transformer {
             TensorView<float32_t> wk(m_weights.wk + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
             TensorView<float32_t> wv(m_weights.wv + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
 
-            auto attention = std::make_unique<Attention<CPU, float32_t>>(wq, wk, wv, m_state.key_cache, m_state.value_cache, loff_, kv_dim, dim,
-                                                                         m_config.n_heads, m_config.n_kv_heads, m_config.seq_len);
+            auto attention = std::make_unique<Attention<CPU, float32_t>>(wq, wk, wv, kv_dim, dim, m_config.n_heads, m_config.n_kv_heads, m_config.seq_len);
 
             // FF layer
             TensorView<float32_t> w1(m_weights.w1 + l * dim * hidden_dim, Shape(hidden_dim, dim));
             TensorView<float32_t> w2(m_weights.w2 + l * dim * hidden_dim, Shape(hidden_dim, dim));
             TensorView<float32_t> w3(m_weights.w3 + l * dim * hidden_dim, Shape(hidden_dim, dim));
             auto feedforward = std::make_unique<FeedForward<CPU, float32_t>>(w1, w2, w3, dim, m_config.hidden_dim);
+
             TensorView<float32_t> wo(m_weights.wo + l * dim * dim, Shape(dim, dim));
             TensorView<float32_t> w_rms_att(m_weights.rms_att_weight + l * dim, Shape(dim));
             TensorView<float32_t> w_rms_ffn(m_weights.rms_ffn_weight + l * dim, Shape(dim));
@@ -432,14 +394,12 @@ class Transformer {
         if (m_fd != -1) {
             close(m_fd);
         }
-        // free the RunState buffers
-        free_run_state(m_state);
     }
 
     void forward(int token, int pos, Tensor<CPU, float32_t> &logits) {
         // a few convenience variables
         TransformerWeights *w = &m_weights;
-        RunState *s = &m_state;
+        // RunState *s = &m_state;
         size_t dim = static_cast<size_t>(m_config.dim);
 
         // copy the token embedding into x
@@ -467,7 +427,6 @@ class Transformer {
    private:
     TransformerConfig m_config;    // the hyperparameters of the architecture (the blueprint)
     TransformerWeights m_weights;  // the weights of the model
-    RunState m_state;              // buffers for the "wave" of activations in the forward pass
     // some more state needed to properly clean up the memory mapping (sigh)
     int m_fd;             // file descriptor for memory mapping
     float *m_data;        // memory mapped data pointer
