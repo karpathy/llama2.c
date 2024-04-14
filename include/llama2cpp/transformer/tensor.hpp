@@ -170,5 +170,19 @@ class Tensor : public TensorView<T> {
     Memory<COMPUTE, value_type> m_memory;
 };
 
+
+// std::ostream &operator<<(std::ostream &os, const TensorView<llama2cpp::CPU, llama2cpp::float32_t> &tensor) {
+//     os << "Shape (";
+//     // auto &vec = shape.shapeVec();
+//     // for (size_t i = 0; i < vec.size(); ++i) {
+//     //     if (i > 0) {
+//     //         os << ",";
+//     //     }
+//     //     os << vec[i];
+//     // }
+//     os << ")";
+//     return os;
+// }
+
 }  // namespace llama2cpp
 #endif

@@ -35,7 +35,7 @@ struct TransformerWeights {
     Tensor<CPU, float32_t> token_embedding_table;  // (vocab_size, dim)
     // weights for rmsnorms
     Tensor<CPU, float32_t> rms_att_weight;  // (layer, dim) rmsnorm weights
-    Tensor<CPU, float32_t> rms_ffn_weight;   // (layer, dim)
+    Tensor<CPU, float32_t> rms_ffn_weight;  // (layer, dim)
     // weights for matmuls. note dim == n_heads * head_size
     Tensor<CPU, float32_t> wq;  // (layer, dim, n_heads * head_size)
     Tensor<CPU, float32_t> wk;  // (layer, dim, n_kv_heads * head_size)
@@ -52,63 +52,69 @@ struct TransformerWeights {
 };
 
 void memory_map_weights(TransformerWeights *weights, TransformerConfig &config, float *ptr, int shared_weights) {
-    int head_size = config.dim / config.n_heads;
+    size_t dim = static_cast<size_t>(config.dim);
+    size_t head_size = static_cast<size_t>(config.dim / config.n_heads);
+    size_t vocab_size = static_cast<size_t>(config.vocab_size);
+    size_t n_heads = static_cast<size_t>(config.n_heads);
+    size_t n_kv_heads = static_cast<size_t>(config.n_kv_heads);
+    size_t hidden_dim = static_cast<size_t>(config.hidden_dim);
+
     // make sure the multiplications below are done in 64bit to fit the
     // parameter counts of 13B+ models
     unsigned long long n_layers = config.n_layers;
 
     // weights->token_embedding_table = ptr;
-    weights->token_embedding_table.reShape(Shape(config.vocab_size, config.dim));
+    weights->token_embedding_table.reShape(Shape(vocab_size, dim));
     weights->token_embedding_table.copyFrom(ptr, weights->token_embedding_table.numElements());
     ptr += config.vocab_size * config.dim;
 
     // weights->rms_att_weight = ptr;
-    weights->rms_att_weight.reShape(Shape(config.n_layers, config.dim));
+    weights->rms_att_weight.reShape(Shape(n_layers, dim));
     weights->rms_att_weight.copyFrom(ptr, weights->rms_att_weight.numElements());
     ptr += n_layers * config.dim;
 
     // weights->wq = ptr;
-    weights->wq.reShape(Shape(config.n_layers, config.dim, config.n_heads * head_size));
+    weights->wq.reShape(Shape(n_layers, dim, n_heads * head_size));
     weights->wq.copyFrom(ptr, weights->wq.numElements());
     ptr += n_layers * config.dim * (config.n_heads * head_size);
 
     // weights->wk = ptr;
-    weights->wk.reShape(Shape(config.n_layers, config.dim, config.n_kv_heads * head_size));
+    weights->wk.reShape(Shape(n_layers, dim, n_kv_heads * head_size));
     weights->wk.copyFrom(ptr, weights->wk.numElements());
     ptr += n_layers * config.dim * (config.n_kv_heads * head_size);
 
     // weights->wv = ptr;
-    weights->wv.reShape(Shape(config.n_layers, config.dim, config.n_kv_heads * head_size));
+    weights->wv.reShape(Shape(n_layers, dim, n_kv_heads * head_size));
     weights->wv.copyFrom(ptr, weights->wv.numElements());
     ptr += n_layers * config.dim * (config.n_kv_heads * head_size);
 
     // weights->wo = ptr;
-    weights->wo.reShape(Shape(config.n_layers, config.dim, config.n_heads * head_size));
+    weights->wo.reShape(Shape(n_layers, dim, n_heads * head_size));
     weights->wo.copyFrom(ptr, weights->wo.numElements());
     ptr += n_layers * config.dim * (config.n_heads * head_size);
 
     // weights->rms_ffn_weight = ptr;
-    weights->rms_ffn_weight.reShape(Shape(config.n_layers, config.dim));
+    weights->rms_ffn_weight.reShape(Shape(n_layers, dim));
     weights->rms_ffn_weight.copyFrom(ptr, weights->rms_ffn_weight.numElements());
     ptr += n_layers * config.dim;
 
     // weights->w1 = ptr;
-    weights->w1.reShape(Shape(config.n_layers, config.hidden_dim, config.dim));
+    weights->w1.reShape(Shape(n_layers, hidden_dim, dim));
     weights->w1.copyFrom(ptr, weights->w1.numElements());
     ptr += n_layers * config.dim * config.hidden_dim;
 
     // weights->w2 = ptr;
-    weights->w2.reShape(Shape(config.n_layers, config.dim, config.hidden_dim));
+    weights->w2.reShape(Shape(n_layers, dim, hidden_dim));
     weights->w2.copyFrom(ptr, weights->w2.numElements());
     ptr += n_layers * config.hidden_dim * config.dim;
 
     // weights->w3 = ptr;
-    weights->w3.reShape(Shape(config.n_layers, config.hidden_dim, config.dim));
+    weights->w3.reShape(Shape(n_layers, hidden_dim, dim));
     weights->w3.copyFrom(ptr, weights->w3.numElements());
     ptr += n_layers * config.dim * config.hidden_dim;
 
     // weights->rms_final_weight = ptr;
-    weights->rms_final_weight.reShape(Shape(config.dim));
+    weights->rms_final_weight.reShape(Shape(dim));
     weights->rms_final_weight.copyFrom(ptr, weights->rms_final_weight.numElements());
 
     ptr += config.dim;
@@ -116,55 +122,43 @@ void memory_map_weights(TransformerWeights *weights, TransformerConfig &config, 
     ptr += config.seq_len * head_size / 2;  // skip what used to be freq_cis_imag (for RoPE)
 
     // weights->wcls = shared_weights ? weights->token_embedding_table : ptr;
-    weights->wcls.reShape(Shape(config.vocab_size, config.dim));
+    weights->wcls.reShape(Shape(vocab_size, dim));
     auto data = shared_weights ? weights->token_embedding_table.data() : ptr;
     weights->wcls.copyFrom(data, weights->wcls.numElements());
 }
 
 void read_checkpoint(const std::string &checkpoint_path, TransformerConfig &config, TransformerWeights *weights, int *fd, float **data, ssize_t *file_size) {
-    FILE *file = fopen(checkpoint_path.c_str(), "rb");
+    std::FILE *file = fopen(checkpoint_path.c_str(), "rb");
     if (!file) {
-        fprintf(stderr, "Couldn't open file %s\n", checkpoint_path.c_str());
-        exit(EXIT_FAILURE);
+        std::cerr << "Couldn't open file " << checkpoint_path << '\n';
+        std::exit(EXIT_FAILURE);
     }
     // read in the config header
-    if (fread(&config, sizeof(TransformerConfig), 1, file) != 1) {
-        exit(EXIT_FAILURE);
+    if (std::fread(&config, sizeof(TransformerConfig), 1, file) != 1) {
+        std::exit(EXIT_FAILURE);
     }
     // negative vocab size is hacky way of signaling unshared weights. bit
     // yikes.
     int shared_weights = config.vocab_size > 0 ? 1 : 0;
     config.vocab_size = abs(config.vocab_size);
     // figure out the file size
-    fseek(file, 0, SEEK_END);  // move file pointer to end of file
-    *file_size = ftell(file);  // get the file size, in bytes
-    fclose(file);
+    std::fseek(file, 0, SEEK_END);  // move file pointer to end of file
+    *file_size = ftell(file);       // get the file size, in bytes
+    std::fclose(file);
+
     // memory map the Transformer weights into the data pointer
     *fd = open(checkpoint_path.c_str(), O_RDONLY);  // open in read only mode
     if (*fd == -1) {
-        fprintf(stderr, "open failed!\n");
-        exit(EXIT_FAILURE);
+        std::cerr << "open failed\n";
+        std::exit(EXIT_FAILURE);
     }
-    *data = (float *)mmap(NULL, *file_size, PROT_READ, MAP_PRIVATE, *fd, 0);
+    *data = reinterpret_cast<float32_t *>(mmap(NULL, *file_size, PROT_READ, MAP_PRIVATE, *fd, 0));
     if (*data == MAP_FAILED) {
-        fprintf(stderr, "mmap failed!\n");
-        exit(EXIT_FAILURE);
+        std::cerr << "mmap failed!\n";
+        std::exit(EXIT_FAILURE);
     }
-    float *weights_ptr = *data + sizeof(TransformerConfig) / sizeof(float);
+    float32_t *weights_ptr = *data + sizeof(TransformerConfig) / sizeof(float32_t);
     memory_map_weights(weights, config, weights_ptr, shared_weights);
-
-    // // C++
-    // std::ifstream file(checkpoint_path, std::ios::binary);
-    // if (!file)
-    // {
-    //     std::cerr << "Couldn't open file " << checkpoint_path << '\n';
-    //     std::exit(EXIT_FAILURE);
-    // }
-    // file.read(reinterpret_cast<char *>(&config), sizeof(TransformerConfig));
-    // // negative vocab size is hacky way of signaling unshared weights. bit
-    // yikes. int shared_weights = config->vocab_size > 0 ? 1 : 0;
-    // config->vocab_size = abs(config->vocab_size);
-    // // figure out the file size
 }
 
 template <template <class> class COMPUTE, class T>
@@ -174,21 +168,21 @@ class Attention {
     using value_type = T;
     using compute = COMPUTE<T>;
 
-    explicit Attention(TensorView<float32_t> &wq, TensorView<float32_t> &wk, TensorView<float32_t> &wv, int kv_dim, int dim, int n_heads, int kv_heads,
-                       int seq_len)
+    explicit Attention(TensorView<float32_t> &wq, TensorView<float32_t> &wk, TensorView<float32_t> &wv, size_t kv_dim, size_t dim, size_t n_heads,
+                       size_t kv_heads, size_t seq_len)
         : m_wq(wq),
           m_wk(wk),
           m_wv(wv),
           m_key_cache(Shape(seq_len * kv_dim)),
           m_value_cache(Shape(seq_len * kv_dim)),
+          m_q(Shape(dim)),
+          m_att(Shape(n_heads * seq_len)),
           m_kv_dim(kv_dim),
           m_dim(dim),
           m_n_heads(n_heads),
           m_kv_heads(kv_heads),
           m_head_size(dim / n_heads),
-          m_seq_len(seq_len),
-          m_q(Shape(dim)),
-          m_att(Shape(n_heads * seq_len)) {}
+          m_seq_len(seq_len) {}
 
     void forward(Tensor<COMPUTE, value_type> &in, Tensor<COMPUTE, value_type> &xb, int pos_) {
         // in shape (dim), xb shape (dim)
@@ -222,14 +216,16 @@ class Attention {
 
         // multihead attention. iterate over all heads
         // @TODO write modular head implementation
-        int kv_mul = m_n_heads / m_kv_heads;
+        size_t kv_mul = m_n_heads / m_kv_heads;
         int h;
 #pragma omp parallel for private(h)
         for (h = 0; h < m_n_heads; h++) {
             // get the query vector for this head
             TensorView<float32_t> q_(m_q.data() + h * m_head_size, Shape(m_head_size));
+
             // attention scores for this head
             TensorView<float32_t> att_(m_att.data() + h * m_seq_len, Shape(m_seq_len));
+
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos_; t++) {
                 // get the key vector for this head and at this timestep
@@ -269,14 +265,14 @@ class Attention {
     TensorView<float32_t> m_wv;            // value (dim, kv_dim * head_size)
     Tensor<CPU, float32_t> m_key_cache;    // key cache (seq_len * kv_dim)
     Tensor<CPU, float32_t> m_value_cache;  // value cache (seq_len * kv_dim)
-    int m_kv_dim;                          // key value cache dimension ((dim * n_kv_heads) / n_heads)
-    int m_dim;                             // transformer dimension
-    int m_n_heads;                         // number of heads.
-    int m_kv_heads;                        // number of key/value heads (can be < query heads because of multiquery)
-    int m_head_size;                       // (dim / n_heads)
-    int m_seq_len;                         // max sequence length
     Tensor<CPU, float32_t> m_q;            // query tensor
     Tensor<CPU, float32_t> m_att;          // attention tensor
+    size_t m_kv_dim;                       // key value cache dimension ((dim * n_kv_heads) / n_heads)
+    size_t m_dim;                          // transformer dimension
+    size_t m_n_heads;                      // number of heads.
+    size_t m_kv_heads;                     // number of key/value heads (can be < query heads because of multiquery)
+    size_t m_head_size;                    // (dim / n_heads)
+    size_t m_seq_len;                      // max sequence length
 };
 
 template <template <class> class COMPUTE, class T>
@@ -286,7 +282,7 @@ class FeedForward {
     using value_type = T;
     using compute = COMPUTE<T>;
 
-    FeedForward(TensorView<float> &w1_, TensorView<float> &w2_, TensorView<float> &w3_, int dim, int hidden_dim)
+    FeedForward(TensorView<float> &w1_, TensorView<float> &w2_, TensorView<float> &w3_, size_t dim, size_t hidden_dim)
         : m_dim(dim), m_hidden_dim(hidden_dim), m_w1(w1_), m_w2(w2_), m_w3(w3_), m_hb(Shape(hidden_dim)), m_hb2(Shape(hidden_dim)) {}
 
     /**
@@ -308,8 +304,8 @@ class FeedForward {
     }
 
    private:
-    int m_dim;  // transformer dimension.
-    int m_hidden_dim;
+    size_t m_dim;  // transformer dimension.
+    size_t m_hidden_dim;
     TensorView<float32_t> m_w1;    // (hidden_dim, dim)
     TensorView<float32_t> m_w2;    // (hidden_dim, dim)
     TensorView<float32_t> m_w3;    // (hidden_dim, dim)
@@ -325,7 +321,7 @@ class TransformerBlock {
     using compute = COMPUTE<T>;
 
     explicit TransformerBlock(Attention<COMPUTE, value_type>::ptr attention, FeedForward<COMPUTE, value_type>::ptr feed_forward,
-                              TensorView<float> &rms_ffn_weight, TensorView<float32_t> &wo, TensorView<float32_t> &w_rms_att, int dim)
+                              TensorView<float> &rms_ffn_weight, TensorView<float32_t> &wo, TensorView<float32_t> &w_rms_att, size_t dim)
         : m_attention(std::move(attention)),
           m_feedforward(std::move(feed_forward)),
           m_w_rms_ffn(rms_ffn_weight),
@@ -394,31 +390,34 @@ class Transformer {
     }
 
     void initializeLayers() {
-        int kv_dim = (m_config.dim * m_config.n_kv_heads) / m_config.n_heads;
-        int dim = m_config.dim;
-        auto n_heads = m_config.n_heads;
-        int head_size = m_config.dim / m_config.n_heads;
-        int hidden_dim = m_config.hidden_dim;
+        size_t kv_dim = static_cast<size_t>((m_config.dim * m_config.n_kv_heads) / m_config.n_heads);
+        size_t dim = static_cast<size_t>(m_config.dim);
+        size_t n_heads = static_cast<size_t>(m_config.n_heads);
+        size_t head_size = static_cast<size_t>(m_config.dim / m_config.n_heads);
+        size_t hidden_dim = static_cast<size_t>(m_config.hidden_dim);
+        size_t n_kv_heads = static_cast<size_t>(m_config.n_kv_heads);
+        size_t seq_len = static_cast<size_t>(m_config.seq_len);
 
-        for (unsigned long long l = 0; l < m_config.n_layers; l++) {
+        for (size_t layer_idx = 0; layer_idx < m_config.n_layers; layer_idx++) {
             // Attention layer
-            int loff_ = l * m_config.seq_len * kv_dim;  // kv cache layer offset for convenience
-            TensorView<float32_t> wq(m_weights.wq.data() + l * m_config.dim * m_config.dim, Shape(dim, n_heads * head_size));
-            TensorView<float32_t> wk(m_weights.wk.data() + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
-            TensorView<float32_t> wv(m_weights.wv.data() + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
-
-            auto attention = std::make_unique<Attention<CPU, float32_t>>(wq, wk, wv, kv_dim, dim, m_config.n_heads, m_config.n_kv_heads, m_config.seq_len);
+            TensorView<float32_t> wq(m_weights.wq.data() + layer_idx * m_config.dim * m_config.dim, Shape(dim, n_heads * head_size));
+            TensorView<float32_t> wk(m_weights.wk.data() + layer_idx * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
+            TensorView<float32_t> wv(m_weights.wv.data() + layer_idx * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
+            auto attention = std::make_unique<Attention<CPU, float32_t>>(wq, wk, wv, kv_dim, dim, n_heads, n_kv_heads, seq_len);
 
             // FF layer
-            TensorView<float32_t> w1(m_weights.w1.data() + l * dim * hidden_dim, Shape(hidden_dim, dim));
-            TensorView<float32_t> w2(m_weights.w2.data() + l * dim * hidden_dim, Shape(dim, hidden_dim));
-            TensorView<float32_t> w3(m_weights.w3.data() + l * dim * hidden_dim, Shape(hidden_dim, dim));
-            auto feedforward = std::make_unique<FeedForward<CPU, float32_t>>(w1, w2, w3, dim, m_config.hidden_dim);
+            TensorView<float32_t> w1(m_weights.w1.data() + layer_idx * dim * hidden_dim, Shape(hidden_dim, dim));
+            TensorView<float32_t> w2(m_weights.w2.data() + layer_idx * dim * hidden_dim, Shape(dim, hidden_dim));
+            TensorView<float32_t> w3(m_weights.w3.data() + layer_idx * dim * hidden_dim, Shape(hidden_dim, dim));
+            auto feedforward = std::make_unique<FeedForward<CPU, float32_t>>(w1, w2, w3, dim, hidden_dim);
 
-            TensorView<float32_t> wo(m_weights.wo.data() + l * dim * dim, Shape(dim, dim));
-            TensorView<float32_t> w_rms_att(m_weights.rms_att_weight.data() + l * dim, Shape(dim));
-            TensorView<float32_t> w_rms_ffn(m_weights.rms_ffn_weight.data() + l * dim, Shape(dim));
-            m_layers.push_back(std::make_unique<TransformerBlock<CPU, float32_t>>(std::move(attention), std::move(feedforward), w_rms_ffn, wo, w_rms_att, dim));
+            // TensorBlock
+            TensorView<float32_t> wo(m_weights.wo.data() + layer_idx * dim * dim, Shape(dim, dim));
+            TensorView<float32_t> w_rms_att(m_weights.rms_att_weight.data() + layer_idx * dim, Shape(dim));
+            TensorView<float32_t> w_rms_ffn(m_weights.rms_ffn_weight.data() + layer_idx * dim, Shape(dim));
+            auto tensorblock = std::make_unique<TransformerBlock<CPU, float32_t>>(std::move(attention), std::move(feedforward), w_rms_ffn, wo, w_rms_att, dim);
+
+            m_layers.push_back(std::move(tensorblock));
         }
 
         m_linear = std::make_unique<Linear<CPU, float32_t>>(m_weights.wcls);
