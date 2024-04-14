@@ -36,8 +36,8 @@ void safe_printf(const std::string &piece) {
             return;  // bad byte, don't print it
         }
     }
-    // printf("%s", piece);
     std::cout << piece;
+    std::cout << std::flush;
 }
 
 void read_stdin(const char *guide, char *buffer, size_t bufsize) {
@@ -120,7 +120,7 @@ class Llama2 {
                 next = prompt_tokens[pos + 1];
             } else {
                 // otherwise sample the next token from the logits
-                next = m_sampler->sample(logits.data());
+                next = m_sampler->sample(logits);
             }
             pos++;
 
@@ -132,7 +132,6 @@ class Llama2 {
             // print the token as string, decode it with the Tokenizer object
             auto piece = m_tokenizer->decode(token, next);
             safe_printf(piece);  // same as printf("%s", piece), but skips "unsafe" bytes
-            std::cout << std::flush;
             token = next;
 
             // init the timer here because the first iteration can be slower
@@ -224,14 +223,13 @@ class Llama2 {
 
             // forward the transformer to get logits for the next token
             m_transformer->forward(token, pos, logits);
-            next = m_sampler->sample(logits.data());
+            next = m_sampler->sample(logits);
             pos++;
 
             if (user_idx >= num_prompt_tokens && next != 2) {
                 // the Assistant is responding, so print its output
                 auto piece = m_tokenizer->decode(token, next);
                 safe_printf(piece);  // same as printf("%s", piece), but skips "unsafe" bytes
-                std::cout << std::flush;
             }
             if (next == 2) {
                 std::cout << std::endl;

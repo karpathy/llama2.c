@@ -156,5 +156,42 @@ T dot_prod(TensorView<T> &a, TensorView<T> &b) {
     return value;
 }
 
+template <typename T>
+void softmax(TensorView<T> &x) {
+    // find max value (for numerical stability)
+    float max_val = x[0];
+    for (int i = 1; i < x.size(); i++) {
+        if (x[i] > max_val) {
+            max_val = x[i];
+        }
+    }
+
+    // exp and sum
+    float sum = 0.0f;
+    for (int i = 0; i < x.size(); i++) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+
+    // normalize
+    for (int i = 0; i < x.size(); i++) {
+        x[i] /= sum;
+    }
+}
+
+template <typename T>
+size_t argmax(TensorView<T> &x) {
+    // return the index that has the highest probability
+    size_t max_idx = 0;
+    T max_val = x[0];
+    for (auto i = 1; i < x.size(); i++) {
+        if (x[i] > max_val) {
+            max_idx = i;
+            max_val = x[i];
+        }
+    }
+    return max_idx;
+}
+
 }  // namespace llama2cpp
 #endif

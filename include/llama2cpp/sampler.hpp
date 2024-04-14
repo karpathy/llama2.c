@@ -1,5 +1,6 @@
 #ifndef LLAMA2CPP_SAMPLER_HPP
 #define LLAMA2CPP_SAMPLER_HPP
+#include <algorithm>
 #include <cstdlib>
 #include <llama2cpp/transformer/ops.hpp>
 #include <llama2cpp/transformer/types.hpp>
@@ -20,70 +21,47 @@ struct ProbIndex {
     int index;
 };
 
-int compare(const void *a, const void *b) {
-    ProbIndex *a_ = (ProbIndex *)a;
-    ProbIndex *b_ = (ProbIndex *)b;
-    if (a_->prob > b_->prob) return -1;
-    if (a_->prob < b_->prob) return 1;
-    return 0;
-}
-
 class Sampler {
    public:
     using ptr = std::unique_ptr<Sampler>;
 
-    Sampler(int vocab_size_, float32_t temperature_, float32_t topp_, unsigned long long rng_seed) {
-        vocab_size = vocab_size_;
-        temperature = temperature_;
-        topp = topp_;
-        rng_state = rng_seed;
+    Sampler(int vocab_size_, float32_t temperature_, float32_t topp_, unsigned long long rng_seed)
+        : m_vocab_size(vocab_size_), m_temperature(temperature_), m_topp(topp_), m_rng_state(rng_seed) {
         // buffer only used with nucleus sampling; may not need but it's ~small
-        probindex = (ProbIndex *)malloc(vocab_size * sizeof(ProbIndex));
+        probindex.resize(m_vocab_size);
     }
 
-    ~Sampler() { free(probindex); }
+    ~Sampler() {}
 
-    auto sample(float32_t *logits) -> int {
+    auto sample(Tensor<CPU, float32_t> &logits) -> int {
         // sample the token given the logits and some hyperparameters
         int next;
-        if (temperature == 0.0f) {
+        if (m_temperature == 0.0f) {
             // greedy argmax sampling: take the token with the highest probability
-            next = sample_argmax(logits, vocab_size);
+            next = argmax(logits);
         } else {
             // apply the temperature to the logits
-            for (int q = 0; q < vocab_size; q++) {
-                logits[q] /= temperature;
+            for (int q = 0; q < logits.size(); q++) {
+                logits[q] /= m_temperature;
             }
             // apply softmax to the logits to get the probabilities for next token
-            softmax(logits, vocab_size);
+            softmax(logits);
             // flip a (float) coin (this is our source of entropy for sampling)
             // @TODO: implement an entropy generator.
-            float32_t coin = random_f32(&rng_state);
+            float32_t coin = random_f32(&m_rng_state);
             // we sample from this distribution to get the next token
-            if (topp <= 0 || topp >= 1) {
+            if (m_topp <= 0 || m_topp >= 1) {
                 // simply sample from the predicted probability distribution
-                next = sample_mult(logits, vocab_size, coin);
+                next = sample_mult(logits, coin);
             } else {
                 // top-p (nucleus) sampling, clamping the least likely tokens to zero
-                next = sample_topp(logits, vocab_size, topp, probindex, coin);
+                next = sample_topp(logits, m_topp, probindex, coin);
             }
         }
         return next;
     }
 
    private:
-    int sample_argmax(float32_t *probabilities, int n) {
-        // return the index that has the highest probability
-        int max_i = 0;
-        float32_t max_p = probabilities[0];
-        for (int i = 1; i < n; i++) {
-            if (probabilities[i] > max_p) {
-                max_i = i;
-                max_p = probabilities[i];
-            }
-        }
-        return max_i;
-    }
     unsigned int random_u32(unsigned long long *state) {
         // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
         *state ^= *state >> 12;
@@ -91,24 +69,24 @@ class Sampler {
         *state ^= *state >> 27;
         return (*state * 0x2545F4914F6CDD1Dull) >> 32;
     }
-    float random_f32(unsigned long long *state) {  // random float32 in [0,1)
+    float32_t random_f32(unsigned long long *state) {  // random float32 in [0,1)
         return (random_u32(state) >> 8) / 16777216.0f;
     }
 
-    int sample_mult(float32_t *probabilities, int n, float32_t coin) {
+    int sample_mult(Tensor<CPU, float32_t> &probabilities, float32_t coin) {
         // sample index from probabilities (they must sum to 1!)
         // coin is a random number in [0, 1), usually from random_f32()
         float32_t cdf = 0.0f;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < probabilities.size(); i++) {
             cdf += probabilities[i];
             if (coin < cdf) {
                 return i;
             }
         }
-        return n - 1;  // in case of rounding errors
+        return probabilities.size() - 1;  // in case of rounding errors
     }
 
-    int sample_topp(float32_t *probabilities, int n, float32_t topp, ProbIndex *probindex, float32_t coin) {
+    int sample_topp(Tensor<CPU, float32_t> &probabilities, float32_t topp, std::vector<ProbIndex> &probindex, float32_t coin) {
         // top-p sampling (or "nucleus sampling") samples from the smallest set of
         // tokens that exceed probability topp. This way we never sample tokens that
         // have very low probabilities and are less likely to go "off the rails".
@@ -118,15 +96,15 @@ class Sampler {
         // quicksort indices in descending order of probabilities
         // values smaller than (1 - topp) / (n - 1) cannot be part of the result
         // so for efficiency we crop these out as candidates before sorting
-        const float32_t cutoff = (1.0f - topp) / (n - 1);
-        for (int i = 0; i < n; i++) {
+        const float32_t cutoff = (1.0f - topp) / (probabilities.size() - 1);
+        for (int i = 0; i < probabilities.size(); i++) {
             if (probabilities[i] >= cutoff) {
                 probindex[n0].index = i;
                 probindex[n0].prob = probabilities[i];
                 n0++;
             }
         }
-        qsort(probindex, n0, sizeof(ProbIndex), compare);
+        std::sort(probindex.data(), probindex.data() + n0, [](auto a, auto b) { return a.prob > b.prob; });
 
         // truncate the list where cumulative probability exceeds topp
         float32_t cumulative_prob = 0.0f;
@@ -151,11 +129,11 @@ class Sampler {
         return probindex[last_idx].index;  // in case of rounding errors
     }
 
-    int vocab_size;
-    ProbIndex *probindex;  // buffer used in top-p sampling
-    float32_t temperature;
-    float32_t topp;
-    unsigned long long rng_state;
+    int m_vocab_size;
+    std::vector<ProbIndex> probindex;  // buffer used in top-p sampling
+    float32_t m_temperature;
+    float32_t m_topp;
+    unsigned long long m_rng_state;
 };
 
 }  // namespace llama2cpp
