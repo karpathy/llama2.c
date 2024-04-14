@@ -125,6 +125,10 @@ class TensorView {
 
     auto setData(pointer p) { m_data = p; }
 
+    auto numElements() const -> const size_t { return m_shape.numElements(); }
+
+    auto numBytes() const -> const size_t { return numElements() * sizeof(value_type); }
+
    private:
     pointer m_data;
     Shape m_shape;
@@ -145,7 +149,7 @@ class Tensor : public TensorView<T> {
     Tensor() : TensorView<T>(nullptr, Shape()), m_memory({}) {}
     Tensor(const pointer ptr, const Shape &shape) : TensorView<T>(nullptr, shape), m_memory(shape.size()) {
         this->setData(m_memory.data());
-        copyFrom(ptr, numElements());
+        copyFrom(ptr, this->numElements());
     }
 
     Tensor(const Shape &shape) : TensorView<T>(nullptr, shape), m_memory(shape.size()) { this->setData(m_memory.data()); }
@@ -164,12 +168,9 @@ class Tensor : public TensorView<T> {
         this->setShape(tensor.shape());
     }
 
-    auto numElements() const -> const size_t { return this->shape().numElements(); }
-
    private:
     Memory<COMPUTE, value_type> m_memory;
 };
-
 
 // std::ostream &operator<<(std::ostream &os, const TensorView<llama2cpp::CPU, llama2cpp::float32_t> &tensor) {
 //     os << "Shape (";

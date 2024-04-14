@@ -70,7 +70,7 @@ struct Llama2Config {
 class Llama2 {
    public:
     Llama2(const Llama2Config &config) : m_config(config), m_transformer(nullptr), m_tokenizer(nullptr), m_sampler(nullptr) {
-        m_transformer = std::make_unique<Transformer>(m_config.checkpoint_path);
+        m_transformer = std::make_unique<Transformer<CPU, float32_t>>(m_config.checkpoint_path);
         if (m_config.steps == 0 || m_config.steps > m_transformer->getConfig().seq_len)
             m_config.steps = m_transformer->getConfig().seq_len;  // override to ~max length
         m_tokenizer = std::make_unique<Tokenizer>(m_config.tokenizer_path, m_transformer->getConfig().vocab_size);
@@ -231,7 +231,7 @@ class Llama2 {
 
    private:
     Llama2Config m_config;
-    Transformer::ptr m_transformer;
+    Transformer<CPU, float32_t>::ptr m_transformer;
     Tokenizer::ptr m_tokenizer;
     Sampler::ptr m_sampler;
 };
