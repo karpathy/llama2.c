@@ -12,6 +12,7 @@
 #include "memory.hpp"
 #include "ops.hpp"
 #include "tensor.hpp"
+#include "types.hpp"
 
 namespace llama2cpp {
 
@@ -266,6 +267,8 @@ class Linear {
 
     void forward(const Tensor<COMPUTE, value_type> &x, Tensor<COMPUTE, value_type> &out) { matmul(out, x, m_wcls); }
 
+    auto outDim() const -> const size_t { return m_wcls.shape().shapeVec()[0]; }
+
    private:
     TensorView<value_type> m_wcls;  // classification weights (out_dim, in_dim)
 };
@@ -277,78 +280,8 @@ class Transformer {
     using value_type = T;
     using compute = COMPUTE<T>;
 
-    explicit Transformer(const std::string &checkpoint_path) {
-        // read in the Config and the Weights from the checkpoint
-        loadModel(checkpoint_path, m_config, m_weights);
+    Transformer(TransformerConfig &config, TransformerWeights<COMPUTE, value_type> &weights) : m_config(config), m_weights(weights), m_linear(nullptr) {
         initializeLayers();
-    }
-
-    void loadModel(const std::string &checkpoint_path, TransformerConfig &config, TransformerWeights<COMPUTE, value_type> &weights) {
-        std::ifstream file(checkpoint_path, std::ios::binary);
-        if (!file) {
-            std::cerr << "Couldn't open file " << checkpoint_path << '\n';
-            std::exit(EXIT_FAILURE);
-        }
-        file.read(reinterpret_cast<char *>(&config), sizeof(TransformerConfig));
-        auto shared_weights = config.vocab_size > 0 ? 1 : 0;
-        config.vocab_size = std::abs(config.vocab_size);
-
-        size_t dim = static_cast<size_t>(config.dim);
-        size_t head_size = static_cast<size_t>(config.dim / config.n_heads);
-        size_t vocab_size = static_cast<size_t>(config.vocab_size);
-        size_t n_heads = static_cast<size_t>(config.n_heads);
-        size_t n_kv_heads = static_cast<size_t>(config.n_kv_heads);
-        size_t hidden_dim = static_cast<size_t>(config.hidden_dim);
-
-        // make sure the multiplications below are done in 64bit to fit the
-        // parameter counts of 13B+ models
-        unsigned long long n_layers = config.n_layers;
-
-        weights.token_embedding_table.reShape(Shape(vocab_size, dim));
-        file.read(reinterpret_cast<char *>(weights.token_embedding_table.data()), weights.token_embedding_table.numBytes());
-
-        weights.rms_att_weight.reShape(Shape(n_layers, dim));
-        file.read(reinterpret_cast<char *>(weights.rms_att_weight.data()), weights.rms_att_weight.numBytes());
-
-        weights.wq.reShape(Shape(n_layers, dim, n_heads * head_size));
-        file.read(reinterpret_cast<char *>(weights.wq.data()), weights.wq.numBytes());
-
-        weights.wk.reShape(Shape(n_layers, dim, n_kv_heads * head_size));
-        file.read(reinterpret_cast<char *>(weights.wk.data()), weights.wk.numBytes());
-
-        weights.wv.reShape(Shape(n_layers, dim, n_kv_heads * head_size));
-        file.read(reinterpret_cast<char *>(weights.wv.data()), weights.wv.numBytes());
-
-        weights.wo.reShape(Shape(n_layers, dim, n_heads * head_size));
-        file.read(reinterpret_cast<char *>(weights.wo.data()), weights.wo.numBytes());
-
-        weights.rms_ffn_weight.reShape(Shape(n_layers, dim));
-        file.read(reinterpret_cast<char *>(weights.rms_ffn_weight.data()), weights.rms_ffn_weight.numBytes());
-
-        weights.w1.reShape(Shape(n_layers, hidden_dim, dim));
-        file.read(reinterpret_cast<char *>(weights.w1.data()), weights.w1.numBytes());
-
-        weights.w2.reShape(Shape(n_layers, dim, hidden_dim));
-        file.read(reinterpret_cast<char *>(weights.w2.data()), weights.w2.numBytes());
-
-        weights.w3.reShape(Shape(n_layers, hidden_dim, dim));
-        file.read(reinterpret_cast<char *>(weights.w3.data()), weights.w3.numBytes());
-
-        weights.rms_final_weight.reShape(Shape(dim));
-        file.read(reinterpret_cast<char *>(weights.rms_final_weight.data()), weights.rms_final_weight.numBytes());
-
-        // ptr += config.dim;
-        // ptr += config.seq_len * head_size / 2;  // skip what used to be freq_cis_real (for RoPE)
-        // ptr += config.seq_len * head_size / 2;  // skip what used to be freq_cis_imag (for RoPE)
-        weights.wcls.reShape(Shape(vocab_size, dim));
-        if (!shared_weights) {
-            file.seekg((config.dim + config.seq_len * head_size) * sizeof(float32_t), std::ios::cur);
-            file.read(reinterpret_cast<char *>(weights.wcls.data()), weights.wcls.numBytes());
-        } else {
-            weights.wcls.copyFrom(weights.token_embedding_table.data(), weights.wcls.numElements());
-        }
-
-        file.close();
     }
 
     void initializeLayers() {
@@ -383,11 +316,12 @@ class Transformer {
         }
 
         m_linear = std::make_unique<Linear<CPU, value_type>>(m_weights.wcls);
+        m_out_logits.reShape(Shape(m_linear->outDim()));
     }
 
     ~Transformer() {}
 
-    void forward(int token, int pos, Tensor<COMPUTE, value_type> &logits) {
+    void forward(int token, int pos, Tensor<CPU, value_type> &logits) {
         // a few convenience variables
         TransformerWeights<COMPUTE, value_type> *w = &m_weights;
         size_t dim = static_cast<size_t>(m_config.dim);
@@ -406,16 +340,19 @@ class Transformer {
         rmsnorm(x_in, x_in, w->rms_final_weight);
 
         // classifier into logits
-        m_linear->forward(x_in, logits);
+        m_linear->forward(x_in, m_out_logits);
+
+        logits.copyFrom(m_out_logits);  // Copy from tensor on COMPUTE to a CPU Tensor.
     }
 
     auto getConfig() const -> const TransformerConfig & { return m_config; }
 
    private:
-    TransformerConfig m_config;                         // the hyperparameters of the architecture (the blueprint)
-    TransformerWeights<COMPUTE, value_type> m_weights;  // the weights of the model
-    Linear<COMPUTE, value_type>::ptr m_linear;
-    std::vector<TransformerBlock<CPU, float32_t>::ptr> m_layers;
+    TransformerConfig m_config;                                   // the hyperparameters of the architecture (the blueprint)
+    TransformerWeights<COMPUTE, value_type> m_weights;            // the weights of the model
+    Linear<COMPUTE, value_type>::ptr m_linear;                    // linear layer
+    Tensor<COMPUTE, value_type> m_out_logits;                     // logits output buffer on COMPUTE
+    std::vector<TransformerBlock<CPU, float32_t>::ptr> m_layers;  // transformer block layers
 };
 
 }  // namespace llama2cpp

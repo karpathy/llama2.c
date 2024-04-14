@@ -147,6 +147,11 @@ class Tensor : public TensorView<T> {
     using unique_ptr = typename std::unique_ptr<Tensor<COMPUTE, T>>;  ///< unique pointer type
 
     Tensor() : TensorView<T>(nullptr, Shape()), m_memory({}) {}
+    Tensor(Tensor &other) : TensorView<T>(nullptr, other.shape()), m_memory(other.shape().size()) {
+        this->setData(m_memory.data());
+        copyFrom(other.data(), this->numElements());
+    }
+
     Tensor(const pointer ptr, const Shape &shape) : TensorView<T>(nullptr, shape), m_memory(shape.size()) {
         this->setData(m_memory.data());
         copyFrom(ptr, this->numElements());
@@ -166,6 +171,13 @@ class Tensor : public TensorView<T> {
     void copyFrom(TensorView<value_type> &tensor) {
         m_memory.copyFrom(tensor.data(), tensor.size());
         this->setShape(tensor.shape());
+    }
+
+    template <template <class> class COMPUTE_OTHER, class T_OTHER>
+    void copyFrom(Tensor<COMPUTE_OTHER, T_OTHER>& other)
+    {
+        m_memory.copyFrom(other.m_memory);
+        this->setShape(other.shape());
     }
 
    private:

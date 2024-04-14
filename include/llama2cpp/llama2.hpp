@@ -1,14 +1,16 @@
 #ifndef LLAMA2CPP_LLAMA2_HPP
 #define LLAMA2CPP_LLAMA2_HPP
 #include <iostream>
-#include <llama2cpp/sampler.hpp>
-#include <llama2cpp/tokenizer.hpp>
-#include <llama2cpp/transformer/tensor.hpp>
-#include <llama2cpp/transformer/transformer.hpp>
-#include <llama2cpp/transformer/types.hpp>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "sampler.hpp"
+#include "tokenizer.hpp"
+#include "transformer/tensor.hpp"
+#include "transformer/transformer.hpp"
+#include "transformer/types.hpp"
+#include "utils.hpp"
 
 namespace llama2cpp {
 
@@ -69,8 +71,17 @@ struct Llama2Config {
  */
 class Llama2 {
    public:
+    using value_type = float32_t;
+    
+    template<typename T>
+    using compute = CPU<T>;
+
     Llama2(const Llama2Config &config) : m_config(config), m_transformer(nullptr), m_tokenizer(nullptr), m_sampler(nullptr) {
-        m_transformer = std::make_unique<Transformer<CPU, float32_t>>(m_config.checkpoint_path);
+        TransformerConfig t_config;
+        TransformerWeights<compute, value_type> weights;
+        loadModel(config.checkpoint_path, t_config, weights);
+
+        m_transformer = std::make_unique<Transformer<CPU, float32_t>>(t_config, weights);
         if (m_config.steps == 0 || m_config.steps > m_transformer->getConfig().seq_len)
             m_config.steps = m_transformer->getConfig().seq_len;  // override to ~max length
         m_tokenizer = std::make_unique<Tokenizer>(m_config.tokenizer_path, m_transformer->getConfig().vocab_size);
@@ -84,7 +95,7 @@ class Llama2 {
         int num_prompt_tokens = 0;
 
         Shape shape = {prompt.length() + 3};
-        Tensor<CPU, int> prompt_tokens(shape);
+        Tensor<CPU, int32_t> prompt_tokens(shape);
         m_tokenizer->encode(prompt, 1, 0, prompt_tokens, num_prompt_tokens);
 
         if (num_prompt_tokens < 1) {

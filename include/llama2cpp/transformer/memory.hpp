@@ -93,6 +93,11 @@ class Memory {
         COMPUTE<T>::copy(other.data(), m_data, other.size());
     }
 
+    Memory(Memory &other) : m_alloc() {
+        reserve(other.size());
+        COMPUTE<T>::copy(other.data(), m_data, other.size());
+    }
+
     // /**
     //  * @brief Move Construct a new Memory object
     //  *
@@ -208,6 +213,9 @@ class Memory {
     auto empty() -> bool { return size() == 0; }
 
     auto copyFrom(pointer data, size_t num_elements) { COMPUTE<T>::copy(data, m_data, num_elements); }
+
+    template <template <class> class COMPUTE_OTHER, class T_OTHER>
+    auto copyFrom(Memory<COMPUTE_OTHER, T_OTHER> &other_mem) { COMPUTE<T>::copy(other_mem.data(), m_data, other_mem.size()); }
 
     // TODO: implement iterators.
 
