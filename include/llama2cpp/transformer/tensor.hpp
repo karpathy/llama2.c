@@ -14,7 +14,7 @@ class Shape {
 
     Shape(std::initializer_list<size_t> shape) : m_shape(shape), m_stride(), m_num_dims(0) { initialize(); }
 
-    Shape(const Shape &shape) : m_shape(shape.shape_vec()), m_stride(shape.stride_vec()), m_num_dims(shape.num_dims()) {}
+    Shape(const Shape &shape) : m_shape(shape.shapeVec()), m_stride(shape.strideVec()), m_num_dims(shape.numDims()) {}
 
     Shape(const size_t dim) : m_shape({dim}), m_stride(), m_num_dims(1) { initialize(); }
 
@@ -44,11 +44,13 @@ class Shape {
         return m_shape[0] * m_stride[0];
     }
 
-    auto num_dims() const -> const size_t { return m_num_dims; }
+    auto numDims() const -> const size_t { return m_num_dims; }
 
-    auto shape_vec() const -> const std::vector<size_t> { return m_shape; }
+    auto numElements() const -> const size_t { return m_shape[0] * m_stride[0]; }
 
-    auto stride_vec() const -> const std::vector<size_t> { return m_stride; }
+    auto shapeVec() const -> const std::vector<size_t> { return m_shape; }
+
+    auto strideVec() const -> const std::vector<size_t> { return m_stride; }
 
    private:
     void initialize() {
@@ -66,7 +68,7 @@ class Shape {
 
 std::ostream &operator<<(std::ostream &os, const Shape &shape) {
     os << "Shape (";
-    auto &vec = shape.shape_vec();
+    auto &vec = shape.shapeVec();
     for (size_t i = 0; i < vec.size(); ++i) {
         if (i > 0) {
             os << ",";
@@ -109,6 +111,8 @@ class TensorView {
 
     auto operator[](size_t index) const -> const_reference { return *(m_data + index); }
 
+    // TODO slice API
+
     auto shape() const -> const Shape & { return m_shape; }
 
     auto size() const -> const size_t { return m_shape.size(); }
@@ -139,6 +143,10 @@ class Tensor : public TensorView<T> {
     using unique_ptr = typename std::unique_ptr<Tensor<COMPUTE, T>>;  ///< unique pointer type
 
     Tensor() : TensorView<T>(nullptr, Shape()), m_memory({}) {}
+    Tensor(const pointer ptr, const Shape &shape) : TensorView<T>(nullptr, shape), m_memory(shape.size()) {
+        this->setData(m_memory.data());
+        copyFrom(ptr, numElements());
+    }
 
     Tensor(const Shape &shape) : TensorView<T>(nullptr, shape), m_memory(shape.size()) { this->setData(m_memory.data()); }
 
@@ -155,6 +163,8 @@ class Tensor : public TensorView<T> {
         m_memory.copyFrom(tensor.data(), tensor.size());
         this->setShape(tensor.shape());
     }
+
+    auto numElements() const -> const size_t { return this->shape().numElements(); }
 
    private:
     Memory<COMPUTE, value_type> m_memory;

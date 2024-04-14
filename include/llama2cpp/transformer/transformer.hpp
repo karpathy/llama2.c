@@ -32,23 +32,23 @@ struct TransformerConfig {
 
 struct TransformerWeights {
     // token embedding table
-    float *token_embedding_table;  // (vocab_size, dim)
+    Tensor<CPU, float32_t> token_embedding_table;  // (vocab_size, dim)
     // weights for rmsnorms
-    float *rms_att_weight;  // (layer, dim) rmsnorm weights
-    float *rms_ffn_weight;  // (layer, dim)
+    Tensor<CPU, float32_t> rms_att_weight;  // (layer, dim) rmsnorm weights
+    Tensor<CPU, float32_t> rms_ffn_weight;   // (layer, dim)
     // weights for matmuls. note dim == n_heads * head_size
-    float *wq;  // (layer, dim, n_heads * head_size)
-    float *wk;  // (layer, dim, n_kv_heads * head_size)
-    float *wv;  // (layer, dim, n_kv_heads * head_size)
-    float *wo;  // (layer, n_heads * head_size, dim)
+    Tensor<CPU, float32_t> wq;  // (layer, dim, n_heads * head_size)
+    Tensor<CPU, float32_t> wk;  // (layer, dim, n_kv_heads * head_size)
+    Tensor<CPU, float32_t> wv;  // (layer, dim, n_kv_heads * head_size)
+    Tensor<CPU, float32_t> wo;  // (layer, n_heads * head_size, dim)
     // weights for ffn
-    float *w1;  // (layer, hidden_dim, dim)
-    float *w2;  // (layer, dim, hidden_dim)
-    float *w3;  // (layer, hidden_dim, dim)
+    Tensor<CPU, float32_t> w1;  // (layer, hidden_dim, dim)
+    Tensor<CPU, float32_t> w2;  // (layer, dim, hidden_dim)
+    Tensor<CPU, float32_t> w3;  // (layer, hidden_dim, dim)
     // final rmsnorm
-    float *rms_final_weight;  // (dim,)
+    Tensor<CPU, float32_t> rms_final_weight;  // (dim,)
     // (optional) classifier weights for the logits, on the last layer
-    float *wcls;
+    Tensor<CPU, float32_t> wcls;
 };
 
 void memory_map_weights(TransformerWeights *weights, TransformerConfig &config, float *ptr, int shared_weights) {
@@ -56,31 +56,69 @@ void memory_map_weights(TransformerWeights *weights, TransformerConfig &config, 
     // make sure the multiplications below are done in 64bit to fit the
     // parameter counts of 13B+ models
     unsigned long long n_layers = config.n_layers;
-    weights->token_embedding_table = ptr;
+
+    // weights->token_embedding_table = ptr;
+    weights->token_embedding_table.reShape(Shape(config.vocab_size, config.dim));
+    weights->token_embedding_table.copyFrom(ptr, weights->token_embedding_table.numElements());
     ptr += config.vocab_size * config.dim;
-    weights->rms_att_weight = ptr;
+
+    // weights->rms_att_weight = ptr;
+    weights->rms_att_weight.reShape(Shape(config.n_layers, config.dim));
+    weights->rms_att_weight.copyFrom(ptr, weights->rms_att_weight.numElements());
     ptr += n_layers * config.dim;
-    weights->wq = ptr;
+
+    // weights->wq = ptr;
+    weights->wq.reShape(Shape(config.n_layers, config.dim, config.n_heads * head_size));
+    weights->wq.copyFrom(ptr, weights->wq.numElements());
     ptr += n_layers * config.dim * (config.n_heads * head_size);
-    weights->wk = ptr;
+
+    // weights->wk = ptr;
+    weights->wk.reShape(Shape(config.n_layers, config.dim, config.n_kv_heads * head_size));
+    weights->wk.copyFrom(ptr, weights->wk.numElements());
     ptr += n_layers * config.dim * (config.n_kv_heads * head_size);
-    weights->wv = ptr;
+
+    // weights->wv = ptr;
+    weights->wv.reShape(Shape(config.n_layers, config.dim, config.n_kv_heads * head_size));
+    weights->wv.copyFrom(ptr, weights->wv.numElements());
     ptr += n_layers * config.dim * (config.n_kv_heads * head_size);
-    weights->wo = ptr;
-    ptr += n_layers * (config.n_heads * head_size) * config.dim;
-    weights->rms_ffn_weight = ptr;
+
+    // weights->wo = ptr;
+    weights->wo.reShape(Shape(config.n_layers, config.dim, config.n_heads * head_size));
+    weights->wo.copyFrom(ptr, weights->wo.numElements());
+    ptr += n_layers * config.dim * (config.n_heads * head_size);
+
+    // weights->rms_ffn_weight = ptr;
+    weights->rms_ffn_weight.reShape(Shape(config.n_layers, config.dim));
+    weights->rms_ffn_weight.copyFrom(ptr, weights->rms_ffn_weight.numElements());
     ptr += n_layers * config.dim;
-    weights->w1 = ptr;
+
+    // weights->w1 = ptr;
+    weights->w1.reShape(Shape(config.n_layers, config.hidden_dim, config.dim));
+    weights->w1.copyFrom(ptr, weights->w1.numElements());
     ptr += n_layers * config.dim * config.hidden_dim;
-    weights->w2 = ptr;
+
+    // weights->w2 = ptr;
+    weights->w2.reShape(Shape(config.n_layers, config.dim, config.hidden_dim));
+    weights->w2.copyFrom(ptr, weights->w2.numElements());
     ptr += n_layers * config.hidden_dim * config.dim;
-    weights->w3 = ptr;
+
+    // weights->w3 = ptr;
+    weights->w3.reShape(Shape(config.n_layers, config.hidden_dim, config.dim));
+    weights->w3.copyFrom(ptr, weights->w3.numElements());
     ptr += n_layers * config.dim * config.hidden_dim;
-    weights->rms_final_weight = ptr;
+
+    // weights->rms_final_weight = ptr;
+    weights->rms_final_weight.reShape(Shape(config.dim));
+    weights->rms_final_weight.copyFrom(ptr, weights->rms_final_weight.numElements());
+
     ptr += config.dim;
     ptr += config.seq_len * head_size / 2;  // skip what used to be freq_cis_real (for RoPE)
     ptr += config.seq_len * head_size / 2;  // skip what used to be freq_cis_imag (for RoPE)
-    weights->wcls = shared_weights ? weights->token_embedding_table : ptr;
+
+    // weights->wcls = shared_weights ? weights->token_embedding_table : ptr;
+    weights->wcls.reShape(Shape(config.vocab_size, config.dim));
+    auto data = shared_weights ? weights->token_embedding_table.data() : ptr;
+    weights->wcls.copyFrom(data, weights->wcls.numElements());
 }
 
 void read_checkpoint(const std::string &checkpoint_path, TransformerConfig &config, TransformerWeights *weights, int *fd, float **data, ssize_t *file_size) {
@@ -195,6 +233,7 @@ class Attention {
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos_; t++) {
                 // get the key vector for this head and at this timestep
+                // TODO use slice API instead
                 TensorView<float32_t> k_(m_key_cache.data() + t * m_kv_dim + (h / kv_mul) * m_head_size, Shape(m_head_size));
                 // calculate the attention score as the dot product of q and k
                 float32_t score = dot_prod(q_, k_);
@@ -364,26 +403,25 @@ class Transformer {
         for (unsigned long long l = 0; l < m_config.n_layers; l++) {
             // Attention layer
             int loff_ = l * m_config.seq_len * kv_dim;  // kv cache layer offset for convenience
-            TensorView<float32_t> wq(m_weights.wq + l * m_config.dim * m_config.dim, Shape(dim, n_heads * head_size));
-            TensorView<float32_t> wk(m_weights.wk + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
-            TensorView<float32_t> wv(m_weights.wv + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
+            TensorView<float32_t> wq(m_weights.wq.data() + l * m_config.dim * m_config.dim, Shape(dim, n_heads * head_size));
+            TensorView<float32_t> wk(m_weights.wk.data() + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
+            TensorView<float32_t> wv(m_weights.wv.data() + l * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
 
             auto attention = std::make_unique<Attention<CPU, float32_t>>(wq, wk, wv, kv_dim, dim, m_config.n_heads, m_config.n_kv_heads, m_config.seq_len);
 
             // FF layer
-            TensorView<float32_t> w1(m_weights.w1 + l * dim * hidden_dim, Shape(hidden_dim, dim));
-            TensorView<float32_t> w2(m_weights.w2 + l * dim * hidden_dim, Shape(hidden_dim, dim));
-            TensorView<float32_t> w3(m_weights.w3 + l * dim * hidden_dim, Shape(hidden_dim, dim));
+            TensorView<float32_t> w1(m_weights.w1.data() + l * dim * hidden_dim, Shape(hidden_dim, dim));
+            TensorView<float32_t> w2(m_weights.w2.data() + l * dim * hidden_dim, Shape(dim, hidden_dim));
+            TensorView<float32_t> w3(m_weights.w3.data() + l * dim * hidden_dim, Shape(hidden_dim, dim));
             auto feedforward = std::make_unique<FeedForward<CPU, float32_t>>(w1, w2, w3, dim, m_config.hidden_dim);
 
-            TensorView<float32_t> wo(m_weights.wo + l * dim * dim, Shape(dim, dim));
-            TensorView<float32_t> w_rms_att(m_weights.rms_att_weight + l * dim, Shape(dim));
-            TensorView<float32_t> w_rms_ffn(m_weights.rms_ffn_weight + l * dim, Shape(dim));
+            TensorView<float32_t> wo(m_weights.wo.data() + l * dim * dim, Shape(dim, dim));
+            TensorView<float32_t> w_rms_att(m_weights.rms_att_weight.data() + l * dim, Shape(dim));
+            TensorView<float32_t> w_rms_ffn(m_weights.rms_ffn_weight.data() + l * dim, Shape(dim));
             m_layers.push_back(std::make_unique<TransformerBlock<CPU, float32_t>>(std::move(attention), std::move(feedforward), w_rms_ffn, wo, w_rms_att, dim));
         }
 
-        TensorView<float32_t> wcls(m_weights.wcls, Shape(m_config.vocab_size, dim));
-        m_linear = std::make_unique<Linear<CPU, float32_t>>(wcls);
+        m_linear = std::make_unique<Linear<CPU, float32_t>>(m_weights.wcls);
     }
 
     ~Transformer() {
@@ -399,16 +437,12 @@ class Transformer {
     void forward(int token, int pos, Tensor<CPU, float32_t> &logits) {
         // a few convenience variables
         TransformerWeights *w = &m_weights;
-        // RunState *s = &m_state;
         size_t dim = static_cast<size_t>(m_config.dim);
 
         // copy the token embedding into x
-        TensorView<float32_t> content_row(w->token_embedding_table + token * dim, Shape(dim));
+        TensorView<float32_t> content_row(w->token_embedding_table.data() + token * dim, Shape(dim));
 
-        Tensor<CPU, float32_t> x_in(Shape(static_cast<size_t>(dim)));
-        x_in.copyFrom(content_row);
-
-        TensorView<float32_t> rms_final_weight_(w->rms_final_weight, Shape(dim));
+        Tensor<CPU, float32_t> x_in(content_row.data(), Shape(dim));
 
         // forward all the layers
         for (auto &layer : m_layers) {
@@ -416,7 +450,7 @@ class Transformer {
         }
 
         // final rmsnorm
-        rmsnorm(x_in, x_in, rms_final_weight_);
+        rmsnorm(x_in, x_in, w->rms_final_weight);
 
         // classifier into logits
         m_linear->forward(x_in, logits);
