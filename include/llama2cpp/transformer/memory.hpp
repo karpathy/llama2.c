@@ -98,41 +98,6 @@ class Memory {
         COMPUTE<T>::copy(other.data(), m_data, other.size());
     }
 
-    // /**
-    //  * @brief Move Construct a new Memory object
-    //  *
-    //  * @param other
-    //  */
-    // Memory(Memory &&other) : m_alloc()
-    // {
-    //     reserve(other.size());
-
-    // }
-
-    // /**
-    //  * @brief Copy assignment operator
-    //  *
-    //  * @param other
-    //  * @return Memory&
-    //  */
-    // Memory &operator=(const Memory &other)
-    // {
-    //     reserve(other.size());
-    //     m_data = other.data();
-    // }
-
-    // /**
-    //  * @brief Move assignment operator
-    //  *
-    //  * @param other
-    //  * @return Memory&
-    //  */
-    // Memory &operator=(Memory &&other)
-    // {
-    //     memory_ = Container_t(other.begin(), other.end());
-    //     other = Memory();
-    // }
-
     virtual ~Memory() { m_alloc.deallocate(m_data, m_allocated_size); }
 
     /**
@@ -215,7 +180,9 @@ class Memory {
     auto copyFrom(pointer data, size_t num_elements) { COMPUTE<T>::copy(data, m_data, num_elements); }
 
     template <template <class> class COMPUTE_OTHER, class T_OTHER>
-    auto copyFrom(Memory<COMPUTE_OTHER, T_OTHER> &other_mem) { COMPUTE<T>::copy(other_mem.data(), m_data, other_mem.size()); }
+    auto copyFrom(Memory<COMPUTE_OTHER, T_OTHER> &other_mem) {
+        COMPUTE<T>::copy(other_mem.data(), m_data, other_mem.size());
+    }
 
     // TODO: implement iterators.
 

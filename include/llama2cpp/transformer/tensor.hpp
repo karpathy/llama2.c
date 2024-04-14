@@ -174,8 +174,7 @@ class Tensor : public TensorView<T> {
     }
 
     template <template <class> class COMPUTE_OTHER, class T_OTHER>
-    void copyFrom(Tensor<COMPUTE_OTHER, T_OTHER>& other)
-    {
+    void copyFrom(Tensor<COMPUTE_OTHER, T_OTHER> &other) {
         m_memory.copyFrom(other.m_memory);
         this->setShape(other.shape());
     }
@@ -183,19 +182,6 @@ class Tensor : public TensorView<T> {
    private:
     Memory<COMPUTE, value_type> m_memory;
 };
-
-// std::ostream &operator<<(std::ostream &os, const TensorView<llama2cpp::CPU, llama2cpp::float32_t> &tensor) {
-//     os << "Shape (";
-//     // auto &vec = shape.shapeVec();
-//     // for (size_t i = 0; i < vec.size(); ++i) {
-//     //     if (i > 0) {
-//     //         os << ",";
-//     //     }
-//     //     os << vec[i];
-//     // }
-//     os << ")";
-//     return os;
-// }
 
 }  // namespace llama2cpp
 #endif

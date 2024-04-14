@@ -240,7 +240,7 @@ class Llama2 {
 
    private:
     Llama2Config m_config;
-    Transformer<CPU, float32_t>::ptr m_transformer;
+    Transformer<compute, value_type>::ptr m_transformer;
     Tokenizer::ptr m_tokenizer;
     Sampler::ptr m_sampler;
 };

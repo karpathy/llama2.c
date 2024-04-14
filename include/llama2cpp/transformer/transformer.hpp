@@ -55,7 +55,7 @@ struct TransformerWeights {
 template <template <class> class COMPUTE, class T>
 class Attention {
    public:
-    using ptr = std::unique_ptr<Attention<COMPUTE, T>>;
+    using ptr = typename std::unique_ptr<Attention<COMPUTE, T>>;
     using value_type = T;
     using compute = COMPUTE<T>;
 
@@ -131,12 +131,11 @@ class Attention {
 
             // softmax the scores to get attention weights, from 0..pos
             // inclusively
-            softmax(att_.data(), pos_ + 1);
+            softmax(att_, pos_ + 1);
 
             // weighted sum of the values, store back into xb
             TensorView<value_type> xb_(xb.data() + h * m_head_size, Shape(m_head_size));
-            memset(xb_.data(), 0,
-                   m_head_size * sizeof(value_type));  //@TODO implement API to set value
+            setZero(xb_);
             for (int t = 0; t <= pos_; t++) {
                 // get the value vector for this head and at this timestep
                 TensorView<value_type> v_(m_value_cache.data() + t * m_kv_dim + (h / kv_mul) * m_head_size, Shape(m_head_size));
@@ -207,7 +206,7 @@ class FeedForward {
 template <template <class> class COMPUTE, class T>
 class TransformerBlock {
    public:
-    using ptr = std::unique_ptr<TransformerBlock<COMPUTE, T>>;
+    using ptr = typename std::unique_ptr<TransformerBlock<COMPUTE, T>>;
     using value_type = T;
     using compute = COMPUTE<T>;
 
@@ -298,25 +297,27 @@ class Transformer {
             TensorView<value_type> wq(m_weights.wq.data() + layer_idx * m_config.dim * m_config.dim, Shape(dim, n_heads * head_size));
             TensorView<value_type> wk(m_weights.wk.data() + layer_idx * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
             TensorView<value_type> wv(m_weights.wv.data() + layer_idx * m_config.dim * kv_dim, Shape(dim, kv_dim * head_size));
-            auto attention = std::make_unique<Attention<CPU, value_type>>(wq, wk, wv, kv_dim, dim, n_heads, n_kv_heads, seq_len);
+            auto attention = std::make_unique<Attention<COMPUTE, value_type>>(wq, wk, wv, kv_dim, dim, n_heads, n_kv_heads, seq_len);
 
             // FF layer
             TensorView<value_type> w1(m_weights.w1.data() + layer_idx * dim * hidden_dim, Shape(hidden_dim, dim));
             TensorView<value_type> w2(m_weights.w2.data() + layer_idx * dim * hidden_dim, Shape(dim, hidden_dim));
             TensorView<value_type> w3(m_weights.w3.data() + layer_idx * dim * hidden_dim, Shape(hidden_dim, dim));
-            auto feedforward = std::make_unique<FeedForward<CPU, value_type>>(w1, w2, w3, dim, hidden_dim);
+            auto feedforward = std::make_unique<FeedForward<COMPUTE, value_type>>(w1, w2, w3, dim, hidden_dim);
 
             // TensorBlock
             TensorView<value_type> wo(m_weights.wo.data() + layer_idx * dim * dim, Shape(dim, dim));
             TensorView<value_type> w_rms_att(m_weights.rms_att_weight.data() + layer_idx * dim, Shape(dim));
             TensorView<value_type> w_rms_ffn(m_weights.rms_ffn_weight.data() + layer_idx * dim, Shape(dim));
-            auto tensorblock = std::make_unique<TransformerBlock<CPU, value_type>>(std::move(attention), std::move(feedforward), w_rms_ffn, wo, w_rms_att, dim);
+            auto tensorblock =
+                std::make_unique<TransformerBlock<COMPUTE, value_type>>(std::move(attention), std::move(feedforward), w_rms_ffn, wo, w_rms_att, dim);
 
             m_layers.push_back(std::move(tensorblock));
         }
 
-        m_linear = std::make_unique<Linear<CPU, value_type>>(m_weights.wcls);
+        m_linear = std::make_unique<Linear<COMPUTE, value_type>>(m_weights.wcls);
         m_out_logits.reShape(Shape(m_linear->outDim()));
+        m_x_in.reShape(Shape(dim));
     }
 
     ~Transformer() {}
@@ -327,32 +328,35 @@ class Transformer {
         size_t dim = static_cast<size_t>(m_config.dim);
 
         // copy the token embedding into x
-        TensorView<float32_t> content_row(w->token_embedding_table.data() + token * dim, Shape(dim));
+        TensorView<value_type> content_row(w->token_embedding_table.data() + token * dim, Shape(dim));
 
-        Tensor<COMPUTE, value_type> x_in(content_row.data(), Shape(dim));
+        // Prepare input tensors. Copy from CPU to device
+        m_x_in.copyFrom(content_row);
 
         // forward all the layers
         for (auto &layer : m_layers) {
-            layer->forward(x_in, pos);
+            layer->forward(m_x_in, pos);
         }
 
         // final rmsnorm
-        rmsnorm(x_in, x_in, w->rms_final_weight);
+        rmsnorm(m_x_in, m_x_in, w->rms_final_weight);
 
         // classifier into logits
-        m_linear->forward(x_in, m_out_logits);
+        m_linear->forward(m_x_in, m_out_logits);
 
-        logits.copyFrom(m_out_logits);  // Copy from tensor on COMPUTE to a CPU Tensor.
+        // Copy from tensor on COMPUTE to a CPU Tensor.
+        logits.copyFrom(m_out_logits);
     }
 
     auto getConfig() const -> const TransformerConfig & { return m_config; }
 
    private:
-    TransformerConfig m_config;                                   // the hyperparameters of the architecture (the blueprint)
-    TransformerWeights<COMPUTE, value_type> m_weights;            // the weights of the model
-    Linear<COMPUTE, value_type>::ptr m_linear;                    // linear layer
-    Tensor<COMPUTE, value_type> m_out_logits;                     // logits output buffer on COMPUTE
-    std::vector<TransformerBlock<CPU, float32_t>::ptr> m_layers;  // transformer block layers
+    TransformerConfig m_config;                                                 // the hyperparameters of the architecture (the blueprint)
+    TransformerWeights<COMPUTE, value_type> m_weights;                          // the weights of the model
+    Linear<COMPUTE, value_type>::ptr m_linear;                                  // linear layer
+    Tensor<COMPUTE, value_type> m_x_in;                                           // input tensor.
+    Tensor<COMPUTE, value_type> m_out_logits;                                   // logits output buffer on COMPUTE
+    std::vector<typename TransformerBlock<COMPUTE, value_type>::ptr> m_layers;  // transformer block layers
 };
 
 }  // namespace llama2cpp
