@@ -8,21 +8,35 @@
 #include "memory.hpp"
 
 namespace llama2cpp {
+
+/**
+ * @brief Stores the Shape information of a tensor.
+ *
+ */
 class Shape {
    public:
-    Shape() : m_shape(), m_stride(), m_num_dims(0) {}
+    Shape() : m_shape(), m_stride(), m_num_dims(0), m_dim_names() {}
 
-    Shape(std::initializer_list<size_t> shape) : m_shape(shape), m_stride(), m_num_dims(0) { initialize(); }
+    Shape(std::initializer_list<size_t> shape) : m_shape(shape), m_stride(), m_num_dims(0), m_dim_names() { initialize(); }
+    Shape(std::vector<size_t> shape) : m_shape(shape), m_stride(), m_num_dims(0) { initialize(); }
 
-    Shape(const Shape &shape) : m_shape(shape.shapeVec()), m_stride(shape.strideVec()), m_num_dims(shape.numDims()) {}
+    Shape(const Shape &shape) : m_shape(shape.shapeVec()), m_stride(shape.strideVec()), m_num_dims(shape.numDims()), m_dim_names() {}
 
-    Shape(const size_t dim) : m_shape({dim}), m_stride(), m_num_dims(1) { initialize(); }
+    Shape(const size_t dim) : m_shape({dim}), m_stride(), m_num_dims(1), m_dim_names() { initialize(); }
 
     template <typename... ARGS>
-    Shape(ARGS... args) : m_shape({args...}), m_stride(), m_num_dims(sizeof...(args)) {
+    Shape(ARGS... args) : m_shape({args...}), m_stride(), m_num_dims(sizeof...(args)), m_dim_names() {
         initialize();
     }
 
+    /**
+     * @brief Get the memory offset from the tensor indices.
+     *
+     * @tparam ARGS
+     * @param idx tensor index
+     * @param args tensor indices
+     * @return const size_t - offset of the element in the memory.
+     */
     template <typename... ARGS>
     auto operator()(size_t idx, ARGS... args) const -> const size_t {
         assert(sizeof...(args) < m_shape.size());
@@ -30,12 +44,76 @@ class Shape {
         return idx * m_stride[(m_num_dims - 1 - sizeof...(ARGS))] + this->operator()(args...);
     }
 
+    /**
+     * @brief Get the memory offset from the tensor index.
+     *
+     * @param idx tensor index
+     * @return const size_t - offset of the element in the memory.
+     */
     auto operator()(size_t idx) const -> const size_t {
         assert(idx < m_shape[m_num_dims - 1]);
+        if (isScalar()) {
+            assert(idx == 0);
+            return 1;
+        }
         return idx * m_stride[m_num_dims - 1];
     }
 
+    /**
+     * @brief Get shape at given dimension index
+     *
+     * @param idx dimension index
+     * @return const size_t - shape of the given dimension.
+     */
     auto operator[](size_t idx) const -> const size_t { return m_shape.at(idx); }
+
+    /**
+     * @brief Get slice of multidimensional shape
+     *
+     * @tparam ARGS index types
+     * @param idx index of the shape dimension.
+     * @param args other indices of the shape dimension.
+     * @return Shape sliced shape Shape[nDIM - 1 + sizeof...(args)]
+     */
+    template <typename... ARGS>
+    auto slice(size_t idx, ARGS... args) -> Shape {
+        /**
+         * Let Original shape Shape(2,3,5) stride = {15,5,1} nDIM=3
+         *
+         * shape.slice(0)       -> Shape(3,5),  stride = {5,1}      nDIM=2
+         * shape.slice(1)       -> Shape(3,5),  stride = {5,1}      nDIM=2
+         * shape.slice(0,0)     -> Shape(5),    stride = {1}        nDIM=1
+         * shape.slice(1,1)     -> Shape(5),    stride = {1}        nDIM=1
+         * shape.slice(1,1,2)   -> Shape(None), stride = {1}        nDIM=0
+         *
+         */
+
+        if constexpr (sizeof...(ARGS) == 0) {
+            // Special case shape.slice(arg0) -> Shape[nDIM-1]
+            std::vector<size_t> new_shape = this->shapeVec();
+            new_shape.erase(new_shape.begin());
+            return Shape(new_shape);
+        } else {
+            // General case shape.slice(arg0, arg1)         -> Shape[nDIM-2]
+            // General case shape.slice(arg0, arg1, arg2)   -> Shape[nDIM-3]
+            // General case shape.slice(arg0, arg...n)      -> Shape[nDIM-n]
+            std::vector<size_t> new_shape = this->shapeVec();
+            new_shape.erase(new_shape.begin());
+            return Shape(new_shape).slice(args...);
+        }
+    }
+
+    template <typename... ARGS>
+    auto offset(size_t idx, ARGS... args) -> size_t {
+        if constexpr (sizeof...(ARGS) == 0) {
+            if (isScalar()) {
+                return idx * 1;
+            }
+            return idx * m_stride[0];
+        } else {
+            return idx * m_stride[0] + slice(args...).offset(args...);
+        }
+    }
 
     auto size() const -> const size_t {
         if (m_shape.empty()) {
@@ -46,39 +124,92 @@ class Shape {
 
     auto numDims() const -> const size_t { return m_num_dims; }
 
-    auto numElements() const -> const size_t { return m_shape[0] * m_stride[0]; }
+    auto numElements() const -> const size_t {
+        if (isScalar()) {
+            return 1UL;
+        }
+        // If we have a tensor of shape (C,H,W) stride (H*W,W,1),
+        // then num elements i.e. C*H*W is simple shape[0]*stride[0]
+        return m_shape[0] * m_stride[0];
+    }
 
     auto shapeVec() const -> const std::vector<size_t> { return m_shape; }
 
     auto strideVec() const -> const std::vector<size_t> { return m_stride; }
 
+    auto getNamesVec() const -> const std::vector<std::string> { return m_dim_names; }
+
+    bool operator==(Shape const &other) const {
+        bool check = true;
+        check &= other.numDims() == this->numDims();
+        check &= other.isScalar() == this->isScalar();
+        if (this->isScalar()) {
+            return check;
+        }
+        for (auto i = 0; i < m_shape.size(); ++i) {
+            check &= m_shape[i] == other.m_shape[i];
+        }
+        return check;
+    };
+
+    bool isContiguous() const { return true; }
+    bool isScalar() const { return m_num_dims == 0; }
+
    private:
+    /**
+     * @brief Computes the stride information.
+     * Currently only supports contiguous tensors.
+     *
+     */
     void initialize() {
+        /**
+         * A 1D tensor of shape 5 has stride = 1
+         * 2D tensor (matrix) let say of shape (3,5) will have inner stride 1 and outer stride = 5
+         * 3D tensor of shape (2,3,5) will have stride (5*3,5,1)
+         *
+         * Generalizing shape(C,H,W) will have stride (H*W, W, 1)
+         *
+         * This assumes tensor is contiguous.
+         */
+
         m_num_dims = m_shape.size();
-        m_stride.resize(m_num_dims, 1);
-        m_stride[m_num_dims - 1] = 1;
-        for (auto i = m_num_dims - 1; i >= 1; --i) {
-            m_stride[i - 1] = m_shape[i] * m_stride[i];
+        if (!isScalar()) {
+            m_stride.resize(m_num_dims, 1);
+            m_stride[m_num_dims - 1] = 1;
+            for (auto i = m_num_dims - 1; i >= 1; --i) {
+                m_stride[i - 1] = m_shape[i] * m_stride[i];
+            }
         }
     }
     std::vector<size_t> m_shape;
     std::vector<size_t> m_stride;
+    std::vector<std::string> m_dim_names;
     size_t m_num_dims;
 };
 
 std::ostream &operator<<(std::ostream &os, const Shape &shape) {
     os << "Shape (";
-    auto &vec = shape.shapeVec();
-    for (size_t i = 0; i < vec.size(); ++i) {
-        if (i > 0) {
-            os << ",";
+    if (shape.isScalar()) {
+        std::cout << "None";
+    } else {
+        auto &vec = shape.shapeVec();
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (i > 0) {
+                os << ",";
+            }
+            os << vec[i];
         }
-        os << vec[i];
     }
     os << ")";
     return os;
 }
 
+/**
+ * @brief TensorView is a tensor accessor which does not own the memory but can be used to access the data in the tensor.
+ * TODO preprend the operators with a macro which is basically `__host__ __device__` to use with CUDA.
+ *
+ * @tparam T datatype
+ */
 template <class T>
 class TensorView {
    public:
@@ -111,7 +242,14 @@ class TensorView {
 
     auto operator[](size_t index) const -> const_reference { return *(m_data + index); }
 
-    // TODO slice API
+    template <typename... ARGS>
+    auto slice(size_t idx, ARGS... args) -> TensorView<T> {
+        pointer begin = data();
+        size_t offset = m_shape.offset(idx, args...);
+        Shape new_shape = m_shape.slice(idx, args...);
+        std::cout << offset << std::endl;
+        return {begin + offset, new_shape};
+    }
 
     auto shape() const -> const Shape & { return m_shape; }
 
@@ -129,11 +267,19 @@ class TensorView {
 
     auto numBytes() const -> const size_t { return numElements() * sizeof(value_type); }
 
+    auto isContiguous() -> bool { return m_shape.isContiguous(); }
+
    private:
     pointer m_data;
     Shape m_shape;
 };
 
+/**
+ * @brief N Dimensional tensor.
+ *
+ * @tparam COMPUTE device on which the tensor memory is stored.
+ * @tparam T datatype.
+ */
 template <template <class> class COMPUTE, class T>
 class Tensor : public TensorView<T> {
    public:
@@ -180,7 +326,7 @@ class Tensor : public TensorView<T> {
     }
 
    private:
-    Memory<COMPUTE, value_type> m_memory;
+    Memory<COMPUTE, value_type> m_memory;  // a memory buffer owned by the tensor.
 };
 
 }  // namespace llama2cpp
