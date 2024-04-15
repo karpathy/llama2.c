@@ -9,6 +9,10 @@
 
 namespace llama2cpp {
 
+class Shape;
+
+std::ostream &operator<<(std::ostream &os, const Shape &shape);
+
 /**
  * @brief Stores the Shape information of a tensor.
  *
@@ -51,11 +55,11 @@ class Shape {
      * @return const size_t - offset of the element in the memory.
      */
     auto operator()(size_t idx) const -> const size_t {
-        assert(idx < m_shape[m_num_dims - 1]);
         if (isScalar()) {
             assert(idx == 0);
-            return 1;
+            return 0;
         }
+        assert(idx < m_shape[m_num_dims - 1]);
         return idx * m_stride[m_num_dims - 1];
     }
 
@@ -78,13 +82,13 @@ class Shape {
     template <typename... ARGS>
     auto slice(size_t idx, ARGS... args) -> Shape {
         /**
-         * Let Original shape Shape(2,3,5) stride = {15,5,1} nDIM=3
+         * Let Original shape of a tensor be Shape(2,3,5) stride = {15,5,1} nDIM=3 and names = (C,H,W)
          *
-         * shape.slice(0)       -> Shape(3,5),  stride = {5,1}      nDIM=2
-         * shape.slice(1)       -> Shape(3,5),  stride = {5,1}      nDIM=2
-         * shape.slice(0,0)     -> Shape(5),    stride = {1}        nDIM=1
-         * shape.slice(1,1)     -> Shape(5),    stride = {1}        nDIM=1
-         * shape.slice(1,1,2)   -> Shape(None), stride = {1}        nDIM=0
+         * shape.slice(0)       -> Shape(3,5),  stride = {5,1}      nDIM=2 (H,W)
+         * shape.slice(1)       -> Shape(3,5),  stride = {5,1}      nDIM=2 (H,W)
+         * shape.slice(1,0)     -> Shape(5),    stride = {1}        nDIM=1 (W)
+         * shape.slice(1,1)     -> Shape(5),    stride = {1}        nDIM=1 (W)
+         * shape.slice(1,1,2)   -> Shape(None), stride = {1}        nDIM=0 (None)
          *
          */
 
@@ -103,15 +107,43 @@ class Shape {
         }
     }
 
+    /**
+     * @brief Offset is used to get the offset of the tensor memory pointer for different slices.
+     *
+     * @tparam ARGS index types
+     * @param idx index of the shape dimension.
+     * @param args other indices of the shape dimension.
+     * @return size_t - offset value from the beginning of the original tensor.
+     */
     template <typename... ARGS>
     auto offset(size_t idx, ARGS... args) -> size_t {
+        /**
+         * Lets take the same example
+         * Let Original shape of a tensor be Shape(2,3,5) stride = {15,5,1} nDIM=3
+         *
+         * tensor               -> Shape(2,3,5) stride = {15,5,1}   offset {0}                  = 0
+         * shape.slice(0)       -> Shape(3,5),  stride = {5,1}      offset {0*15}               = 0
+         * shape.slice(1)       -> Shape(3,5),  stride = {5,1}      offset {1*15}               = 15
+         * shape.slice(1,0)     -> Shape(5),    stride = {1}        offset {1*15 + 0*5}         = 15
+         * shape.slice(1,1)     -> Shape(5),    stride = {1}        offset {1*15 + 1*5}         = 20
+         * shape.slice(1,1,2)   -> Shape(None), stride = {1}        offset {1*15 + 1*5 + 2*1}   = 22
+         *
+         */
+
         if constexpr (sizeof...(ARGS) == 0) {
             if (isScalar()) {
+                std::cout << "Scalar offset " << idx << std::endl;
                 return idx * 1;
             }
+            std::cout << "Non Scalar offset " << idx << "*" << m_stride[0] << " " << m_shape << std::endl;
+            // shape.slice(arg0)
             return idx * m_stride[0];
         } else {
-            return idx * m_stride[0] + slice(args...).offset(args...);
+            std::vector<size_t> new_shape_ = this->shapeVec();
+            new_shape_.erase(new_shape_.begin());
+            Shape new_shape(new_shape_);
+            std::cout << "Base " << idx << "*" << m_stride[0] << "  " << new_shape << std::endl;
+            return idx * m_stride[0] + new_shape.offset(args...);
         }
     }
 
@@ -247,7 +279,7 @@ class TensorView {
         pointer begin = data();
         size_t offset = m_shape.offset(idx, args...);
         Shape new_shape = m_shape.slice(idx, args...);
-        std::cout << offset << std::endl;
+        std::cout << "offset :" << offset << "\n" << std::endl;
         return {begin + offset, new_shape};
     }
 

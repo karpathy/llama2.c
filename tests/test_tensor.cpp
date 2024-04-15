@@ -54,6 +54,19 @@ TEST(testTensor, slice) {
     EXPECT_EQ(tensor0(0), 1);
     EXPECT_EQ(tensor0(1), 2);
 
+    // [
+    //     [
+    //         [00, 01, 02, 03, 04],
+    //         [05, 06, 07, 08, 09],
+    //         [10, 11, 12, 13, 14],
+    //     ],
+    //     [
+    //         [15, 16, 17, 18, 19],
+    //         [20, 21, 22, 23, 24],
+    //         [25, 26, 27, 28, 29],
+    //     ],
+    // ]
+
     llama2cpp::Shape shape(2UL, 3UL, 5UL);  // CHW
     std::vector<float> w_data(shape.size());
     for (auto i = 0; i < shape.size(); ++i) {
@@ -90,4 +103,9 @@ TEST(testTensor, slice) {
     std::cout << "tensor.slice(1,0) :" << s3.shape() << std::endl;
     std::cout << "tensor.slice(1,1) :" << s4.shape() << std::endl;
     std::cout << "tensor.slice(1,1,2) :" << s5.shape() << std::endl;
+    EXPECT_EQ(s1(2, 4), 14);
+    EXPECT_EQ(s2(2, 4), 29);
+    EXPECT_EQ(s3(2), 17);
+    EXPECT_EQ(s4(2), 22);
+    EXPECT_EQ(s5(0), 22);
 }
