@@ -211,8 +211,8 @@ class Shape {
     }
     std::vector<size_t> m_shape;
     std::vector<size_t> m_stride;
-    std::vector<std::string> m_dim_names;
     size_t m_num_dims;
+    std::vector<std::string> m_dim_names;
 };
 
 std::ostream &operator<<(std::ostream &os, const Shape &shape) {

@@ -1,5 +1,28 @@
-## llama2.c
+## llama2.cpp
 
+This is a rewrite of [@karpathy](https://github.com/karpathy) llama2.c in c++. This includes a pure C++ transformer library with a tensor class implementation. Currently this library only support CPU but can be extended to use other hardware accelerators.
+
+### Build
+```bash
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make
+```
+
+### Running the llama2 executable
+```
+./run_llama ../stories15M.bin
+```
+
+### TODO:
+- support the quantized model.
+- Add CUDA tensor support.
+- Add AVX512 support to CPU.
+- Modularize the RoPE.
+- Package Tokenizer and Sampler into a standalone library.
+
+## Llama2.C project description.
 <p align="center">
   <img src="assets/llama_cute.jpg" width="300" height="300" alt="Cute Llama">
 </p>

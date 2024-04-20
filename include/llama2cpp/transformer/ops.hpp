@@ -129,7 +129,7 @@ void add(TensorView<T> &result, TensorView<T> &a, TensorView<T> &b) {
 template <typename T>
 void silu_inpl(TensorView<T> &x) {
     // SiLU non-linearity
-    for (int i = 0; i < x.size(); i++) {
+    for (size_t i = 0; i < x.size(); i++) {
         auto val = x[i];
         // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
         val *= (1.0f / (1.0f + expf(-val)));
