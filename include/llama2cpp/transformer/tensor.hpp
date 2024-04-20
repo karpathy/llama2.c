@@ -132,17 +132,13 @@ class Shape {
 
         if constexpr (sizeof...(ARGS) == 0) {
             if (isScalar()) {
-                std::cout << "Scalar offset " << idx << std::endl;
                 return idx * 1;
             }
-            std::cout << "Non Scalar offset " << idx << "*" << m_stride[0] << " " << m_shape << std::endl;
-            // shape.slice(arg0)
             return idx * m_stride[0];
         } else {
             std::vector<size_t> new_shape_ = this->shapeVec();
             new_shape_.erase(new_shape_.begin());
             Shape new_shape(new_shape_);
-            std::cout << "Base " << idx << "*" << m_stride[0] << "  " << new_shape << std::endl;
             return idx * m_stride[0] + new_shape.offset(args...);
         }
     }
@@ -238,6 +234,7 @@ std::ostream &operator<<(std::ostream &os, const Shape &shape) {
 
 /**
  * @brief TensorView is a tensor accessor which does not own the memory but can be used to access the data in the tensor.
+ *
  * TODO preprend the operators with a macro which is basically `__host__ __device__` to use with CUDA.
  *
  * @tparam T datatype
@@ -270,17 +267,27 @@ class TensorView {
         return *(m_data + m_shape(args...));
     }
 
-    auto operator[](size_t index) -> reference { return *(m_data + index); }
+    auto operator[](size_t index) -> reference {
+        assert(index < m_shape.numElements());
+        return *(m_data + index);
+    }
 
-    auto operator[](size_t index) const -> const_reference { return *(m_data + index); }
+    auto operator[](size_t index) const -> const_reference {
+        assert(index < m_shape.numElements());
+        return *(m_data + index);
+    }
 
     template <typename... ARGS>
     auto slice(size_t idx, ARGS... args) -> TensorView<T> {
         pointer begin = data();
         size_t offset = m_shape.offset(idx, args...);
         Shape new_shape = m_shape.slice(idx, args...);
-        std::cout << "offset :" << offset << "\n" << std::endl;
         return {begin + offset, new_shape};
+    }
+
+    auto view(const Shape &shape) {
+        assert(m_shape.numElements() == shape.numElements());
+        return TensorView(this->data(), shape);
     }
 
     auto shape() const -> const Shape & { return m_shape; }
