@@ -149,8 +149,13 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
     int shared_weights = config->vocab_size > 0 ? 1 : 0;
     config->vocab_size = abs(config->vocab_size);
     // figure out the file size
+#if defined _WIN32
+    _fseeki64(file, 0, SEEK_END); // move file pointer to end of file
+    *file_size = _ftelli64(file); // get the file size, in bytes
+#else
     fseek(file, 0, SEEK_END); // move file pointer to end of file
     *file_size = ftell(file); // get the file size, in bytes
+#endif
     fclose(file);
     // memory map the Transformer weights into the data pointer
     *fd = open(checkpoint, O_RDONLY); // open in read only mode
