@@ -349,6 +349,8 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - Android
   - [llama2.c-android](https://github.com/Manuel030/llama2.c-android): by @[Manuel030](https://github.com/Manuel030): adds Android binaries of this project
   - [llama2.c-android-wrapper](https://github.com/celikin/llama2.c-android-wrapper): by @[celikin](https://github.com/celikin): added JNI wrapper, PoC
+- C
+  - [llama3.c](https://github.com/jameswdelancey/llama3.c): by @[jameswdelancey](https://github.com/jameswdelancey): a LLaMA 3 8B Base and Instruct port of this project
 - C++
   - [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @[leloykun](https://github.com/leloykun): a C++ port of this project
   - [llama2.cpp](https://github.com/coldlarry/llama2.cpp) by @[coldlarry](https://github.com/coldlarry): a C++ port of this project
