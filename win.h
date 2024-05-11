@@ -8,6 +8,7 @@
 
 #define ssize_t int64_t
 #define ftell _ftelli64
+#define fseek _fseeki64
 
 // Below code is originally from mman-win32
 //
