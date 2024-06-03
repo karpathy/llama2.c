@@ -1,3 +1,33 @@
+## llama2.cu
+
+This is a port of https://github.com/karpathy/llama2.c to CUDA.
+
+I was inspired & have used code from https://github.com/ankan-ban/llama2.cu as a starting point.  When I came upon that code, I noticed the `run.c` code had progressed and their `llama2.cu` code was no longer working.  So, I tried to structure the CUDA code in a way that `run.cu` could be kept up-to-date via `diff`.  The `ankan-ban` repository is also focused on making 16-bit float and 8-bit int work.  I hoped there would be room for a straight float port.  
+
+Coding CUDA for the highest performance is a significant effort.  This repository is focused on the basics of porting from C to CUDA for educational purposes.  It is not intended to be a fully optimized or production-ready code.  However, it can serve as a starting point for anyone who wants to learn how to use CUDA.  That said, we do notice a significant performance increase.  Using the `stories110M.bin`, I am seeing a 5x perf increase vs the `runomp` app on my 14-core i9 Intel laptop with an NVIDIA RTX 4050 running WSL2.  My older linux desktop 12-core i9 system with a NVIDIA RTX 3070 sees about 15x.
+
+### Building & Running
+
+On linux, `make runcuda` or `make rundebugcuda` to get a `runcuda` executable.  For now, I decided to make a separate exe from `run` in order to more easily test.  To compile the CPU-only code inside `run.cu` for comparison to the `run.c` use `make runnotcuda`. 
+
+On windows, open a "Developer Command Prompt" and run `build_cuda_msvc.bat` to create a `runcuda.exe`. 
+
+Use the `runcuda` or `runcuda.exe` as you would the `run` or `run.exe` commands.
+
+### Summary of the Changes
+
+The performance hotspot in this code is the `matmul` routine.  It dominates 85% of the C runtime.  That's great, because GPU's excel at accelerating matrix multiplication.
+
+The `matmul` is located in the `forward` routine which loops over the transformer algorithm in layers.  Each step uses data from either the TransformerWeights or RunState structures and most steps seem likely to accelerate on the GPU.  Focusing here seemed like it should give us a speedup.
+
+To port to CUDA, we first allocate memory on the GPU via `cudaMalloc` for the individual tensors in the TransformerWeights and RunState structures.  Next, we take the steps in the `forward` routine and extract functions for all the steps in order to convert each step to a CUDA kernel.  Finally, we `cudaMemcpy` the `logits` data back to the CPU for next-token processing.
+
+My goal was to make it easy to compare the C and CUDA, so I extracted each function and wrapped it with a `USE_CUDA` define to allow easy comparison of each routine from C to CUDA.  I also tried to make it easy to `diff` the whole file to allow keeping up with changes to the main `run.c` code.  To this end, I kept the GPU data as `float`.
+
+I used `cuBLAS` to leverage that library's expertise for the SGEMV function.  It adds some startup time overhead via `cublasCreate`, so I'm waffling on keeping that code at the moment.  Might go back to the previous `matmul` kernel code from `ankan-ban`. 
+
+In the rest of the code, I tried to keep it mostly untouched.  But, since `nvcc` is a C++ compiler, there were a few times that we had to cast values in order to avoid errors.  To get the Windows build working, I worked around one bit of C-syntax that made `cl.exe` unhappy.
+
 ## llama2.c
 
 <p align="center">
