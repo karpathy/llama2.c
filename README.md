@@ -341,6 +341,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2.rs](https://github.com/lintian06/llama2.rs) by @[lintian06](https://github.com/lintian06): A Rust port of this project
   - [pecca.rs](https://github.com/rahoua/pecca-rs) by @[rahoua](https://github.com/rahoua): A Rust port leveraging [ndarray](https://github.com/rust-ndarray/ndarray), supports BLAS.
   - [llama2.rs](https://github.com/flaneur2020/llama2.rs) by @[flaneur2020](https://github.com/flaneur2020): A Rust port of this project.
+  - [llama2-burn](https://github.com/code-cp/llama2-burn): A Rust port of this project leveraging [Burn](https://github.com/tracel-ai/burn)
 - Go
   - [go-llama2](https://github.com/tmc/go-llama2) by @[tmc](https://github.com/tmc): a Go port of this project
   - [llama2.go](https://github.com/nikolaydubina/llama2.go) by @[nikolaydubina](https://github.com/nikolaydubina): a Go port of this project
@@ -349,6 +350,8 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - Android
   - [llama2.c-android](https://github.com/Manuel030/llama2.c-android): by @[Manuel030](https://github.com/Manuel030): adds Android binaries of this project
   - [llama2.c-android-wrapper](https://github.com/celikin/llama2.c-android-wrapper): by @[celikin](https://github.com/celikin): added JNI wrapper, PoC
+- C
+  - [llama3.c](https://github.com/jameswdelancey/llama3.c): by @[jameswdelancey](https://github.com/jameswdelancey): a LLaMA 3 8B Base and Instruct port of this project
 - C++
   - [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @[leloykun](https://github.com/leloykun): a C++ port of this project
   - [llama2.cpp](https://github.com/coldlarry/llama2.cpp) by @[coldlarry](https://github.com/coldlarry): a C++ port of this project
