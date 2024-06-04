@@ -11,7 +11,6 @@ from torch import nn
 
 @dataclass
 class LoraArgs:
-    target_module: int
     lora_r: int
     lora_alpha: float
 

@@ -57,11 +57,11 @@ n_kv_heads = 6
 multiple_of = 32
 dropout = 0.0
 # lora specification
-lora_modules = {f'layers.{l_id}.attention.{w}': LoraArgs(f'layers.{l_id}.attention.{w}', 2, 1) for w in ['wq', 'wk', 'wv', 'wo'] for l_id in range(5)}
+lora_modules = {f'layers.{l_id}.attention.{w}': LoraArgs(2, 1) for w in ['wq', 'wk', 'wv', 'wo'] for l_id in range(5)}
 # adamw optimizer
 gradient_accumulation_steps = 4  # used to simulate larger batch sizes
 learning_rate = 5e-4  # max learning rate
-max_iters = 10000 #298100  # total number of training iterations
+max_iters = 100000 #298100  # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
@@ -263,10 +263,12 @@ local_iter_num = 0  # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model  # unwrap DDP container if needed
 running_mfu = -1.0
 if init_from == 'finetune':
-    get_lr = lambda _it: get_lr(_it, iter_num) # shift it for finetuning withouth touching get_lr implementation
+    starting_it = iter_num # shift it for finetuning withouth touching get_lr implementation
+else:
+    starting_it = 0
 while True:
     # determine and set the learning rate for this iteration
-    lr = get_lr(iter_num) if decay_lr else learning_rate
+    lr = get_lr(iter_num, starting_it=starting_it) if decay_lr else learning_rate
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
