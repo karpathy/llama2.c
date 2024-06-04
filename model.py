@@ -1,13 +1,19 @@
 import math
 import struct
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import nn 
+
+@dataclass
+class LoraArgs:
+    target_module: int
+    lora_r: int
+    lora_alpha: float
 
 @dataclass
 class ModelArgs:
@@ -22,7 +28,7 @@ class ModelArgs:
     norm_eps: float = 1e-5
     max_seq_len: int = 2048
     dropout: float = 0.0
-
+    lora_modules: Optional[dict[str, LoraArgs]] = field(default_factory = dict)
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float):
@@ -90,6 +96,37 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
         .expand(bs, slen, n_kv_heads, n_rep, head_dim)
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
     )
+
+class LoraLinear(nn.Module):
+    def __init__(self, base_layer, args:dict[str, LoraArgs], init=True):
+        super().__init__()
+        self.base_layer = base_layer
+        self.lora_A = nn.Linear(self.base_layer.in_features, args.lora_r, bias=False)
+        self.lora_B = nn.Linear(args.lora_r, self.base_layer.out_features, bias=False)
+        self.scaling = args.lora_alpha/args.lora_r
+        self.base_layer.requires_grad_(False)
+        self.weight=self.merge_weights()  # it does not saves the finetuning checkpoints separately! 
+
+        if init:
+            self._init_weights()
+            self.initialized=True
+
+    def _init_weights(self):
+        nn.init.zeros_(self.lora_A.weight)
+        nn.init.normal_(self.lora_B.weight)
+
+    def get_delta_weights(self) -> torch.Tensor:
+        output_tensor = (self.lora_B.weight @ self.lora_A.weight) * self.scaling
+        return output_tensor
+    
+    def merge_weights(self):
+        delta_weight = self.get_delta_weights()
+        self.base_layer.weight.data = self.base_layer.weight.data + delta_weight
+
+    def forward(self, 
+                x:torch.tensor
+    ) -> torch.tensor:
+        return self.base_layer.forward(x) + self.lora_B(self.lora_A(x)) #(tunable) dropout?
 
 class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
@@ -165,16 +202,16 @@ class Attention(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int, multiple_of: int, dropout: float):
+    def __init__(self, args: ModelArgs):
         super().__init__()
-        if hidden_dim is None:
-            hidden_dim = 4 * dim
-            hidden_dim = int(2 * hidden_dim / 3)
-            hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        self.w1 = nn.Linear(dim, hidden_dim, bias=False)
-        self.w2 = nn.Linear(hidden_dim, dim, bias=False)
-        self.w3 = nn.Linear(dim, hidden_dim, bias=False)
-        self.dropout = nn.Dropout(dropout)
+        if args.hidden_dim is None:
+            args.hidden_dim = 4 * args.dim
+            args.hidden_dim = int(2 * args.hidden_dim / 3)
+            args.hidden_dim = args.multiple_of * ((args.hidden_dim + args.multiple_of - 1) // args.multiple_of)
+        self.w1 = nn.Linear(args.dim, args.hidden_dim, bias=False)
+        self.w2 = nn.Linear(args.hidden_dim, args.dim, bias=False)
+        self.w3 = nn.Linear(args.dim, args.hidden_dim, bias=False)
+        self.dropout = nn.Dropout(args.dropout)
 
     def forward(self, x):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
@@ -187,12 +224,7 @@ class TransformerBlock(nn.Module):
         self.dim = args.dim
         self.head_dim = args.dim // args.n_heads
         self.attention = Attention(args)
-        self.feed_forward = FeedForward(
-            dim=args.dim,
-            hidden_dim=args.hidden_dim,
-            multiple_of=args.multiple_of,
-            dropout=args.dropout,
-        )
+        self.feed_forward = FeedForward(args)
         self.layer_id = layer_id
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
@@ -245,6 +277,8 @@ class Transformer(nn.Module):
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        #elif isinstance(module, LoraLinear): #needed?
+        #    module._init_weights()
 
     def forward(self, tokens: torch.Tensor, targets: Optional[torch.Tensor] = None) -> torch.Tensor:
         _bsz, seqlen = tokens.shape
@@ -341,3 +375,19 @@ class Transformer(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
+
+class LoraTransformer(Transformer):
+    def __init__(self, params: ModelArgs):
+        super().__init__(params)
+
+    def add_lora(self, args:LoraArgs):
+        for lk in args.keys(): # e.g. layers.0.attention.wq
+            for dk in self.state_dict(): # e.g. layers.0.attention.wq.weight
+                if dk.startswith(lk):  # as per e.g. above
+                    new_module = LoraLinear(self.get_submodule(lk), args[lk])
+                    parent, child = '.'.join(lk.split('.')[:-1]), lk.split('.')[-1]
+                    setattr(self.get_submodule(parent), child, new_module)
+
+    def freeze(self):
+        for param in self.parameters():
+            param.requires_grad = False
