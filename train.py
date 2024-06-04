@@ -24,7 +24,7 @@ from datetime import datetime
 from functools import partial
 
 import torch
-from model import Transformer, ModelArgs
+from model import Transformer, ModelArgs, LoraArgs, LoraTransformer
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -39,7 +39,7 @@ log_interval = 1
 eval_iters = 100
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = False  # if True, always save a checkpoint after each eval
-init_from = "scratch"  # 'scratch' or 'resume'
+init_from = "finetune"  # 'scratch' or 'resume' or 'finetune'
 # wandb logging
 wandb_log = False  # disabled by default
 wandb_project = "llamac"
@@ -56,10 +56,12 @@ n_heads = 6
 n_kv_heads = 6
 multiple_of = 32
 dropout = 0.0
+# lora specification
+lora_modules = {f'layers.{l_id}.attention.{w}': LoraArgs(2, 1) for w in ['wq', 'wk', 'wv', 'wo'] for l_id in range(5)}
 # adamw optimizer
 gradient_accumulation_steps = 4  # used to simulate larger batch sizes
 learning_rate = 5e-4  # max learning rate
-max_iters = 100000  # total number of training iterations
+max_iters = 100000 #298100  # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
@@ -153,14 +155,15 @@ model_args = dict(
     multiple_of=multiple_of,
     max_seq_len=max_seq_len,
     dropout=dropout,
+    lora_modules=lora_modules,
 )  # start with model_args from command line
 if init_from == "scratch":
     # init a new model from scratch
     print("Initializing a new model from scratch")
     gptconf = ModelArgs(**model_args)
     model = Transformer(gptconf)
-elif init_from == "resume":
-    print(f"Resuming training from {out_dir}")
+elif init_from == "resume" or init_from == "finetune":
+    print(f"{init_from.capitalize()} from {out_dir}")
     # resume training from a checkpoint.
     ckpt_path = os.path.join(out_dir, "ckpt.pt")
     checkpoint = torch.load(ckpt_path, map_location=device)
@@ -171,7 +174,10 @@ elif init_from == "resume":
         model_args[k] = checkpoint_model_args[k]
     # create the model
     gptconf = ModelArgs(**model_args)
-    model = Transformer(gptconf)
+    if init_from == 'finetune':
+        model = LoraTransformer(gptconf)
+    else:
+        model = Transformer(gptconf)
     state_dict = checkpoint["model"]
     # fix the keys of the state dictionary :(
     # honestly no idea how checkpoints sometimes get this prefix, have to debug more
@@ -180,6 +186,9 @@ elif init_from == "resume":
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix) :]] = state_dict.pop(k)
     model.load_state_dict(state_dict)
+    if init_from == 'finetune':
+        model.freeze()
+        model.add_lora(model_args['lora_modules'])
     iter_num = checkpoint["iter_num"]
     best_val_loss = checkpoint["best_val_loss"]
 model.to(device)
@@ -189,7 +198,7 @@ scaler = torch.cuda.amp.GradScaler(enabled=(dtype == "float16"))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
-if init_from == "resume" and "optimizer" in checkpoint:
+if (init_from == "resume" or init_from == "finetune") and "optimizer" in checkpoint:
     optimizer.load_state_dict(checkpoint["optimizer"])
 checkpoint = None  # free up memory
 
@@ -226,7 +235,9 @@ def estimate_loss():
     return out
 
 # learning rate decay scheduler (cosine with warmup)
-def get_lr(it):
+def get_lr(_it, starting_it:int = 0):
+    assert _it >= starting_it
+    it = _it - starting_it # trick to restart lr schedule for finetuning
     # 1) linear warmup for warmup_iters steps
     if it < warmup_iters:
         return learning_rate * it / warmup_iters
@@ -251,9 +262,13 @@ t0 = time.time()
 local_iter_num = 0  # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model  # unwrap DDP container if needed
 running_mfu = -1.0
+if init_from == 'finetune':
+    starting_it = iter_num # shift it for finetuning withouth touching get_lr implementation
+else:
+    starting_it = 0
 while True:
     # determine and set the learning rate for this iteration
-    lr = get_lr(iter_num) if decay_lr else learning_rate
+    lr = get_lr(iter_num, starting_it=starting_it) if decay_lr else learning_rate
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
@@ -287,7 +302,7 @@ while True:
                     "config": config,
                 }
                 print(f"saving checkpoint to {out_dir}")
-                torch.save(checkpoint, os.path.join(out_dir, "ckpt.pt"))
+                torch.save(checkpoint, os.path.join(out_dir, f"ckpt_from_{init_from}.pt"))
                 model_export(raw_model, os.path.join(out_dir, "model.bin"), version=0)
     if iter_num == 0 and eval_only:
         break

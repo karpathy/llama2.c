@@ -1,0 +1,13 @@
+.DS_Store
+__pycache__/
+data/
+err.txt
+finetune.py
+models_check_tok_15M/
+models_check_tok_260K/
+out/
+resources.txt
+run
+runq
+stdout.txt
+test/
