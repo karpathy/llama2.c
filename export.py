@@ -1,5 +1,5 @@
 """
-This script has functions and utilties for model export.
+This script has functions and utilities for model export.
 Basically, we have a bunch of versions of the model, and we
 want to export them to .bin files to be read from and inferenced in C.
 
