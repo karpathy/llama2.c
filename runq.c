@@ -1004,7 +1004,7 @@ void chat(const Transformer* const transformer, Tokenizer* const tokenizer,
     char user_prompt[512];
     char rendered_prompt[1152];
     int num_prompt_tokens = 0;
-    int* const prompt_tokens = malloc(1152 * sizeof(int));
+    int prompt_tokens[1152];
     int user_idx = 0;
 
     // start the main loop
@@ -1081,7 +1081,6 @@ void chat(const Transformer* const transformer, Tokenizer* const tokenizer,
             printf("\n");
     }
     printf("\n");
-    free(prompt_tokens);
 }
 
 // ----------------------------------------------------------------------------
