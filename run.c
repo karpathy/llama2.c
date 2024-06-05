@@ -176,7 +176,8 @@ void read_checkpoint(const char* const checkpoint, Config* const config,
     memory_map_weights(weights, config, weights_ptr, shared_weights);
 }
 
-void build_transformer(Transformer* const t, const char* const checkpoint_path) {
+static inline void build_transformer(Transformer* const t,
+                                     const char* const checkpoint_path) {
     // read in the Config and the Weights from the checkpoint
     read_checkpoint(checkpoint_path, &t->config, &t->weights, &t->fd, &t->data,
                     &t->file_size);
@@ -397,7 +398,7 @@ typedef struct {
     unsigned char byte_pieces[512]; // stores all single-byte strings
 } Tokenizer;
 
-int compare_tokens(const void* const a, const void* const b) {
+static inline int compare_tokens(const void* const a, const void* const b) {
     return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
 }
 
@@ -725,7 +726,9 @@ void build_sampler(Sampler* const sampler, const int vocab_size,
     sampler->probindex = malloc(sampler->vocab_size * sizeof(ProbIndex));
 }
 
-void free_sampler(const Sampler* const sampler) { free(sampler->probindex); }
+static inline void free_sampler(const Sampler* const sampler) {
+    free(sampler->probindex);
+}
 
 unsigned int random_u32(unsigned long long* const state) {
     // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
@@ -734,7 +737,8 @@ unsigned int random_u32(unsigned long long* const state) {
     *state ^= *state >> 27;
     return (*state * 0x2545F4914F6CDD1Dull) >> 32;
 }
-float random_f32(unsigned long long* const state) { // random float32 in [0,1)
+static inline float
+random_f32(unsigned long long* const state) { // random float32 in [0,1)
     return (random_u32(state) >> 8) / 16777216.0f;
 }
 
@@ -769,7 +773,7 @@ int sample(Sampler* const sampler, float* const logits) {
 // ----------------------------------------------------------------------------
 // utilities: time
 
-long time_in_ms() {
+static inline long time_in_ms() {
     // return time in milliseconds, for benchmarking the model speed
     struct timespec time;
     clock_gettime(CLOCK_REALTIME, &time);
