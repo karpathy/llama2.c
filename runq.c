@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -188,7 +189,7 @@ QuantizedTensor* init_quantized_tensors(void** ptr, const int n, const int size_
 }
 
 void memory_map_weights(TransformerWeights* const w, const Config* const p, void* ptr,
-                        const uint8_t shared_classifier) {
+                        const bool shared_classifier) {
     const int head_size = p->dim / p->n_heads;
     // first are the parameters that are kept in fp32 (the rmsnorm (1D) weights)
     float* fptr = ptr; // cast our pointer to float*
@@ -407,10 +408,10 @@ float* forward(const Transformer* const transformer, const int token, const int 
             const float val = pos * freq;
             const float fcr = cosf(val);
             const float fci = sinf(val);
-            const int rotn =
+            const char rotn =
                 i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-            for (int v = 0; v < rotn; v++) {
-                float* vec =
+            for (char v = 0; v < rotn; v++) {
+                float* const vec =
                     v == 0 ? s->q : s->k; // the vector to rotate (query or key)
                 const float v0 = vec[i];
                 const float v1 = vec[i + 1];
@@ -918,7 +919,7 @@ void generate(const Transformer* const transformer, Tokenizer* const tokenizer,
     int num_prompt_tokens = 0;
     int* const prompt_tokens =
         malloc((strlen(prompt) + 3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
-    encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+    encode(tokenizer, prompt, true, false, prompt_tokens, &num_prompt_tokens);
     if (num_prompt_tokens < 1) {
         fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
         exit(EXIT_FAILURE);
@@ -1000,11 +1001,11 @@ void chat(const Transformer* const transformer, Tokenizer* const tokenizer,
     char rendered_prompt[1152];
     int num_prompt_tokens = 0;
     int* const prompt_tokens = malloc(1152 * sizeof(int));
-    int user_idx;
+    int user_idx = 0;
 
     // start the main loop
-    int8_t user_turn = 1; // user starts
-    int next; // will store the next token in the sequence
+    bool user_turn = true; // user starts
+    int next = 0; // will store the next token in the sequence
     int pos = 0; // position in the sequence
     while (pos < steps) {
 
@@ -1040,9 +1041,10 @@ void chat(const Transformer* const transformer, Tokenizer* const tokenizer,
                 sprintf(rendered_prompt, user_template, user_prompt);
             }
             // encode the rendered prompt into tokens
-            encode(tokenizer, rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+            encode(tokenizer, rendered_prompt, true, false, prompt_tokens,
+                   &num_prompt_tokens);
             user_idx = 0; // reset the user index
-            user_turn = 0;
+            user_turn = false;
             printf("Assistant: ");
         }
 
@@ -1058,7 +1060,7 @@ void chat(const Transformer* const transformer, Tokenizer* const tokenizer,
         }
         // EOS (=2) token ends the Assistant turn
         if (token == 2)
-            user_turn = 1;
+            user_turn = true;
 
         // forward the transformer to get logits for the next token
         float* const logits = forward(transformer, token, pos);

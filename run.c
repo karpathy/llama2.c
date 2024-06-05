@@ -790,7 +790,7 @@ void generate(Transformer* const transformer, Tokenizer* const tokenizer,
     int num_prompt_tokens = 0;
     int* const prompt_tokens =
         malloc((strlen(prompt) + 3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
-    encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+    encode(tokenizer, prompt, true, false, prompt_tokens, &num_prompt_tokens);
     if (num_prompt_tokens < 1) {
         fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
         exit(EXIT_FAILURE);
@@ -871,11 +871,11 @@ void chat(Transformer* transformer, Tokenizer* tokenizer, Sampler* sampler,
     char rendered_prompt[1152];
     int num_prompt_tokens = 0;
     int* const prompt_tokens = malloc(1152 * sizeof(int));
-    int user_idx;
+    int user_idx = 0;
 
     // start the main loop
     bool user_turn = true; // user starts
-    int next; // will store the next token in the sequence
+    int next = 0; // will store the next token in the sequence
     int pos = 0; // position in the sequence
     while (pos < steps) {
         // when it is the user's turn to contribute tokens to the dialog...
@@ -911,7 +911,8 @@ void chat(Transformer* transformer, Tokenizer* tokenizer, Sampler* sampler,
                 sprintf(rendered_prompt, user_template, user_prompt);
             }
             // encode the rendered prompt into tokens
-            encode(tokenizer, rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+            encode(tokenizer, rendered_prompt, true, false, prompt_tokens,
+                   &num_prompt_tokens);
             user_idx = 0; // reset the user index
             user_turn = false;
             printf("Assistant: ");
