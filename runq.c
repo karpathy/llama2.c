@@ -501,13 +501,16 @@ int compare_tokens(const void *a, const void *b) {
     return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
 }
 
-void build_tokenizer(Tokenizer* t, char* tokenizer_path, int vocab_size) {
-    // i should have written the vocab_size into the tokenizer file... sigh
+void init_tokenizer(Tokenizer* t, int vocab_size){
+    // allocate memory based on the specified vocab_size
     t->vocab_size = vocab_size;
     // malloc space to hold the scores and the strings
-    t->vocab = (char**)malloc(vocab_size * sizeof(char*));
-    t->vocab_scores = (float*)malloc(vocab_size * sizeof(float));
+    t->vocab = (char**)malloc(t->vocab_size * sizeof(char*));
+    t->vocab_scores = (float*)malloc(t->vocab_size * sizeof(float));
     t->sorted_vocab = NULL; // initialized lazily
+}
+
+void build_tokenizer(Tokenizer* t, char* tokenizer_path) {
     for (int i = 0; i < 256; i++) {
         t->byte_pieces[i * 2] = (unsigned char)i;
         t->byte_pieces[i * 2 + 1] = '\0';
@@ -517,7 +520,7 @@ void build_tokenizer(Tokenizer* t, char* tokenizer_path, int vocab_size) {
     if (!file) { fprintf(stderr, "couldn't load %s\n", tokenizer_path); exit(EXIT_FAILURE); }
     if (fread(&t->max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
     int len;
-    for (int i = 0; i < vocab_size; i++) {
+    for (int i = 0; i < t->vocab_size; i++) {
         if (fread(t->vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE);}
         if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
         t->vocab[i] = (char *)malloc(len + 1);
@@ -561,10 +564,10 @@ void safe_printf(char *piece) {
     printf("%s", piece);
 }
 
-int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
+int str_lookup(char *str, Tokenizer* t) {
     // efficiently find the perfect match for str in vocab, return its index or -1 if not found
     TokenIndex tok = { .str = str }; // acts as the key to search for
-    TokenIndex *res = bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
+    TokenIndex *res = bsearch(&tok, t->sorted_vocab, t->vocab_size, sizeof(TokenIndex), compare_tokens);
     return res != NULL ? res->id : -1;
 }
 
@@ -599,7 +602,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
     // TODO: pretty sure this isn't correct in the general case but I don't have the
     // energy to read more of the sentencepiece code to figure out what it's doing
     if (text[0] != '\0') {
-        int dummy_prefix = str_lookup(" ", t->sorted_vocab, t->vocab_size);
+        int dummy_prefix = str_lookup(" ", t);
         tokens[(*n_tokens)++] = dummy_prefix;
     }
 
@@ -636,7 +639,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
         }
 
         // ok c+1 is not a continuation byte, so we've read in a full codepoint
-        int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
+        int id = str_lookup(str_buffer, t);
 
         if (id != -1) {
             // we found this codepoint in vocab, add it as a token
@@ -661,7 +664,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
         for (int i=0; i < (*n_tokens-1); i++) {
             // check if we can merge the pair (tokens[i], tokens[i+1])
             sprintf(str_buffer, "%s%s", t->vocab[tokens[i]], t->vocab[tokens[i+1]]);
-            int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
+            int id = str_lookup(str_buffer, t);
             if (id != -1 && t->vocab_scores[id] > best_score) {
                 // this merge pair exists in vocab! record its score and position
                 best_score = t->vocab_scores[id];
@@ -1067,7 +1070,8 @@ int main(int argc, char *argv[]) {
 
     // build the Tokenizer via the tokenizer .bin file
     Tokenizer tokenizer;
-    build_tokenizer(&tokenizer, tokenizer_path, transformer.config.vocab_size);
+    init_tokenizer(&tokenizer, transformer.config.vocab_size);
+    build_tokenizer(&tokenizer, tokenizer_path);
 
     // build the Sampler
     Sampler sampler;
