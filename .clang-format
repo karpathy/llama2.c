@@ -6,3 +6,4 @@ ColumnLimit: 88
 IndentPPDirectives: BeforeHash
 IndentWidth: 4
 PointerAlignment: Left
+RemoveBracesLLVM: true

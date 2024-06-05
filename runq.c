@@ -139,9 +139,8 @@ void free_run_state(const RunState* const s) {
 // Quantization functions
 
 void dequantize(const QuantizedTensor* const qx, float* const x, const int n) {
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
         x[i] = qx->q[i] * qx->s[i / GS];
-    }
 }
 
 void quantize(const QuantizedTensor* const qx, const float* const x, const int n) {
@@ -154,9 +153,8 @@ void quantize(const QuantizedTensor* const qx, const float* const x, const int n
         float wmax = 0.0;
         for (int i = 0; i < GS; i++) {
             const float val = fabs(x[group * GS + i]);
-            if (val > wmax) {
+            if (val > wmax)
                 wmax = val;
-            }
         }
 
         // calculate and write the scaling factor
@@ -236,35 +234,30 @@ void read_checkpoint(const char* const checkpoint, Config* const config,
     }
     // read in magic number (uint32), has to be 0x616b3432, i.e. "ak42" in ASCII
     uint32_t magic_number;
-    if (fread(&magic_number, sizeof(uint32_t), 1, file) != 1) {
+    if (fread(&magic_number, sizeof(uint32_t), 1, file) != 1)
         exit(EXIT_FAILURE);
-    }
     if (magic_number != 0x616b3432) {
         fprintf(stderr, "Bad magic number\n");
         exit(EXIT_FAILURE);
     }
     // read in the version number (uint32), has to be 2
     int version;
-    if (fread(&version, sizeof(int), 1, file) != 1) {
+    if (fread(&version, sizeof(int), 1, file) != 1)
         exit(EXIT_FAILURE);
-    }
     if (version != 2) {
         fprintf(stderr, "Bad version %d, need version 2\n", version);
         exit(EXIT_FAILURE);
     }
     // read in the Config
-    if (fread(config, sizeof(Config), 1, file) != 1) {
+    if (fread(config, sizeof(Config), 1, file) != 1)
         exit(EXIT_FAILURE);
-    }
     // read in flags
     uint8_t shared_classifier; // a byte to indicate if the classifier is shared
-    if (fread(&shared_classifier, sizeof(uint8_t), 1, file) != 1) {
+    if (fread(&shared_classifier, sizeof(uint8_t), 1, file) != 1)
         exit(EXIT_FAILURE);
-    }
     int group_size; // the group size used in quantization
-    if (fread(&group_size, sizeof(int), 1, file) != 1) {
+    if (fread(&group_size, sizeof(int), 1, file) != 1)
         exit(EXIT_FAILURE);
-    }
     GS = group_size; // set as global, as it will be used in many places
     // figure out the file size
     fseek(file, 0, SEEK_END); // move file pointer to end of file
@@ -306,16 +299,13 @@ void free_transformer(const Transformer* const t) {
     free(t->weights.w1);
     free(t->weights.w2);
     free(t->weights.w3);
-    if (t->weights.wcls != t->weights.q_tokens) {
+    if (t->weights.wcls != t->weights.q_tokens)
         free(t->weights.wcls);
-    }
     // close the memory mapping
-    if (t->data != MAP_FAILED) {
+    if (t->data != MAP_FAILED)
         munmap(t->data, t->file_size);
-    }
-    if (t->fd != -1) {
+    if (t->fd != -1)
         close(t->fd);
-    }
     // free the RunState buffers
     free_run_state(&t->state);
 }
@@ -327,26 +317,22 @@ void rmsnorm(float* const o, const float* const x, const float* const weight,
              const int size) {
     // calculate sum of squares
     float ss = 0.0f;
-    for (int j = 0; j < size; j++) {
+    for (int j = 0; j < size; j++)
         ss += x[j] * x[j];
-    }
     ss /= size;
     ss += 1e-5f;
     ss = 1.0f / sqrtf(ss);
     // normalize and scale
-    for (int j = 0; j < size; j++) {
+    for (int j = 0; j < size; j++)
         o[j] = weight[j] * (ss * x[j]);
-    }
 }
 
 void softmax(float* const x, const int size) {
     // find max value (for numerical stability)
     float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
+    for (int i = 1; i < size; i++)
+        if (x[i] > max_val)
             max_val = x[i];
-        }
-    }
     // exp and sum
     float sum = 0.0f;
     for (int i = 0; i < size; i++) {
@@ -354,9 +340,8 @@ void softmax(float* const x, const int size) {
         sum += x[i];
     }
     // normalize
-    for (int i = 0; i < size; i++) {
+    for (int i = 0; i < size; i++)
         x[i] /= sum;
-    }
 }
 
 void matmul(float* const xout, const QuantizedTensor* const x,
@@ -375,9 +360,8 @@ void matmul(float* const xout, const QuantizedTensor* const x,
         // do the matmul in groups of GS
         for (int j = 0; j <= n - GS; j += GS) {
             int32_t ival = 0;
-            for (int k = 0; k < GS; k++) {
+            for (int k = 0; k < GS; k++)
                 ival += ((int32_t)x->q[j + k]) * ((int32_t)w->q[in + j + k]);
-            }
             val += ((float)ival) * w->s[(in + j) / GS] * x->s[j / GS];
         }
 
@@ -458,9 +442,8 @@ float* forward(const Transformer* const transformer, const int token, const int 
                     s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
-                for (int i = 0; i < head_size; i++) {
+                for (int i = 0; i < head_size; i++)
                     score += q[i] * k[i];
-                }
                 score /= sqrtf(head_size);
                 // save the score to the attention buffer
                 att[t] = score;
@@ -480,9 +463,8 @@ float* forward(const Transformer* const transformer, const int token, const int 
                 // get the attention weight for this timestep
                 const float a = att[t];
                 // accumulate the weighted value into xb
-                for (int i = 0; i < head_size; i++) {
+                for (int i = 0; i < head_size; i++)
                     xb[i] += a * v[i];
-                }
             }
         }
 
@@ -491,9 +473,8 @@ float* forward(const Transformer* const transformer, const int token, const int 
         matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
 
         // residual connection back into x
-        for (int i = 0; i < dim; i++) {
+        for (int i = 0; i < dim; i++)
             x[i] += s->xb2[i];
-        }
 
         // ffn rmsnorm
         rmsnorm(s->xb, x, w->rms_ffn_weight + l * dim, dim);
@@ -519,9 +500,8 @@ float* forward(const Transformer* const transformer, const int token, const int 
         matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
 
         // residual connection
-        for (int i = 0; i < dim; i++) {
+        for (int i = 0; i < dim; i++)
             x[i] += s->xb[i];
-        }
     }
 
     // final rmsnorm
@@ -597,27 +577,24 @@ void build_tokenizer(Tokenizer* const t, const char* const tokenizer_path,
 }
 
 void free_tokenizer(const Tokenizer* const t) {
-    for (int i = 0; i < t->vocab_size; i++) {
+    for (int i = 0; i < t->vocab_size; i++)
         free(t->vocab[i]);
-    }
     free(t->vocab);
     free(t->vocab_scores);
     free(t->sorted_vocab);
 }
 
-char* decode(const Tokenizer* const t, const int prev_token, const int token) {
-    char* piece = t->vocab[token];
+const char* decode(const Tokenizer* const t, const int prev_token, const int token) {
+    const char* piece = t->vocab[token];
     // following BOS (1) token, sentencepiece decoder strips any leading
     // whitespace (see PR #89)
-    if (prev_token == 1 && piece[0] == ' ') {
+    if (prev_token == 1 && piece[0] == ' ')
         piece++;
-    }
     // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
     // parse this and convert and return the actual byte
     unsigned char byte_val;
-    if (sscanf(piece, "<0x%02hhX>", &byte_val) == 1) {
-        piece = (char*)t->byte_pieces + byte_val * 2;
-    }
+    if (sscanf(piece, "<0x%02hhX>", &byte_val) == 1)
+        return (char*)t->byte_pieces + byte_val * 2;
     return piece;
 }
 
@@ -625,17 +602,12 @@ void safe_printf(const char* const piece) {
     // piece might be a raw byte token, and we only want to print printable
     // chars or whitespace because some of the other bytes can be various
     // control codes, backspace, etc.
-    if (piece == NULL) {
+    if (piece == NULL || piece[0] == '\0')
         return;
-    }
-    if (piece[0] == '\0') {
-        return;
-    }
     if (piece[1] == '\0') {
         const unsigned char byte_val = piece[0];
-        if (!(isprint(byte_val) || isspace(byte_val))) {
+        if (!(isprint(byte_val) || isspace(byte_val)))
             return; // bad byte, don't print it
-        }
     }
     printf("%s", piece);
 }
@@ -723,9 +695,8 @@ void encode(Tokenizer* const t, const char* const text, const int8_t bos,
         // while the next character is a continuation byte, continue appending
         // but if there are too many of them, just stop to avoid overruning
         // str_buffer size.
-        if ((*(c + 1) & 0xC0) == 0x80 && str_len < 4) {
+        if ((*(c + 1) & 0xC0) == 0x80 && str_len < 4)
             continue;
-        }
 
         // ok c+1 is not a continuation byte, so we've read in a full codepoint
         const int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
@@ -737,9 +708,8 @@ void encode(Tokenizer* const t, const char* const text, const int8_t bos,
             // byte_fallback encoding: just encode each byte as a token
             // +3 is here because the first 3 vocab elements are <unk>, <s>,
             // </s> so the individual bytes only start at index 3
-            for (size_t i = 0; i < str_len; i++) {
+            for (size_t i = 0; i < str_len; i++)
                 tokens[(*n_tokens)++] = (unsigned char)str_buffer[i] + 3;
-            }
         }
         str_len = 0; // protect against a sequence of stray UTF8 continuation bytes
     }
@@ -764,17 +734,15 @@ void encode(Tokenizer* const t, const char* const text, const int8_t bos,
             }
         }
 
-        if (best_idx == -1) {
+        if (best_idx == -1)
             break; // we couldn't find any more pairs to merge, so we're done
-        }
 
         // merge the consecutive pair (best_idx, best_idx+1) into new token
         // best_id
         tokens[best_idx] = best_id;
         // delete token at position best_idx+1, shift the entire sequence back 1
-        for (int i = best_idx + 1; i < (*n_tokens - 1); i++) {
+        for (int i = best_idx + 1; i < (*n_tokens - 1); i++)
             tokens[i] = tokens[i + 1];
-        }
         (*n_tokens)--; // token length decreased
     }
 
@@ -821,9 +789,8 @@ int sample_mult(const float* const probabilities, const int n, const float coin)
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
         cdf += probabilities[i];
-        if (coin < cdf) {
+        if (coin < cdf)
             return i;
-        }
     }
     return n - 1; // in case of rounding errors
 }
@@ -875,9 +842,8 @@ int sample_topp(const float* const probabilities, const int n, const float topp,
     float cdf = 0.0f;
     for (int i = 0; i <= last_idx; i++) {
         cdf += probindex[i].prob;
-        if (r < cdf) {
+        if (r < cdf)
             return probindex[i].index;
-        }
     }
     return probindex[last_idx].index; // in case of rounding errors
 }
@@ -913,9 +879,8 @@ int sample(Sampler* const sampler, float* const logits) {
         return sample_argmax(logits, sampler->vocab_size);
     }
     // apply the temperature to the logits
-    for (int q = 0; q < sampler->vocab_size; q++) {
+    for (int q = 0; q < sampler->vocab_size; q++)
         logits[q] /= sampler->temperature;
-    }
     // apply softmax to the logits to get the probabilities for next token
     softmax(logits, sampler->vocab_size);
     // flip a (float) coin (this is our source of entropy for sampling)
@@ -946,9 +911,8 @@ long time_in_ms() {
 void generate(const Transformer* const transformer, Tokenizer* const tokenizer,
               Sampler* const sampler, const char* prompt, const int steps) {
     const char* const empty_prompt = "";
-    if (prompt == NULL) {
+    if (prompt == NULL)
         prompt = empty_prompt;
-    }
 
     // encode the (string) prompt into tokens sequence
     int num_prompt_tokens = 0;
@@ -983,9 +947,8 @@ void generate(const Transformer* const transformer, Tokenizer* const tokenizer,
 
         // data-dependent terminating condition: the BOS (=1) token delimits
         // sequences
-        if (next == 1) {
+        if (next == 1)
             break;
-        }
 
         // print the token as string, decode it with the Tokenizer object
         const char* const piece = decode(tokenizer, token, next);
@@ -994,9 +957,8 @@ void generate(const Transformer* const transformer, Tokenizer* const tokenizer,
         token = next;
 
         // init the timer here because the first iteration can be slower
-        if (start == 0) {
+        if (start == 0)
             start = time_in_ms();
-        }
     }
     printf("\n");
 
@@ -1016,9 +978,8 @@ void read_stdin(const char* const guide, char* const buffer, const size_t bufsiz
     printf("%s", guide);
     if (fgets(buffer, bufsize, stdin) != NULL) {
         const size_t len = strlen(buffer);
-        if (len > 0 && buffer[len - 1] == '\n') {
+        if (len > 0 && buffer[len - 1] == '\n')
             buffer[len - 1] = '\0'; // strip newline
-        }
     }
 }
 
@@ -1096,9 +1057,8 @@ void chat(const Transformer* const transformer, Tokenizer* const tokenizer,
             token = next;
         }
         // EOS (=2) token ends the Assistant turn
-        if (token == 2) {
+        if (token == 2)
             user_turn = 1;
-        }
 
         // forward the transformer to get logits for the next token
         float* const logits = forward(transformer, token, pos);
@@ -1111,9 +1071,8 @@ void chat(const Transformer* const transformer, Tokenizer* const tokenizer,
             safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
             fflush(stdout);
         }
-        if (next == 2) {
+        if (next == 2)
             printf("\n");
-        }
     }
     printf("\n");
     free(prompt_tokens);
@@ -1158,11 +1117,10 @@ int main(const int argc, const char* const argv[]) {
 
     // poor man's C argparse so we can override the defaults above from the
     // command line
-    if (argc >= 2) {
+    if (argc >= 2)
         checkpoint_path = argv[1];
-    } else {
+    else
         error_usage();
-    }
     for (int i = 2; i < argc; i += 2) {
         // do some basic validation
         if (i + 1 >= argc) {
@@ -1175,25 +1133,24 @@ int main(const int argc, const char* const argv[]) {
             error_usage();
         } // must be -x (one dash, one letter)
         // read in the args
-        if (argv[i][1] == 't') {
+        if (argv[i][1] == 't')
             temperature = atof(argv[i + 1]);
-        } else if (argv[i][1] == 'p') {
+        else if (argv[i][1] == 'p')
             topp = atof(argv[i + 1]);
-        } else if (argv[i][1] == 's') {
+        else if (argv[i][1] == 's')
             rng_seed = atoi(argv[i + 1]);
-        } else if (argv[i][1] == 'n') {
+        else if (argv[i][1] == 'n')
             steps = atoi(argv[i + 1]);
-        } else if (argv[i][1] == 'i') {
+        else if (argv[i][1] == 'i')
             prompt = argv[i + 1];
-        } else if (argv[i][1] == 'z') {
+        else if (argv[i][1] == 'z')
             tokenizer_path = argv[i + 1];
-        } else if (argv[i][1] == 'm') {
+        else if (argv[i][1] == 'm')
             mode = argv[i + 1];
-        } else if (argv[i][1] == 'y') {
+        else if (argv[i][1] == 'y')
             system_prompt = argv[i + 1];
-        } else {
+        else
             error_usage();
-        }
     }
 
     // parameter validation/overrides

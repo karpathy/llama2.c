@@ -30,9 +30,8 @@ void test_prompt_encoding(Tokenizer* const tokenizer, const char* const prompt,
 
     // verify
     assert_eq(num_prompt_tokens, num_expected_tokens);
-    for (int i = 0; i < num_prompt_tokens; i++) {
+    for (int i = 0; i < num_prompt_tokens; i++)
         assert_eq(prompt_tokens[i], expected_tokens[i]);
-    }
 
 #if VERBOSITY == 1
     printf("OK\n");
