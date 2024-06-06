@@ -352,6 +352,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2.c-android-wrapper](https://github.com/celikin/llama2.c-android-wrapper): by @[celikin](https://github.com/celikin): added JNI wrapper, PoC
 - C
   - [llama3.c](https://github.com/jameswdelancey/llama3.c): by @[jameswdelancey](https://github.com/jameswdelancey): a LLaMA 3 8B Base and Instruct port of this project
+  - [llama3.cuda](https://github.com/likejazz/llama3.cuda) by @[likejazz](https://github.com/likejazz): a C/CUDA port of this project
 - C++
   - [llama2.cpp](https://github.com/leloykun/llama2.cpp) by @[leloykun](https://github.com/leloykun): a C++ port of this project
   - [llama2.cpp](https://github.com/coldlarry/llama2.cpp) by @[coldlarry](https://github.com/coldlarry): a C++ port of this project
@@ -377,6 +378,7 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
   - [llama2-kmp](https://github.com/stepango/llama2-kmp) by @[stepango](https://github.com/stepango): a Kotlin multiplatform(KMP) port of this project 
 - Python
   - [llama2.py](https://github.com/tairov/llama2.py) by @[tairov](https://github.com/tairov): a simple one file pure Python port of this project with zero dependencies
+  - [llama3.np](https://github.com/likejazz/llama3.np) by @[likejazz](https://github.com/likejazz): a Python NumPy port of this project
 - C#
   - [llama2.cs](https://github.com/trrahul/llama2.cs) by @[trrahul](https://github.com/trrahul): a C# port of this project
 - F#
