@@ -19,6 +19,7 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123
 import math
 import os
 import time
+import json
 from contextlib import nullcontext
 from datetime import datetime
 from functools import partial
@@ -238,6 +239,18 @@ def get_lr(it):
     assert 0 <= decay_ratio <= 1
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff ranges 0..1
     return min_lr + coeff * (learning_rate - min_lr)
+
+def generate_config_json():
+    # Calculate all parameter data of the model
+    config["parameters"] = sum(p.numel() for p in model.parameters())
+
+    # Save the extracted values to a JSON file
+    config_json = os.path.join(out_dir, "config.json")
+    with open(config_json, "w", encoding="utf-8") as file:
+        json.dump(config, file, indent=4)
+        print(f"train config:\n{json.dumps(config, indent=4)}")
+
+generate_config_json()
 
 # logging
 if wandb_log and master_process:
