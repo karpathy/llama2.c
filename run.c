@@ -900,6 +900,7 @@ void error_usage() {
     fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
     fprintf(stderr, "  -m <string> mode: generate|chat, default: generate\n");
     fprintf(stderr, "  -y <string> (optional) system prompt in chat mode\n");
+    fprintf(stderr, "  -v          verbose output. 0 = off (default), 1 = on\n");
     exit(EXIT_FAILURE);
 }
 
@@ -915,10 +916,11 @@ int main(int argc, char *argv[]) {
     unsigned long long rng_seed = 0; // seed rng with time by default
     char *mode = "generate";    // generate|chat
     char *system_prompt = NULL; // the (optional) system prompt to use in chat mode
+    int verbose = 0;            // 0 = no verbose output. 1 = verbose output.
 
     // poor man's C argparse so we can override the defaults above from the command line
     if (argc >= 2) { checkpoint_path = argv[1]; } else { error_usage(); }
-    for (int i = 2; i < argc; i+=2) {
+    for (int i = 2; i < argc; i +=2) {
         // do some basic validation
         if (i + 1 >= argc) { error_usage(); } // must have arg after flag
         if (argv[i][0] != '-') { error_usage(); } // must start with dash
@@ -932,14 +934,45 @@ int main(int argc, char *argv[]) {
         else if (argv[i][1] == 'z') { tokenizer_path = argv[i + 1]; }
         else if (argv[i][1] == 'm') { mode = argv[i + 1]; }
         else if (argv[i][1] == 'y') { system_prompt = argv[i + 1]; }
+        else if (argv[i][1] == 'v') { verbose = atoi(argv[i + 1]); }
         else { error_usage(); }
     }
 
-    // parameter validation/overrides
+    // verify mode parameter
+    if (strcmp(mode, "generate") != 0 && strcmp(mode, "chat") != 0) {
+        fprintf(stderr, "unknown mode: %s\n", mode);
+        error_usage();
+    }
+
+    // other parameter validation/overrides
     if (rng_seed <= 0) rng_seed = (unsigned int)time(NULL);
     if (temperature < 0.0) temperature = 0.0;
     if (topp < 0.0 || 1.0 < topp) topp = 0.9;
     if (steps < 0) steps = 0;
+    if (verbose < 0 || 1 < verbose) verbose = 0;
+
+    if (verbose == 1) {
+        // print parameter values that will be used (skips verbose value..)
+        printf("checkpoint_path = \"%s\"\n", checkpoint_path);
+        printf("tokenizer_path = \"%s\"\n", tokenizer_path);
+        printf("temperature = %f\n", temperature);
+        printf("topp = %f\n", topp);
+        printf("steps = %d\n", steps);
+        if(prompt == NULL) {
+            printf("prompt = null\n");
+        }
+        else {
+            printf("prompt = \"%s\"\n", prompt);
+        }
+        printf("rng_seed = %llu\n", rng_seed);
+        printf("mode = \"%s\"\n", mode);
+        if(system_prompt == NULL) {
+            printf("system_prompt = null\n");
+        }
+        else {
+            printf("system_prompt = \"%s\"\n", system_prompt);
+        }
+    }
 
     // build the Transformer via the model .bin file
     Transformer transformer;
@@ -954,14 +987,11 @@ int main(int argc, char *argv[]) {
     Sampler sampler;
     build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
 
-    // run!
+    // run (relies on mode verification further above)!
     if (strcmp(mode, "generate") == 0) {
         generate(&transformer, &tokenizer, &sampler, prompt, steps);
-    } else if (strcmp(mode, "chat") == 0) {
-        chat(&transformer, &tokenizer, &sampler, prompt, system_prompt, steps);
     } else {
-        fprintf(stderr, "unknown mode: %s\n", mode);
-        error_usage();
+        chat(&transformer, &tokenizer, &sampler, prompt, system_prompt, steps);
     }
 
     // memory and file handles cleanup
