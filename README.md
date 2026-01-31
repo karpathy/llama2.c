@@ -334,6 +334,8 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 
 ## notable forks
 
+- Q and K (Kdb+)
+  - [llama2.qk](https://github.com/wizzard0/llama2.qk) by @[oleksandr_now](https://twitter.com/oleksandr_now): a TypeScript port of this project. Likely the shortest self-contained transformer inference in the world
 - Rust
   - [llama2.rs](https://github.com/gaxler/llama2.rs) by @[gaxler](https://github.com/gaxler): a Rust port of this project
   - [llama2.rs](https://github.com/leo-du/llama2.rs) by @[leo-du](https://github.com/leo-du): A Rust port of this project
