@@ -400,6 +400,8 @@ If your candidate PRs have elements of these it doesn't mean they won't get merg
 - [llama2.c-zh - Bilingual Chinese and English](https://github.com/chenyangMl/llama2.c-zh) by @[chenyangMl](https://github.com/chenyangMl): Expand tokenizer to support training and inference in both Chinese and English
 - Haskell
   - [llama2.hs](https://github.com/chris-ch/llama2.hs) by @[chris-ch](https://github.com/chris-ch): an Haskell port of this project
+- PHP
+  - [llama2-php](https://github.com/centamiv/llama2-php) by @[centamiv](https://github.com/centamiv): a PHP port of this project
 
 ## unsorted todos
 
