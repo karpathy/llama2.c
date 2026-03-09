@@ -22,7 +22,7 @@ First, navigate to the folder where you keep your projects and clone this reposi
 git clone https://github.com/karpathy/llama2.c.git
 ```
 
-Then, open the repository folder:
+Then, open the repository folders:
 
 ```bash
 cd llama2.c
