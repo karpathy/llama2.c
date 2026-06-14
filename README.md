@@ -308,7 +308,7 @@ Call for help: help add more tests.
 
 ## ack
 
-I trained the llama2.c storyteller models on a 4X A100 40GB box graciously provided by the excellent [Lambda labs](https://lambdalabs.com/service/gpu-cloud), thank you.
+I trained the llama2.c storyteller models on a 4X A100 40GB box graciously provided by the excellent [Lambda labs](https://lambda.ai/service/gpu-cloud), thank you.
 
 ## discord
 
