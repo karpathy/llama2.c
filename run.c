@@ -829,13 +829,13 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
                     read_stdin("Enter system prompt (optional): ", system_prompt, sizeof(system_prompt));
                 } else {
                     // system prompt was passed in, use it
-                    strcpy(system_prompt, cli_system_prompt);
+                    snprintf(system_prompt, sizeof(system_prompt), "%s", cli_system_prompt);
                 }
             }
             // get the user prompt
             if (pos == 0 && cli_user_prompt != NULL) {
                 // user prompt for position 0 was passed in, use it
-                strcpy(user_prompt, cli_user_prompt);
+                snprintf(user_prompt, sizeof(user_prompt), "%s", cli_user_prompt);
             } else {
                 // otherwise get user prompt from stdin
                 read_stdin("User: ", user_prompt, sizeof(user_prompt));
@@ -843,10 +843,10 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
             // render user/system prompts into the Llama 2 Chat schema
             if (pos == 0 && system_prompt[0] != '\0') {
                 char system_template[] = "[INST] <<SYS>>\n%s\n<</SYS>>\n\n%s [/INST]";
-                sprintf(rendered_prompt, system_template, system_prompt, user_prompt);
+                snprintf(rendered_prompt, sizeof(rendered_prompt), system_template, system_prompt, user_prompt);
             } else {
                 char user_template[] = "[INST] %s [/INST]";
-                sprintf(rendered_prompt, user_template, user_prompt);
+                snprintf(rendered_prompt, sizeof(rendered_prompt), user_template, user_prompt);
             }
             // encode the rendered prompt into tokens
             encode(tokenizer, rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
